@@ -1,0 +1,49 @@
+{
+  "name": "@flowtrace/cli",
+  "version": "1.0.0",
+  "description": "Universal FlowTrace installer and project manager for Java and Node.js",
+  "main": "lib/index.js",
+  "bin": {
+    "flowtrace": "./bin/flowtrace.js"
+  },
+  "scripts": {
+    "test": "node test/test-cli.js"
+  },
+  "keywords": [
+    "flowtrace",
+    "debugger",
+    "debugging",
+    "tracing",
+    "instrumentation",
+    "java",
+    "node",
+    "python",
+    "go",
+    "rust",
+    "dotnet",
+    "cli",
+    "ai-debugging"
+  ],
+  "author": "Juan Pablo Diaz <jpablo@rixmerz.dev> (https://github.com/Rixmerz)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rixmerz/flowtrace-debugger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Rixmerz/flowtrace-debugger/issues"
+  },
+  "homepage": "https://github.com/Rixmerz/flowtrace-debugger#readme",
+  "dependencies": {
+    "commander": "^11.1.0",
+    "inquirer": "^8.2.5",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1",
+    "fast-xml-parser": "^4.3.2",
+    "cosmiconfig": "^9.0.0",
+    "fs-extra": "^11.2.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

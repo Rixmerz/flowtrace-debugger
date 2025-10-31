@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test-java-agent:
+    name: Test Java Agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Build Java Agent
+        working-directory: ./flowtrace-agent
+        run: mvn clean package -DskipTests
+
+      - name: Run Java Agent Tests
+        working-directory: ./flowtrace-agent
+        run: mvn test
+
+  test-nodejs-agent:
+    name: Test Node.js Agent
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x, 20.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install Node.js Agent dependencies
+        working-directory: ./flowtrace-agent-js
+        run: npm ci || npm install
+
+      - name: Run Node.js Agent Tests
+        working-directory: ./flowtrace-agent-js
+        run: npm test
+
+  test-mcp-server:
+    name: Test MCP Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install MCP Server dependencies
+        working-directory: ./mcp-server
+        run: npm ci || npm install
+
+      - name: Build MCP Server
+        working-directory: ./mcp-server
+        run: npm run build
+
+      - name: Run MCP Server Tests
+        working-directory: ./mcp-server
+        run: npm test
+
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install CLI dependencies
+        working-directory: ./flowtrace-cli
+        run: npm ci || npm install
+
+      - name: Lint CLI
+        working-directory: ./flowtrace-cli
+        run: npm run lint || echo "No lint script found"

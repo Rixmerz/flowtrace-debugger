@@ -1,0 +1,100 @@
+<div class="container">
+  <header>
+    <h1>{{ title }}</h1>
+    <p class="subtitle">Testing FlowTrace Truncation System with Angular</p>
+  </header>
+
+  <section class="info">
+    <h2>📊 About This Demo</h2>
+    <p>
+      This Angular application demonstrates the FlowTrace truncation system by generating
+      and processing large datasets that exceed the default threshold of 1000 characters.
+    </p>
+    <ul>
+      <li><strong>Test 1:</strong> Generates 100 users with detailed information</li>
+      <li><strong>Test 2:</strong> Processes data with large args AND result</li>
+      <li><strong>Test 3:</strong> Async operations with large responses</li>
+      <li><strong>Test 4:</strong> Exception handling with large context</li>
+    </ul>
+  </section>
+
+  <section class="controls">
+    <h2>🧪 Run Tests</h2>
+    <div class="button-group">
+      <button (click)="testGenerateLargeData()" [disabled]="loading">
+        Test 1: Generate Large Data
+      </button>
+      <button (click)="testProcessLargeData()" [disabled]="loading">
+        Test 2: Process Large Data
+      </button>
+      <button (click)="testAsyncOperation()" [disabled]="loading">
+        Test 3: Async Operation
+      </button>
+      <button (click)="testException()" [disabled]="loading">
+        Test 4: Test Exception
+      </button>
+      <button (click)="runAllTests()" [disabled]="loading" class="primary">
+        Run All Tests
+      </button>
+    </div>
+  </section>
+
+  @if (loading) {
+    <div class="status loading">
+      ⏳ Processing...
+    </div>
+  }
+
+  @if (error) {
+    <div class="status error">
+      ❌ Error: {{ error.substring(0, 100) }}...
+    </div>
+  }
+
+  @if (users.length > 0) {
+    <section class="results">
+      <h2>📋 Results</h2>
+      <div class="result-card">
+        <h3>Generated Users</h3>
+        <p><strong>Count:</strong> {{ users.length }}</p>
+        <p><strong>Sample:</strong> {{ users[0]?.name }}</p>
+      </div>
+    </section>
+  }
+
+  @if (processedData) {
+    <section class="results">
+      <div class="result-card">
+        <h3>Processed Data</h3>
+        <p><strong>Total Processed:</strong> {{ processedData.processed.length }}</p>
+        <p><strong>Avg Name Length:</strong> {{ processedData.summary.statistics.avgNameLength.toFixed(2) }}</p>
+        <p><strong>Total Tags:</strong> {{ processedData.summary.statistics.totalTags }}</p>
+      </div>
+    </section>
+  }
+
+  <section class="instructions">
+    <h2>🔍 Check Logs</h2>
+    <pre>
+# View main log (truncated)
+cat flowtrace.jsonl | jq
+
+# View segmented files (complete data)
+ls -lh flowtrace-jsonsl/
+
+# Find truncated logs
+grep "truncated" flowtrace.jsonl | jq
+
+# Expand with MCP server
+node mcp-server/dist/server.js
+    </pre>
+  </section>
+
+  <footer>
+    <p>
+      Check browser console for output •
+      Check <code>flowtrace.jsonl</code> for truncated logs •
+      Check <code>flowtrace-jsonsl/</code> for complete data
+    </p>
+  </footer>
+</div>

@@ -1,0 +1,20 @@
+{
+  "name": "flowtrace-example-typescript",
+  "version": "1.0.0",
+  "description": "FlowTrace TypeScript Example Application",
+  "main": "app.ts",
+  "scripts": {
+    "start": "ts-node app.ts",
+    "start:trace": "../../run-node-flowtrace.sh app.ts",
+    "start:trace:debug": "FLOWTRACE_STDOUT=true ../../run-node-flowtrace.sh app.ts",
+    "start:trace:filter": "FLOWTRACE_PACKAGE_PREFIX=app ../../run-node-flowtrace.sh app.ts"
+  },
+  "keywords": ["flowtrace", "example", "typescript"],
+  "author": "FlowTrace",
+  "license": "MIT",
+  "devDependencies": {
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}

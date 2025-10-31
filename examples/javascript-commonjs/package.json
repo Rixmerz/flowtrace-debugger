@@ -1,0 +1,15 @@
+{
+  "name": "flowtrace-example-commonjs",
+  "version": "1.0.0",
+  "description": "FlowTrace CommonJS Example Application",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "start:trace": "../../run-node-flowtrace.sh app.js",
+    "start:trace:debug": "FLOWTRACE_STDOUT=true ../../run-node-flowtrace.sh app.js",
+    "start:trace:filter": "FLOWTRACE_PACKAGE_PREFIX=app ../../run-node-flowtrace.sh app.js"
+  },
+  "keywords": ["flowtrace", "example", "commonjs"],
+  "author": "FlowTrace",
+  "license": "MIT"
+}

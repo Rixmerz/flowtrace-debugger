@@ -1,0 +1,51 @@
+{
+  "name": "flowtrace-agent-js",
+  "version": "1.0.0",
+  "description": "JavaScript/TypeScript instrumentation agent for FlowTrace - runtime execution tracing",
+  "main": "src/agent.js",
+  "type": "commonjs",
+  "exports": {
+    ".": "./src/agent.js",
+    "./loader": "./src/loader.js",
+    "./esm-loader": "./src/esm-loader.mjs"
+  },
+  "bin": {
+    "flowtrace": "./bin/flowtrace-cli.js"
+  },
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test/run-tests.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "instrumentation",
+    "tracing",
+    "debugging",
+    "profiling",
+    "monitoring",
+    "typescript",
+    "nodejs",
+    "flowtrace",
+    "ai-debugging"
+  ],
+  "author": "Juan Pablo Diaz <jpablo@rixmerz.dev> (https://github.com/Rixmerz)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {},
+  "optionalDependencies": {
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.0.0"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rixmerz/flowtrace-debugger.git",
+    "directory": "flowtrace-agent-js"
+  },
+  "bugs": {
+    "url": "https://github.com/Rixmerz/flowtrace-debugger/issues"
+  },
+  "homepage": "https://github.com/Rixmerz/flowtrace-debugger#readme"
+}

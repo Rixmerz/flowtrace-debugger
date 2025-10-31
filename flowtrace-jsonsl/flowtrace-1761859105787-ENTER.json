@@ -1,0 +1,8 @@
+{
+  "timestamp": 1761859105787,
+  "event": "ENTER",
+  "thread": "main",
+  "class": "TestClass",
+  "method": "processLargeArgs",
+  "args": "[[\"{\\\"id\\\":0,\\\"name\\\":\\\"Item 0\\\",\\\"description\\\":\\\"This is a detailed description with lots of text for item 0\\\",\\\"data\\\":\\\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\\\"}\",\"{\\\"id\\\":1,\\\"name\\\":\\\"Item 1\\\",\\\"description\\\":\\\"This is a detailed description with lots of text for item 1\\\",\\\"data\\\":\\\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\\\"}\",\"{\\\"id\\\":2,\\\"name\\\":\\\"Item 2\\\",\\\"description\\\":\\\"This is a detailed description with lots of text for item 2\\\",\\\"data\\\":\\\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\\\"}\",\"{\\\"id\\\":3,\\\"name\\\":\\\"Item 3\\\",\\\"description\\\":\\\"This is a detailed description with lots of text for item 3\\\",\\\"data\\\":\\\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\\\"}\",\"{\\\"id\\\":4,\\\"name\\\":\\\"Item 4\\\",\\\"description\\\":\\\"This is a detailed description with lots of text for item 4\\\",\\\"data\\\":\\\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\\\"}\",\"{\\\"id\\\":5,\\\"name\\\":\\\"Item 5\\\",\\\"description\\\":\\\"This is a detailed description with lots of text for item 5\\\",\\\"...]"
+}
