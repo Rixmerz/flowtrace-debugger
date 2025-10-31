@@ -1,6 +1,7 @@
 package io.flowtrace.agent;
 
 import net.bytebuddy.asm.Advice;
+import net.bytebuddy.implementation.bytecode.assign.Assigner;
 
 /**
  * Clase de advice de ByteBuddy que se inyecta en los métodos instrumentados.
@@ -40,12 +41,12 @@ public class FlowTraceAdvice {
      * @param result     Valor de retorno (si no hay excepción)
      * @param throwable  Excepción lanzada (si hubo error)
      */
-    @Advice.OnMethodExit(onThrowable = Throwable.class)
+    @Advice.OnMethodExit(onThrowable = Throwable.class, suppress = Throwable.class)
     public static void onExit(@Advice.Origin("#t") String className,
                               @Advice.Origin("#m") String methodName,
                               @Advice.AllArguments Object[] args,
                               @Advice.Enter long start,
-                              @Advice.Return Object result,
+                              @Advice.Return(typing = Assigner.Typing.DYNAMIC) Object result,
                               @Advice.Thrown Throwable throwable) {
         try {
             long duration = System.nanoTime() - start;

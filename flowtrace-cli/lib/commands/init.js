@@ -11,6 +11,7 @@ const path = require('path');
 const ProjectDetector = require('../detectors/project-detector');
 const JavaInstaller = require('../installers/java-installer');
 const NodeInstaller = require('../installers/node-installer');
+const PythonInstaller = require('../installers/python-installer');
 
 async function initCommand(options) {
   console.log(chalk.bold.cyan('\n🚀 FlowTrace Project Initialization\n'));
@@ -52,13 +53,17 @@ async function initCommand(options) {
         type: 'list',
         name: 'language',
         message: 'Select project language:',
-        default: detected.projectType.startsWith('java') ? 'java' : 'node',
+        default: detected.projectType.startsWith('java') ? 'java' : detected.projectType === 'python' ? 'python' : detected.projectType === 'go' ? 'go' : detected.projectType === 'rust' ? 'rust' : detected.projectType === 'dotnet' ? 'dotnet' : 'node',
         choices: [
           { name: 'Java (Maven/Gradle)', value: 'java' },
           { name: 'Node.js / TypeScript', value: 'node' },
+          { name: 'Python', value: 'python' },
+          { name: 'Go', value: 'go' },
+          { name: 'Rust', value: 'rust' },
+          { name: '.NET / C#', value: 'dotnet' },
           { name: 'Other (manual setup)', value: 'other' }
         ],
-        when: () => !options.java && !options.node
+        when: () => !options.java && !options.node && !options.python && !options.go && !options.rust && !options.dotnet
       },
       {
         type: 'input',
@@ -72,8 +77,8 @@ async function initCommand(options) {
           return true;
         },
         when: (answers) => {
-          const lang = answers.language || options.java ? 'java' : options.node ? 'node' : detected.projectType;
-          return lang === 'java' || lang === 'node';
+          const lang = answers.language || options.java ? 'java' : options.node ? 'node' : options.python ? 'python' : options.go ? 'go' : options.rust ? 'rust' : options.dotnet ? 'dotnet' : detected.projectType;
+          return lang === 'java' || lang === 'node' || lang === 'python' || lang === 'go' || lang === 'rust' || lang === 'dotnet';
         }
       },
       {
@@ -114,7 +119,7 @@ async function initCommand(options) {
 
     config = {
       ...answers,
-      language: answers.language || (options.java ? 'java' : options.node ? 'node' : detected.projectType.startsWith('java') ? 'java' : 'node'),
+      language: answers.language || (options.java ? 'java' : options.node ? 'node' : options.python ? 'python' : options.go ? 'go' : options.rust ? 'rust' : options.dotnet ? 'dotnet' : detected.projectType.startsWith('java') ? 'java' : detected.projectType === 'python' ? 'python' : detected.projectType === 'go' ? 'go' : detected.projectType === 'rust' ? 'rust' : detected.projectType === 'dotnet' ? 'dotnet' : 'node'),
       framework: detected.framework
     };
   }
@@ -135,6 +140,9 @@ async function initCommand(options) {
     } else if (config.language === 'node') {
       const nodeInstaller = new NodeInstaller(projectPath);
       await nodeInstaller.install(config);
+    } else if (config.language === 'python') {
+      const pythonInstaller = new PythonInstaller(projectPath);
+      await pythonInstaller.install(config);
     }
 
     // Step 4: Create configuration file
@@ -149,7 +157,14 @@ async function initCommand(options) {
     console.log(chalk.green.bold('\n✅ FlowTrace initialized successfully!\n'));
     console.log(chalk.gray('Created files:'));
     console.log(chalk.gray(`  - .flowtrace/config.json`));
-    console.log(chalk.gray(`  - .flowtrace/flowtrace-agent${config.language === 'java' ? '.jar' : '-js/'}`));
+    let agentPath = '-js/';
+    if (config.language === 'java') agentPath = '.jar';
+    else if (config.language === 'python') agentPath = '-py/';
+    else if (config.language === 'go') agentPath = '-go/';
+    else if (config.language === 'rust') agentPath = '-rust/';
+    else if (config.language === 'dotnet') agentPath = '-dotnet/';
+
+    console.log(chalk.gray(`  - .flowtrace/flowtrace-agent${agentPath}`));
 
     if (config.createLauncher) {
       const scriptExt = config.shell === 'powershell' ? 'ps1' : 'sh';
@@ -167,6 +182,24 @@ async function initCommand(options) {
       } else {
         console.log(chalk.gray('  2. Run with FlowTrace: java -javaagent:.flowtrace/flowtrace-agent.jar -jar target/your-app.jar'));
       }
+    } else if (config.language === 'python') {
+      if (config.createLauncher) {
+        console.log(chalk.gray('  1. Run with FlowTrace: ./run-and-flowtrace.sh'));
+      } else {
+        console.log(chalk.gray('  1. Run with FlowTrace: python -m flowtrace_agent your_script.py'));
+      }
+    } else if (config.language === 'go') {
+      console.log(chalk.yellow('  ⚠️  Go agent requires manual instrumentation (prototype)'));
+      console.log(chalk.gray('  1. Import: github.com/rixmerz/flowtrace-agent-go/flowtrace'));
+      console.log(chalk.gray('  2. See agents/go/README.md for usage examples'));
+    } else if (config.language === 'rust') {
+      console.log(chalk.yellow('  ⚠️  Rust agent requires manual instrumentation (prototype)'));
+      console.log(chalk.gray('  1. Add dependency in Cargo.toml'));
+      console.log(chalk.gray('  2. See agents/rust/README.md for usage examples'));
+    } else if (config.language === 'dotnet') {
+      console.log(chalk.yellow('  ⚠️  .NET agent requires manual instrumentation (prototype)'));
+      console.log(chalk.gray('  1. Add reference to Flowtrace.Agent'));
+      console.log(chalk.gray('  2. See agents/dotnet/README.md for usage examples'));
     } else {
       if (config.createLauncher) {
         console.log(chalk.gray('  1. Run with FlowTrace: ./run-and-flowtrace.sh'));

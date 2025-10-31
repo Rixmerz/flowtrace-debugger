@@ -1,0 +1,19 @@
+[package]
+name = "actix-advanced-example"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.0"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"
+
+# Local flowtrace dependencies
+flowtrace-agent = { path = "../../flowtrace-agent", features = ["actix"] }
+flowtrace-derive = { path = "../../flowtrace-derive" }
+
+[[bin]]
+name = "actix-advanced"
+path = "src/main.rs"

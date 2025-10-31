@@ -54,13 +54,27 @@ public class FlowTraceAgent {
             agentBuilder = agentBuilder
                 .type(nameStartsWith(packagePrefix))
                 .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
-                    builder.visit(Advice.to(FlowTraceAdvice.class).on(isMethod()))
+                    builder.visit(Advice.to(FlowTraceAdvice.class).on(
+                        isMethod()
+                            .and(not(isConstructor()))
+                            .and(not(isTypeInitializer()))
+                            .and(not(isSynthetic()))
+                            .and(not(isNative()))
+                            .and(not(isAbstract()))
+                    ))
                 );
         } else {
             agentBuilder = agentBuilder
                 .type(any())
                 .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
-                    builder.visit(Advice.to(FlowTraceAdvice.class).on(isMethod()))
+                    builder.visit(Advice.to(FlowTraceAdvice.class).on(
+                        isMethod()
+                            .and(not(isConstructor()))
+                            .and(not(isTypeInitializer()))
+                            .and(not(isSynthetic()))
+                            .and(not(isNative()))
+                            .and(not(isAbstract()))
+                    ))
                 );
         }
 

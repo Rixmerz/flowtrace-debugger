@@ -1,0 +1,9 @@
+# Core dependencies (none for basic usage)
+
+# Optional dependencies
+aiofiles>=23.0.0  # For async file I/O
+
+# Framework integrations (optional)
+# django>=3.2
+# flask>=2.0
+# fastapi>=0.68.0

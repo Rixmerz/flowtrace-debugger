@@ -13,26 +13,68 @@ class ProjectDetector {
   }
 
   /**
-   * Detect project type (Java or Node.js)
+   * Detect project type (Java, Node.js, Python, Go, Rust, .NET)
    */
   async detectProjectType() {
+    // Java
     const pomPath = path.join(this.projectPath, 'pom.xml');
     const gradlePath = path.join(this.projectPath, 'build.gradle');
-    const packageJsonPath = path.join(this.projectPath, 'package.json');
 
     if (await fs.pathExists(pomPath)) {
       return 'java-maven';
     }
-
     if (await fs.pathExists(gradlePath)) {
       return 'java-gradle';
     }
 
+    // Node.js
+    const packageJsonPath = path.join(this.projectPath, 'package.json');
     if (await fs.pathExists(packageJsonPath)) {
       return 'node';
     }
 
+    // Python
+    const requirementsTxt = path.join(this.projectPath, 'requirements.txt');
+    const setupPy = path.join(this.projectPath, 'setup.py');
+    const pyprojectToml = path.join(this.projectPath, 'pyproject.toml');
+
+    if (await fs.pathExists(requirementsTxt) || await fs.pathExists(setupPy) || await fs.pathExists(pyprojectToml)) {
+      return 'python';
+    }
+
+    // Go
+    const goMod = path.join(this.projectPath, 'go.mod');
+    if (await fs.pathExists(goMod)) {
+      return 'go';
+    }
+
+    // Rust
+    const cargoToml = path.join(this.projectPath, 'Cargo.toml');
+    if (await fs.pathExists(cargoToml)) {
+      return 'rust';
+    }
+
+    // .NET
+    const csprojFiles = await this.findFiles('*.csproj');
+    const slnFiles = await this.findFiles('*.sln');
+    if (csprojFiles.length > 0 || slnFiles.length > 0) {
+      return 'dotnet';
+    }
+
     return 'unknown';
+  }
+
+  /**
+   * Helper to find files by pattern
+   */
+  async findFiles(pattern) {
+    try {
+      const files = await fs.readdir(this.projectPath);
+      const regex = new RegExp(pattern.replace('*', '.*'));
+      return files.filter(f => regex.test(f));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -111,6 +153,53 @@ class ProjectDetector {
   }
 
   /**
+   * Detect package prefix for Python projects
+   */
+  async detectPythonPackagePrefix() {
+    // Try setup.py
+    const setupPy = path.join(this.projectPath, 'setup.py');
+    if (await fs.pathExists(setupPy)) {
+      try {
+        const content = await fs.readFile(setupPy, 'utf8');
+        const match = content.match(/name\s*=\s*['"]([^'"]+)['"]/);
+        if (match) {
+          return match[1].replace(/-/g, '_');
+        }
+      } catch {}
+    }
+
+    // Try pyproject.toml
+    const pyproject = path.join(this.projectPath, 'pyproject.toml');
+    if (await fs.pathExists(pyproject)) {
+      try {
+        const content = await fs.readFile(pyproject, 'utf8');
+        const match = content.match(/name\s*=\s*['"]([^'"]+)['"]/);
+        if (match) {
+          return match[1].replace(/-/g, '_');
+        }
+      } catch {}
+    }
+
+    // Fallback: look for main package directory
+    const commonDirs = ['src', 'app', this.projectPath];
+    for (const dir of commonDirs) {
+      const fullPath = dir === this.projectPath ? dir : path.join(this.projectPath, dir);
+      try {
+        const files = await fs.readdir(fullPath);
+        const pyPackages = files.filter(f => {
+          const fPath = path.join(fullPath, f);
+          return fs.statSync(fPath).isDirectory() && !f.startsWith('.') && !f.startsWith('_');
+        });
+        if (pyPackages.length > 0) {
+          return pyPackages[0];
+        }
+      } catch {}
+    }
+
+    return null;
+  }
+
+  /**
    * Detect framework
    */
   async detectFramework() {
@@ -120,6 +209,14 @@ class ProjectDetector {
       return this.detectJavaFramework();
     } else if (projectType === 'node') {
       return this.detectNodeFramework();
+    } else if (projectType === 'python') {
+      return this.detectPythonFramework();
+    } else if (projectType === 'go') {
+      return this.detectGoFramework();
+    } else if (projectType === 'rust') {
+      return this.detectRustFramework();
+    } else if (projectType === 'dotnet') {
+      return this.detectDotnetFramework();
     }
 
     return 'none';
@@ -209,6 +306,89 @@ class ProjectDetector {
   }
 
   /**
+   * Detect Python framework
+   */
+  async detectPythonFramework() {
+    const requirementsPath = path.join(this.projectPath, 'requirements.txt');
+
+    if (await fs.pathExists(requirementsPath)) {
+      try {
+        const content = await fs.readFile(requirementsPath, 'utf8');
+
+        if (content.includes('Django')) return 'django';
+        if (content.includes('Flask')) return 'flask';
+        if (content.includes('fastapi')) return 'fastapi';
+
+        return 'python-plain';
+      } catch {}
+    }
+
+    return 'python-plain';
+  }
+
+  /**
+   * Detect Go framework
+   */
+  async detectGoFramework() {
+    const goModPath = path.join(this.projectPath, 'go.mod');
+
+    if (await fs.pathExists(goModPath)) {
+      try {
+        const content = await fs.readFile(goModPath, 'utf8');
+
+        if (content.includes('gin-gonic/gin')) return 'gin';
+        if (content.includes('labstack/echo')) return 'echo';
+        if (content.includes('gofiber/fiber')) return 'fiber';
+
+        return 'go-plain';
+      } catch {}
+    }
+
+    return 'go-plain';
+  }
+
+  /**
+   * Detect Rust framework
+   */
+  async detectRustFramework() {
+    const cargoPath = path.join(this.projectPath, 'Cargo.toml');
+
+    if (await fs.pathExists(cargoPath)) {
+      try {
+        const content = await fs.readFile(cargoPath, 'utf8');
+
+        if (content.includes('actix-web')) return 'actix-web';
+        if (content.includes('rocket')) return 'rocket';
+        if (content.includes('axum')) return 'axum';
+
+        return 'rust-plain';
+      } catch {}
+    }
+
+    return 'rust-plain';
+  }
+
+  /**
+   * Detect .NET framework
+   */
+  async detectDotnetFramework() {
+    const csprojFiles = await this.findFiles('*.csproj');
+
+    if (csprojFiles.length > 0) {
+      try {
+        const content = await fs.readFile(path.join(this.projectPath, csprojFiles[0]), 'utf8');
+
+        if (content.includes('Microsoft.AspNetCore')) return 'aspnetcore';
+        if (content.includes('Microsoft.EntityFrameworkCore')) return 'entityframework';
+
+        return 'dotnet-plain';
+      } catch {}
+    }
+
+    return 'dotnet-plain';
+  }
+
+  /**
    * Detect application entry point
    */
   async detectEntryPoint() {
@@ -293,6 +473,8 @@ class ProjectDetector {
       packagePrefix = await this.detectJavaPackagePrefix();
     } else if (projectType === 'node') {
       packagePrefix = await this.detectNodePackagePrefix();
+    } else if (projectType === 'python') {
+      packagePrefix = await this.detectPythonPackagePrefix();
     }
 
     return {

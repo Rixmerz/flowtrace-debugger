@@ -49,7 +49,7 @@ case $MODE in
         echo "📦 Running in PACKAGE mode (only io.flowtrace.example)"
         java -javaagent:$AGENT_JAR \
              -Dflowtrace.package-prefix=io.flowtrace.example \
-             -Dflowtrace.stdout=true \
+             -Dflowtrace.stdout=false \
              -jar $APP_JAR
         ;;
     *)

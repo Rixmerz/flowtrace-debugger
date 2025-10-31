@@ -1,0 +1,20 @@
+[package]
+name = "flowtrace-derive"
+version = "1.0.0"
+edition = "2021"
+authors = ["Juan Pablo Diaz <rixmerz@github.com>"]
+description = "Procedural macros for FlowTrace Rust agent"
+license = "MIT"
+repository = "https://github.com/Rixmerz/flowtrace-debugger"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+
+[dev-dependencies]
+flowtrace-agent = { path = "../flowtrace-agent" }
+tokio = { version = "1.0", features = ["full"] }

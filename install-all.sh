@@ -129,62 +129,17 @@ if [ -z "$SKIP_CLI" ]; then
         print_success "MCP server built successfully!"
         print_success "Server available at: $SCRIPT_DIR/mcp-server/dist/server.js"
 
-        # Configure Cursor MCP
-        CURSOR_MCP_CONFIG="$HOME/.cursor/mcp.json"
+        # Configure MCP for multiple IDEs using new configurator
+        echo
+        print_info "Running Multi-IDE MCP Configurator..."
+        echo
 
-        if [ -f "$CURSOR_MCP_CONFIG" ]; then
-            print_info "Configuring Cursor MCP integration..."
-
-            # Backup existing config
-            cp "$CURSOR_MCP_CONFIG" "$CURSOR_MCP_CONFIG.backup"
-            print_info "Backup created at: $CURSOR_MCP_CONFIG.backup"
-
-            # Check if flowtrace entry already exists
-            if grep -q '"flowtrace"' "$CURSOR_MCP_CONFIG"; then
-                print_warning "FlowTrace MCP already configured in Cursor"
-            else
-                # Use Python to safely merge JSON configurations
-                python3 - <<EOF
-import json
-import sys
-
-try:
-    # Read existing config
-    with open('$CURSOR_MCP_CONFIG', 'r') as f:
-        config = json.load(f)
-
-    # Ensure mcpServers exists
-    if 'mcpServers' not in config:
-        config['mcpServers'] = {}
-
-    # Add flowtrace configuration
-    config['mcpServers']['flowtrace'] = {
-        'command': 'node',
-        'args': ['$SCRIPT_DIR/mcp-server/dist/server.js'],
-        'cwd': '$SCRIPT_DIR/mcp-server',
-        'env': {}
-    }
-
-    # Write updated config
-    with open('$CURSOR_MCP_CONFIG', 'w') as f:
-        json.dump(config, f, indent=2)
-
-    print('success')
-except Exception as e:
-    print(f'error: {e}', file=sys.stderr)
-    sys.exit(1)
-EOF
-                if [ $? -eq 0 ]; then
-                    print_success "FlowTrace MCP configured in Cursor!"
-                    print_success "Config location: $CURSOR_MCP_CONFIG"
-                else
-                    print_error "Failed to configure Cursor MCP automatically"
-                    print_info "Manual configuration required - see cursor-mcp-config-example.json"
-                fi
-            fi
+        if [ -f "$SCRIPT_DIR/scripts/configure-mcp.sh" ]; then
+            bash "$SCRIPT_DIR/scripts/configure-mcp.sh"
         else
-            print_warning "Cursor config not found at: $CURSOR_MCP_CONFIG"
-            print_info "Manual configuration required - see cursor-mcp-config-example.json"
+            print_warning "Multi-IDE configurator not found"
+            print_info "Please run: bash scripts/configure-mcp.sh"
+            print_info "Or see: mcp-server/cursor-mcp-config-example.json for manual setup"
         fi
     else
         print_error "MCP server build failed"
@@ -222,17 +177,10 @@ if [ -z "$SKIP_CLI" ]; then
 
     echo -e "${BLUE}FlowTrace MCP Server:${NC}"
     echo "  ✓ Server: $SCRIPT_DIR/mcp-server/dist/server.js"
-    if [ -f "$HOME/.cursor/mcp.json" ]; then
-        if grep -q '"flowtrace"' "$HOME/.cursor/mcp.json"; then
-            echo "  ✓ Cursor Integration: Configured"
-        else
-            echo "  ⚠ Cursor Integration: Manual configuration needed"
-        fi
-    else
-        echo "  ⚠ Cursor Integration: Manual configuration needed"
-    fi
-    echo "  ✓ Documentation: $SCRIPT_DIR/mcp-server/cursor-rca-rules.md"
-    echo "  ✓ Example Config: $SCRIPT_DIR/mcp-server/cursor-mcp-config-example.json"
+    echo "  ✓ Multi-IDE Support: Cursor, Claude Code, Gemini"
+    echo "  ✓ Configuration: Run 'bash scripts/configure-mcp.sh' to configure additional IDEs"
+    echo "  ✓ Documentation: $SCRIPT_DIR/mcp-server/README.md"
+    echo "  ✓ MCP Tools: $SCRIPT_DIR/mcp-server/MCP_TOOLS.md"
     echo
 
     echo -e "${BLUE}Quick Start:${NC}"
@@ -240,10 +188,11 @@ if [ -z "$SKIP_CLI" ]; then
     echo "  flowtrace init"
     echo "  ./run-and-flowtrace.sh"
     echo
-    echo -e "${BLUE}Cursor AI Usage:${NC}"
-    echo "  1. Open Cursor"
-    echo "  2. MCP server will be available if configured"
-    echo "  3. Use RCA methodology from cursor-rca-rules.md"
+    echo -e "${BLUE}AI IDE Usage:${NC}"
+    echo "  1. Ensure MCP is configured (see installation output above)"
+    echo "  2. Restart your IDE (Cursor/Claude Code/Gemini)"
+    echo "  3. FlowTrace MCP tools will be available for log analysis"
+    echo "  4. See: $SCRIPT_DIR/mcp-server/cursor-rca-rules.md for analysis methodology"
     echo
 else
     echo -e "${YELLOW}Note:${NC} CLI not installed. Install Node.js >= 14.0.0 and re-run this script"

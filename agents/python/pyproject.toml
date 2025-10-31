@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flowtrace-agent"
+version = "1.0.0"
+description = "Python instrumentation agent for FlowTrace - runtime execution tracing"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Juan Pablo Diaz", email = "jpablo@rixmerz.dev"}
+]
+keywords = ["tracing", "debugging", "instrumentation", "profiling", "monitoring", "flowtrace"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/Rixmerz/flowtrace-debugger"
+"Bug Tracker" = "https://github.com/Rixmerz/flowtrace-debugger/issues"
+"Documentation" = "https://github.com/Rixmerz/flowtrace-debugger#readme"
+
+[project.optional-dependencies]
+async = ["aiofiles>=23.0.0"]
+django = ["django>=3.2"]
+flask = ["flask>=2.0"]
+fastapi = ["fastapi>=0.68.0"]
+
+[project.scripts]
+flowtrace-python = "flowtrace_agent.cli:main"
