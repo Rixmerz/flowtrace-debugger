@@ -184,6 +184,73 @@ bash scripts/configure-mcp.sh
 
 ---
 
+## 🎯 TypeScript + React/Vue/Next.js Support
+
+FlowTrace has **complete TypeScript support** with ergonomic decorators for automatic tracing.
+
+### TypeScript Features
+
+- ✅ **Complete Type Definitions** - Type safety with included `.d.ts` files
+- ✅ **@Trace Decorators** - Ergonomic syntax like Python/Java/Rust
+- ✅ **React Hooks** - Compatible with custom hooks and Context API
+- ✅ **Next.js 14** - Support for App Router, API Routes, and Server Actions
+- ✅ **Vue 3** - Composition API and Options API with TypeScript
+- ✅ **Angular** - Decorators for services and components
+
+### Quick Example
+
+```typescript
+import { TraceClass, Trace } from 'flowtrace-agent-js/decorators';
+
+// Class decorator - traces all methods
+@TraceClass()
+export class UserService {
+  async getAllUsers(): Promise<User[]> {
+    // Automatically traced
+    return await this.db.users.findAll();
+  }
+
+  // Method decorator with options
+  @Trace({ captureArgs: false })
+  async login(email: string, password: string) {
+    // Password not captured in logs
+    return await this.auth.login(email, password);
+  }
+}
+```
+
+### Complete Examples
+
+- **React + TypeScript**: [`examples/react-typescript/`](./examples/react-typescript/)
+  - Custom hooks (`useUsers`)
+  - Functional components
+  - Context API with TypeScript
+  - Vite + Hot Module Replacement
+
+- **Next.js + TypeScript**: [`examples/nextjs-typescript/`](./examples/nextjs-typescript/)
+  - App Router (Next.js 14)
+  - API Routes with `@Trace`
+  - Automatic Server Actions
+
+- **Angular + TypeScript**: [`examples/angular-test/`](./examples/angular-test/)
+  - Services with `@Injectable`
+  - Angular components
+  - RxJS Observables
+
+### tsconfig.json Configuration
+
+```json
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "types": ["flowtrace-agent-js"]
+  }
+}
+```
+
+---
+
 ## 📦 Supported Languages and Frameworks
 
 ### ✅ Fully Functional
@@ -191,7 +258,8 @@ bash scripts/configure-mcp.sh
 | Language | Frameworks | Instrumentation |
 |----------|-----------|-----------------|
 | **Java** ☕ | Spring Boot, Maven, Gradle | Automatic ByteBuddy Agent |
-| **JavaScript/Node.js** 🟢 | Express, NestJS, Fastify, Koa, Angular, React, Vue, Next.js | Automatic Proxy Objects |
+| **JavaScript/Node.js** 🟢 | Express, NestJS, Fastify, Koa | Automatic Proxy Objects |
+| **TypeScript** 🔷 | React, Next.js, Angular, Vue, Node.js | Proxy + Decorators (`@Trace`) |
 | **Python** 🐍 | Django, FastAPI, Flask | Automatic sys.settrace() |
 | **Go** 🔵 | Gin, Echo, Chi, net/http | AST Transformer (`flowctl instrument`) |
 | **Rust** 🦀 | Actix-web, Rocket, Axum | Proc Macros (`#[trace]`) |
@@ -201,6 +269,7 @@ bash scripts/configure-mcp.sh
 
 - **Java**: JavaAgent with ByteBuddy (runtime)
 - **JavaScript**: Proxy-based interceptor (runtime)
+- **TypeScript**: `@Trace` Decorators + Proxy Objects (runtime)
 - **Python**: `flowctl-py` with automatic decorators
 - **Go**: `flowctl instrument` with AST transformation
 - **Rust**: `#[trace]` procedural macro

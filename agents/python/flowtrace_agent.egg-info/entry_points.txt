@@ -1,0 +1,2 @@
+[console_scripts]
+flowtrace-python = flowtrace_agent.cli:main

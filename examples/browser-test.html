@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlowTrace Browser Agent Test</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+      border-bottom: 3px solid #007bff;
+      padding-bottom: 10px;
+    }
+    .container {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      margin: 5px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button.secondary {
+      background: #6c757d;
+    }
+    button.secondary:hover {
+      background: #545b62;
+    }
+    button.success {
+      background: #28a745;
+    }
+    button.success:hover {
+      background: #218838;
+    }
+    .stats {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 5px;
+      font-family: monospace;
+      font-size: 12px;
+      margin-top: 15px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 15px;
+    }
+    code {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+    .info {
+      background: #d1ecf1;
+      border-left: 4px solid #0c5460;
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 4px;
+    }
+    .warning {
+      background: #fff3cd;
+      border-left: 4px solid #856404;
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔍 FlowTrace Browser Agent - Test Page</h1>
+
+  <div class="info">
+    <strong>📝 Instrucciones:</strong>
+    <ol>
+      <li>Abre la consola del navegador (F12 o Cmd+Option+I)</li>
+      <li>Haz clic en los botones de prueba abajo</li>
+      <li>Observa los logs en la consola</li>
+      <li>Haz clic en "Export Logs" para descargar el archivo JSONL</li>
+      <li>Abre el archivo descargado para ver los logs capturados</li>
+    </ol>
+  </div>
+
+  <div class="container">
+    <h2>Control Panel</h2>
+    <div class="controls">
+      <button onclick="runTests()">🧪 Run All Tests</button>
+      <button class="success" onclick="FlowTrace.export()">📥 Export Logs</button>
+      <button class="secondary" onclick="showStats()">📊 Show Stats</button>
+      <button class="secondary" onclick="FlowTrace.clearLogs()">🗑️ Clear Logs</button>
+    </div>
+    <div id="stats" class="stats" style="display:none;"></div>
+  </div>
+
+  <div class="container">
+    <h2>Test Functions</h2>
+    <div class="controls">
+      <button onclick="testConsoleLog()">Console Log Test</button>
+      <button onclick="testConsoleError()">Console Error Test</button>
+      <button onclick="testConsoleWarn()">Console Warn Test</button>
+      <button onclick="testAsyncFunction()">Async Function Test</button>
+      <button onclick="testObjectLogging()">Object Logging Test</button>
+      <button onclick="testNestedCalls()">Nested Calls Test</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Configuration</h2>
+    <p>Current Config: <code id="configDisplay"></code></p>
+    <div class="controls">
+      <button class="secondary" onclick="toggleStackTraces()">Toggle Stack Traces</button>
+      <button class="secondary" onclick="togglePassthrough()">Toggle Console Passthrough</button>
+    </div>
+  </div>
+
+  <div class="warning">
+    <strong>⚠️ Nota:</strong> Los logs se almacenan en memoria (máximo 10,000 entradas por defecto).
+    Si alcanzas el límite, las entradas más antiguas se eliminarán automáticamente (circular buffer).
+  </div>
+
+  <!-- Load FlowTrace Browser Agent -->
+  <script src="../flowtrace-agent-js/src/browser-shim.js"></script>
+
+  <!-- Initialize FlowTrace -->
+  <script>
+    // Initialize FlowTrace with configuration
+    FlowTrace.init({
+      packagePrefix: '',           // Empty = capture all logs
+      captureStackTraces: true,    // Capture stack traces
+      maxLogEntries: 10000,        // Max 10k entries
+      consolePassthrough: true,    // Still show in console
+      timestampFormat: 'iso'       // ISO format timestamps
+    });
+
+    console.log('🚀 FlowTrace Browser Agent initialized!');
+    updateConfigDisplay();
+  </script>
+
+  <!-- Test Functions -->
+  <script>
+    // Test 1: Simple console.log
+    function testConsoleLog() {
+      console.log('✅ Simple console log test');
+      console.log('Multiple', 'arguments', 'test', 123, true);
+    }
+
+    // Test 2: Console error
+    function testConsoleError() {
+      console.error('❌ This is an error message');
+      console.error('Error with data:', { code: 500, message: 'Server error' });
+    }
+
+    // Test 3: Console warn
+    function testConsoleWarn() {
+      console.warn('⚠️ This is a warning message');
+      console.warn('Warning:', 'Deprecated API usage detected');
+    }
+
+    // Test 4: Async function
+    async function testAsyncFunction() {
+      console.log('⏳ Starting async operation...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('✅ Async operation completed');
+      return 'async result';
+    }
+
+    // Test 5: Object logging
+    function testObjectLogging() {
+      const user = {
+        id: 1,
+        name: 'Juan Pablo',
+        email: 'test@example.com',
+        preferences: {
+          theme: 'dark',
+          language: 'es'
+        }
+      };
+
+      console.log('👤 User object:', user);
+
+      const array = [1, 2, 3, 4, 5];
+      console.log('📋 Array:', array);
+    }
+
+    // Test 6: Nested function calls
+    function testNestedCalls() {
+      console.log('🔄 Level 1: Starting nested calls');
+      level2();
+    }
+
+    function level2() {
+      console.log('🔄 Level 2: Middle function');
+      level3();
+    }
+
+    function level3() {
+      console.log('🔄 Level 3: Deepest function');
+    }
+
+    // Run all tests
+    async function runTests() {
+      console.log('🧪 ===== Running All Tests =====');
+      testConsoleLog();
+      testConsoleError();
+      testConsoleWarn();
+      await testAsyncFunction();
+      testObjectLogging();
+      testNestedCalls();
+      console.log('🧪 ===== All Tests Completed =====');
+      showStats();
+    }
+
+    // Show statistics
+    function showStats() {
+      const stats = FlowTrace.getStats();
+      const statsDiv = document.getElementById('stats');
+      statsDiv.style.display = 'block';
+      statsDiv.innerHTML = `
+        <strong>📊 FlowTrace Statistics</strong><br>
+        Total Entries: ${stats.totalEntries} / ${stats.maxCapacity}<br>
+        Utilization: ${stats.utilizationPercent}%<br>
+        <br>
+        <strong>By Level:</strong><br>
+        ${Object.entries(stats.byLevel).map(([level, count]) => `${level}: ${count}`).join('<br>') || 'No data'}<br>
+        <br>
+        <strong>By Event:</strong><br>
+        ${Object.entries(stats.byEvent).map(([event, count]) => `${event}: ${count}`).join('<br>') || 'No data'}
+      `;
+    }
+
+    // Toggle stack traces
+    function toggleStackTraces() {
+      const config = FlowTrace.getConfig();
+      FlowTrace.updateConfig({ captureStackTraces: !config.captureStackTraces });
+      console.log(`Stack traces ${!config.captureStackTraces ? 'enabled' : 'disabled'}`);
+      updateConfigDisplay();
+    }
+
+    // Toggle console passthrough
+    function togglePassthrough() {
+      const config = FlowTrace.getConfig();
+      FlowTrace.updateConfig({ consolePassthrough: !config.consolePassthrough });
+      console.log(`Console passthrough ${!config.consolePassthrough ? 'enabled' : 'disabled'}`);
+      updateConfigDisplay();
+    }
+
+    // Update config display
+    function updateConfigDisplay() {
+      const config = FlowTrace.getConfig();
+      document.getElementById('configDisplay').textContent = JSON.stringify({
+        captureStackTraces: config.captureStackTraces,
+        consolePassthrough: config.consolePassthrough,
+        maxLogEntries: config.maxLogEntries
+      }, null, 2);
+    }
+  </script>
+</body>
+</html>

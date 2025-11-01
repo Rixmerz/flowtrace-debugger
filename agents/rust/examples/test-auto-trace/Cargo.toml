@@ -1,0 +1,11 @@
+[package]
+name = "test-auto-trace"
+version = "1.0.0"
+edition = "2021"
+authors = ["Juan Pablo Diaz <rixmerz@github.com>"]
+description = "Test example for automatic #[trace] instrumentation"
+
+[dependencies]
+flowtrace-agent = { path = "../../flowtrace-agent" }
+flowtrace-derive = { path = "../../flowtrace-derive" }
+tokio = { version = "1.0", features = ["full"] }

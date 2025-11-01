@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "flowtrace": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/flowtrace/mcp-server/dist/server.js"
+      ],
+      "cwd": "/absolute/path/to/flowtrace/mcp-server",
+      "env": {}
+    }
+  }
+}

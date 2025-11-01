@@ -1,0 +1,12 @@
+
+[async]
+aiofiles>=23.0.0
+
+[django]
+django>=3.2
+
+[fastapi]
+fastapi>=0.68.0
+
+[flask]
+flask>=2.0

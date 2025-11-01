@@ -3,11 +3,25 @@
   "version": "1.0.0",
   "description": "JavaScript/TypeScript instrumentation agent for FlowTrace - runtime execution tracing",
   "main": "src/agent.js",
+  "types": "types/index.d.ts",
   "type": "commonjs",
   "exports": {
-    ".": "./src/agent.js",
+    ".": {
+      "types": "./types/index.d.ts",
+      "require": "./src/agent.js"
+    },
     "./loader": "./src/loader.js",
-    "./esm-loader": "./src/esm-loader.mjs"
+    "./esm-loader": "./src/esm-loader.mjs",
+    "./config": {
+      "types": "./types/config.d.ts"
+    },
+    "./logger": {
+      "types": "./types/logger.d.ts"
+    },
+    "./decorators": {
+      "types": "./types/decorators.d.ts",
+      "require": "./src/decorators.js"
+    }
   },
   "bin": {
     "flowtrace": "./bin/flowtrace-cli.js"
