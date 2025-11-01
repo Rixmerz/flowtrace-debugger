@@ -229,6 +229,174 @@ MIT License - Ver [LICENSE](./LICENSE) para más detalles.
 
 ---
 
+## ✅ Mejores Prácticas de Código por Lenguaje
+
+FlowTrace funciona mejor con código bien estructurado. Aquí están las recomendaciones específicas para cada lenguaje:
+
+### JavaScript/Node.js 🟢
+
+**✅ Código Recomendado:**
+```javascript
+// Funciones declaradas al inicio
+function fetchUserData() {
+  return database.query('SELECT * FROM users');
+}
+
+function processUsers(users) {
+  return users.map(user => ({...user, processed: true}));
+}
+
+// Uso después en endpoints/rutas
+app.get('/api/users', async (req, res) => {
+  const users = await fetchUserData();
+  const processed = processUsers(users);
+  res.json(processed);
+});
+```
+
+**❌ Evitar:**
+```javascript
+// Dependencia en hoisting (mala práctica)
+processData();  // Llamada antes de declaración
+
+function processData() {
+  return 'data';
+}
+```
+
+**Por qué:** FlowTrace usa transformación AST que convierte `function` declarations a variables, lo cual puede romper código que depende de hoisting. El código bien estructurado (funciones declaradas antes de usarse) funciona perfectamente.
+
+### Java ☕
+
+**✅ Código Recomendado:**
+```java
+public class UserService {
+    public List<User> fetchUsers() {
+        return userRepository.findAll();
+    }
+
+    public void processUsers(List<User> users) {
+        users.forEach(this::validateUser);
+    }
+}
+```
+
+**❌ Evitar:**
+- Métodos estáticos en clases utilitarias sin instanciar
+- Uso excesivo de reflexión
+- Código que modifica bytecode en runtime
+
+**Por qué:** FlowTrace para Java usa ByteBuddy que instrumenta métodos de instancia. El código OOP estándar funciona perfectamente.
+
+### Python 🐍
+
+**✅ Código Recomendado:**
+```python
+def fetch_user_data():
+    return database.query("SELECT * FROM users")
+
+def process_users(users):
+    return [{"user": u, "processed": True} for u in users]
+
+# Uso después
+@app.route('/api/users')
+def get_users():
+    users = fetch_user_data()
+    return jsonify(process_users(users))
+```
+
+**❌ Evitar:**
+- Funciones dentro de funciones excesivamente anidadas
+- Modificación de `sys.settrace` manualmente
+- Decoradores que modifican firmas de funciones
+
+**Por qué:** FlowTrace usa `sys.settrace()` que funciona mejor con código estructurado de forma clara.
+
+### Go 🔵
+
+**✅ Código Recomendado:**
+```go
+func FetchUsers() ([]User, error) {
+    return db.Query("SELECT * FROM users")
+}
+
+func ProcessUsers(users []User) []ProcessedUser {
+    result := make([]ProcessedUser, len(users))
+    for i, user := range users {
+        result[i] = ProcessUser(user)
+    }
+    return result
+}
+```
+
+**❌ Evitar:**
+- Funciones anónimas inline excesivas
+- Código generado dinámicamente
+- Uso de `unsafe` package
+
+**Por qué:** FlowTrace usa transformación AST de Go que requiere funciones nombradas claras.
+
+### Rust 🦀
+
+**✅ Código Recomendado:**
+```rust
+#[trace]  // FlowTrace macro
+pub fn fetch_users() -> Result<Vec<User>, Error> {
+    database::query("SELECT * FROM users")
+}
+
+#[trace]
+pub fn process_users(users: Vec<User>) -> Vec<ProcessedUser> {
+    users.into_iter().map(process_user).collect()
+}
+```
+
+**❌ Evitar:**
+- Macros complejas que ocultan lógica
+- Código `unsafe` extensivo
+- Closures anónimas sin anotaciones
+
+**Por qué:** FlowTrace usa macros procedurales que requieren funciones explícitas.
+
+### .NET/C# 💜
+
+**✅ Código Recomendado:**
+```csharp
+public class UserService
+{
+    public async Task<List<User>> FetchUsersAsync()
+    {
+        return await _dbContext.Users.ToListAsync();
+    }
+
+    public List<ProcessedUser> ProcessUsers(List<User> users)
+    {
+        return users.Select(ProcessUser).ToList();
+    }
+}
+```
+
+**❌ Evitar:**
+- Modificación de IL en runtime
+- Uso excesivo de reflexión
+- Código dinámico con `dynamic` keyword
+
+**Por qué:** FlowTrace usa Source Generators que requieren código estático analizable.
+
+### 📋 Resumen General
+
+**Principios Universales para Todos los Lenguajes:**
+
+1. **Declarar antes de usar** - Funciones/métodos declarados antes de ser llamados
+2. **Código explícito** - Evitar trucos de lenguaje que oculten flujo de ejecución
+3. **Estructura clara** - Organización lógica con responsabilidades bien definidas
+4. **Evitar metaprogramación excesiva** - Generación dinámica dificulta instrumentación
+5. **Usar patrones estándar** - MVC, Clean Architecture, etc. funcionan perfectamente
+
+**El código bien estructurado es código que FlowTrace puede instrumentar fácilmente.** Si sigues buenas prácticas de tu lenguaje, FlowTrace funcionará sin problemas.
+
+---
+
 ## 🔗 Enlaces
 
 - **GitHub**: [Rixmerz/flowtrace-debugger](https://github.com/Rixmerz/flowtrace-debugger)

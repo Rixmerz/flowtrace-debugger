@@ -74,7 +74,120 @@ For Claude Desktop, add to `~/Library/Application Support/Claude/claude_desktop_
 
 ## Available Tools
 
-### 1. `flowtrace_query`
+### Performance Analysis Tools (Dashboard)
+
+#### 1. `dashboard.open`
+
+Open a flowtrace.jsonl file in the interactive performance dashboard and get analysis URL.
+
+**Parameters:**
+- `path` (required): Absolute path to flowtrace.jsonl file
+
+**Returns:**
+- Summary statistics (total calls, avg duration, methods, exceptions)
+- Top 5 slow methods with durations
+- Top 5 bottlenecks with impact scores
+- Dashboard URL for full visual analysis
+
+**Example:**
+```typescript
+dashboard.open({
+  path: "/path/to/flowtrace.jsonl"
+})
+```
+
+**Output:**
+```
+✅ Dashboard Analysis Complete
+
+📊 Summary:
+   Total Calls: 31
+   Avg Duration: 56865.00ms
+   Total Methods: 19
+   Exceptions: 3
+
+🐌 Top 5 Slow Methods:
+   1. main (ExampleApp): 375.89ms avg
+   2. run (ExampleApp): 362.01ms avg
+   ...
+
+🔴 Top 5 Bottlenecks:
+   1. main (ExampleApp): Impact 375885
+   ...
+
+🌐 View Full Dashboard: http://localhost:8765?analysis=analysis-1234567890
+```
+
+#### 2. `dashboard.analyze`
+
+Analyze a flowtrace.jsonl file and return detailed performance metrics (JSON format, no UI).
+
+**Parameters:**
+- `path` (required): Absolute path to flowtrace.jsonl file
+- `top` (optional): Number of top results (default: 10)
+
+**Returns:**
+- Full performance analysis in JSON format
+- Summary statistics
+- Slow methods with percentiles (P50/P95/P99)
+- Bottlenecks with impact scores
+- Error hotspots
+- Time distribution
+
+**Example:**
+```typescript
+dashboard.analyze({
+  path: "/path/to/flowtrace.jsonl",
+  top: 20
+})
+```
+
+#### 3. `dashboard.bottlenecks`
+
+Get performance bottlenecks ranked by impact score (call count × average duration).
+
+**Parameters:**
+- `path` (required): Absolute path to flowtrace.jsonl file
+- `top` (optional): Number of top bottlenecks (default: 10)
+
+**Returns:**
+- List of top bottlenecks with:
+  - Method name and class
+  - Call count
+  - Average duration
+  - Total time
+  - Impact score
+
+**Example:**
+```typescript
+dashboard.bottlenecks({
+  path: "/path/to/flowtrace.jsonl",
+  top: 15
+})
+```
+
+#### 4. `dashboard.errors`
+
+Get error hotspots (methods with exceptions).
+
+**Parameters:**
+- `path` (required): Absolute path to flowtrace.jsonl file
+
+**Returns:**
+- List of methods with exceptions
+- Total calls vs exception count
+- Error rate percentage
+
+**Example:**
+```typescript
+dashboard.errors({
+  path: "/path/to/flowtrace.jsonl"
+})
+```
+
+### Log Analysis Tools
+
+#### 5. `flowtrace_query`
 
 Query and analyze JSONL flow trace files.
 

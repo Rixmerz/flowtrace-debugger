@@ -2,8 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import fs from "fs";
+import path from "path";
 import { loadJsonl } from "./lib/jsonl";
 import type { LogEvent } from "./types";
+import { registerDashboardTools } from "./dashboard-tools";
 
 const mcp = new McpServer({ name: "flowtrace-mcp", version: "0.1.0" });
 
@@ -36,6 +38,9 @@ mcp.tool(
     return { content: [{ type: 'text', text: JSON.stringify(rows.slice(0, limit)) }] };
   }
 );
+
+// Register dashboard tools
+registerDashboardTools(mcp);
 
 const transport = new StdioServerTransport();
 (async () => { await mcp.connect(transport); })();

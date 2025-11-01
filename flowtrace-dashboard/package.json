@@ -1,0 +1,32 @@
+{
+  "name": "flowtrace-dashboard",
+  "version": "1.0.0",
+  "description": "Performance analysis dashboard for FlowTrace logs",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "nodemon server/server.js",
+    "cli": "node cli.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "bin": {
+    "flowtrace-dashboard": "./cli.js"
+  },
+  "keywords": [
+    "flowtrace",
+    "performance",
+    "dashboard",
+    "analysis"
+  ],
+  "author": "Juan Pablo Diaz <juanpablo516@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.1",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
