@@ -6,13 +6,16 @@ import path from "path";
 import { loadJsonl } from "./lib/jsonl";
 import type { LogEvent } from "./types";
 import { registerDashboardTools } from "./dashboard-tools";
+import { registerFlowTraceTools } from "./flowtrace-tools";
 
 const mcp = new McpServer({ name: "flowtrace-mcp", version: "0.1.0" });
 
 const sessions = new Map<string, { rows: LogEvent[]; fields: Record<string, number>; path: string }>();
 function genId() { return Math.random().toString(36).slice(2); }
 
-mcp.tool("log.open", "Open a JSONL log and return session id", { path: z.string() }, async ({ path }) => {
+mcp.tool("log.open", "Open a JSONL log and return session id", {
+  path: z.string().describe("Absolute path to the JSONL log file to open and create an analysis session")
+}, async ({ path }) => {
   if (!fs.existsSync(path)) throw new Error(`File not found: ${path}`);
   const { rows, fields } = await loadJsonl(path);
   const id = genId();
@@ -20,7 +23,9 @@ mcp.tool("log.open", "Open a JSONL log and return session id", { path: z.string(
   return { content: [{ type: 'text', text: JSON.stringify({ sessionId: id, count: rows.length }) }] };
 });
 
-mcp.tool("log.schema", "Return discovered fields and a sample row", { sessionId: z.string() }, async ({ sessionId }) => {
+mcp.tool("log.schema", "Return discovered fields and a sample row", {
+  sessionId: z.string().describe("Session ID returned from log.open, used to identify the active log session")
+}, async ({ sessionId }) => {
   const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
   return { content: [{ type: 'text', text: JSON.stringify({ fields: s.fields, sampleRow: s.rows[0] ?? null }) }] };
 });
@@ -28,7 +33,13 @@ mcp.tool("log.schema", "Return discovered fields and a sample row", { sessionId:
 mcp.tool(
   "log.search",
   "Filter rows by mini-DSL and return selected fields",
-  { sessionId: z.string(), filter: z.string().optional(), fields: z.array(z.string()).optional(), limit: z.number().optional(), sort: z.string().optional() },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    filter: z.string().optional().describe("Filter string - returns rows where JSON representation contains this substring (case-sensitive)"),
+    fields: z.array(z.string()).optional().describe("Array of field names to return in results. If not specified, returns all fields"),
+    limit: z.number().optional().describe("Maximum number of rows to return (default: 200)"),
+    sort: z.string().optional().describe("Field name to sort results by (alphabetical/lexical order)")
+  },
   async ({ sessionId, filter, fields, limit = 200, sort }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     // trivial predicate: if filter given, do simple contains on JSON string; (full DSL can be wired later)
@@ -42,6 +53,9 @@ mcp.tool(
 // Register dashboard tools
 registerDashboardTools(mcp);
 
+// Register FlowTrace initialization and execution tools
+registerFlowTraceTools(mcp);
+
 const transport = new StdioServerTransport();
 (async () => { await mcp.connect(transport); })();
 
@@ -49,7 +63,15 @@ const transport = new StdioServerTransport();
 mcp.tool(
   "log.aggregate",
   "Group && aggregate metrics over fields",
-  { sessionId: z.string(), groupBy: z.array(z.string()), metric: z.object({ op: z.enum(["count","sum","avg","max","min"]), field: z.string().optional() }), filter: z.string().optional() },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    groupBy: z.array(z.string()).describe("Array of field names to group results by (creates composite key from all fields)"),
+    metric: z.object({
+      op: z.enum(["count","sum","avg","max","min"]).describe("Aggregation operation: 'count' (row count), 'sum', 'avg', 'max', 'min' (all require numeric field)"),
+      field: z.string().optional().describe("Field name to aggregate (required for sum/avg/max/min, ignored for count)")
+    }).describe("Aggregation metric to calculate: {op: 'count'|'sum'|'avg'|'max'|'min', field?: string}"),
+    filter: z.string().optional().describe("Filter string - only aggregate rows where JSON representation contains this substring")
+  },
   async ({ sessionId, groupBy, metric, filter }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     let rows = s.rows.filter(r => !filter || JSON.stringify(r).includes(filter));
@@ -76,7 +98,12 @@ mcp.tool(
 mcp.tool(
   "log.topK",
   "Top K values for a field",
-  { sessionId: z.string(), byField: z.string(), k: z.number().optional(), filter: z.string().optional() },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    byField: z.string().describe("Field name to count occurrences and rank by frequency"),
+    k: z.number().optional().describe("Number of top values to return (default: 20)"),
+    filter: z.string().optional().describe("Filter string - only count rows where JSON representation contains this substring")
+  },
   async ({ sessionId, byField, k = 20, filter }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     const counts = new Map<string, number>();
@@ -92,7 +119,11 @@ mcp.tool(
 mcp.tool(
   "log.timeline",
   "Ordered events matching a filter",
-  { sessionId: z.string(), filter: z.string().optional(), fields: z.array(z.string()).optional() },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    filter: z.string().optional().describe("Filter string - only return events where JSON representation contains this substring"),
+    fields: z.array(z.string()).optional().describe("Array of field names to return. If not specified, returns all fields")
+  },
   async ({ sessionId, filter, fields }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     let rows = s.rows.filter(r => !filter || JSON.stringify(r).includes(filter)).sort((a,b)=>Number(a.timestamp||0)-Number(b.timestamp||0));
@@ -104,7 +135,10 @@ mcp.tool(
 mcp.tool(
   "log.flow",
   "Build correlation chains by keys",
-  { sessionId: z.string(), keys: z.array(z.string()) },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    keys: z.array(z.string()).describe("Array of field names to use as correlation keys (creates composite key from all fields to track related events)")
+  },
   async ({ sessionId, keys }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     const map = new Map<string, any[]>();
@@ -121,7 +155,10 @@ mcp.tool(
 mcp.tool(
   "log.errors",
   "List likely error events by regex on standard fields",
-  { sessionId: z.string(), filter: z.string().optional() },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    filter: z.string().optional().describe("Additional filter string applied before error detection (substring match on JSON)")
+  },
   async ({ sessionId, filter }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     const rows = s.rows.filter(r => !filter || JSON.stringify(r).includes(filter));
@@ -133,7 +170,11 @@ mcp.tool(
 mcp.tool(
   "log.sample",
   "Sample rows matching a filter",
-  { sessionId: z.string(), filter: z.string().optional(), limit: z.number().optional() },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    filter: z.string().optional().describe("Filter string - only sample rows where JSON representation contains this substring"),
+    limit: z.number().optional().describe("Number of sample rows to return (default: 50)")
+  },
   async ({ sessionId, filter, limit = 50 }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     const rows = s.rows.filter(r => !filter || JSON.stringify(r).includes(filter)).slice(0, limit);
@@ -144,7 +185,12 @@ mcp.tool(
 mcp.tool(
   "log.export",
   "Export filtered rows to CSV || JSON",
-  { sessionId: z.string(), filter: z.string().optional(), fields: z.array(z.string()).optional(), to: z.enum(["csv","json"]) },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    filter: z.string().optional().describe("Filter string - only export rows where JSON representation contains this substring"),
+    fields: z.array(z.string()).optional().describe("Array of field names to export. If not specified, exports all fields"),
+    to: z.enum(["csv","json"]).describe("Export format: 'csv' (comma-separated values) or 'json' (JSON array)")
+  },
   async ({ sessionId, filter, fields, to }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
     let rows = s.rows.filter(r => !filter || JSON.stringify(r).includes(filter));
@@ -162,7 +208,11 @@ mcp.tool(
 mcp.tool(
   "log.expand",
   "Expand truncated log by retrieving full data from segmented file",
-  { sessionId: z.string(), timestamp: z.number(), event: z.string().optional() },
+  {
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    timestamp: z.number().describe("Exact timestamp of the log entry to expand (must match a row's timestamp field)"),
+    event: z.string().optional().describe("Optional event name to disambiguate if multiple entries share the same timestamp")
+  },
   async ({ sessionId, timestamp, event }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");
 
@@ -202,11 +252,11 @@ mcp.tool(
   "log.searchExpanded",
   "Search logs with automatic expansion of truncated entries",
   {
-    sessionId: z.string(),
-    filter: z.string().optional(),
-    fields: z.array(z.string()).optional(),
-    limit: z.number().optional(),
-    autoExpand: z.boolean().optional()
+    sessionId: z.string().describe("Session ID returned from log.open"),
+    filter: z.string().optional().describe("Filter string - returns rows where JSON representation contains this substring"),
+    fields: z.array(z.string()).optional().describe("Array of field names to return. If not specified, returns all fields"),
+    limit: z.number().optional().describe("Maximum number of rows to return (default: 200)"),
+    autoExpand: z.boolean().optional().describe("Automatically expand truncated log entries by reading segmented files (default: false)")
   },
   async ({ sessionId, filter, fields, limit = 200, autoExpand = false }) => {
     const s = sessions.get(sessionId); if (!s) throw new Error("Invalid sessionId");

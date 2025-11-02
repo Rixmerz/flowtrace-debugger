@@ -50,7 +50,7 @@ export function registerDashboardTools(mcp: McpServer) {
   mcp.tool(
     "dashboard.open",
     "Open a flowtrace.jsonl file in the performance dashboard and get analysis URL",
-    { path: z.string() },
+    { path: z.string().describe("Absolute path to the flowtrace.jsonl log file to analyze and visualize in the dashboard") },
     async ({ path: filePath }) => {
       if (!fs.existsSync(filePath)) {
         throw new Error(`File not found: ${filePath}`);
@@ -117,7 +117,10 @@ export function registerDashboardTools(mcp: McpServer) {
   mcp.tool(
     "dashboard.analyze",
     "Analyze a flowtrace.jsonl file and return performance metrics (no UI)",
-    { path: z.string(), top: z.number().optional() },
+    {
+      path: z.string().describe("Absolute path to the flowtrace.jsonl log file to analyze for performance metrics"),
+      top: z.number().optional().describe("Number of top slow methods and bottlenecks to return (default: 10)")
+    },
     async ({ path: filePath, top = 10 }) => {
       if (!fs.existsSync(filePath)) {
         throw new Error(`File not found: ${filePath}`);
@@ -149,7 +152,10 @@ export function registerDashboardTools(mcp: McpServer) {
   mcp.tool(
     "dashboard.bottlenecks",
     "Get performance bottlenecks from a flowtrace.jsonl file",
-    { path: z.string(), top: z.number().optional() },
+    {
+      path: z.string().describe("Absolute path to the flowtrace.jsonl log file to analyze for performance bottlenecks"),
+      top: z.number().optional().describe("Number of top bottlenecks to return, ranked by impact score (default: 10)")
+    },
     async ({ path: filePath, top = 10 }) => {
       if (!fs.existsSync(filePath)) {
         throw new Error(`File not found: ${filePath}`);
@@ -183,7 +189,7 @@ export function registerDashboardTools(mcp: McpServer) {
   mcp.tool(
     "dashboard.errors",
     "Get error hotspots from a flowtrace.jsonl file",
-    { path: z.string() },
+    { path: z.string().describe("Absolute path to the flowtrace.jsonl log file to analyze for error hotspots and exception patterns") },
     async ({ path: filePath }) => {
       if (!fs.existsSync(filePath)) {
         throw new Error(`File not found: ${filePath}`);

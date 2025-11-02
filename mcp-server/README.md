@@ -74,6 +74,147 @@ For Claude Desktop, add to `~/Library/Application Support/Claude/claude_desktop_
 
 ## Available Tools
 
+### FlowTrace Initialization and Execution Tools
+
+#### 1. `flowtrace.init`
+
+Initialize FlowTrace in a project directory. Creates `.flowtrace/` configuration, downloads agent, and generates run script.
+
+**Parameters:**
+- `projectPath` (required): Absolute path to project directory
+- `autoYes` (optional, default: true): Skip interactive prompts
+- `language` (optional): Override auto-detection (node|java|python)
+
+**Example:**
+```typescript
+flowtrace.init({
+  projectPath: "/path/to/my-project",
+  autoYes: true
+})
+```
+
+#### 2. `flowtrace.detect`
+
+Auto-detect project language and framework for intelligent build management.
+
+**Parameters:**
+- `projectPath` (required): Absolute path to project directory
+
+**Returns:**
+- Detected language (node, java, python)
+- Framework (react-cra, express, spring-boot, django, fastapi)
+- Default port
+- Detection indicators
+
+**Example:**
+```typescript
+flowtrace.detect({
+  projectPath: "/path/to/my-project"
+})
+```
+
+#### 3. `flowtrace.build`
+
+Build project based on detected language. Executes npm install, mvn clean package, or pip install automatically.
+
+**Parameters:**
+- `projectPath` (required): Absolute path to project directory
+- `clean` (optional, default: true): Clean before build (Java only)
+
+**Example:**
+```typescript
+flowtrace.build({
+  projectPath: "/path/to/my-project",
+  clean: true
+})
+```
+
+#### 4. `flowtrace.execute`
+
+Execute application with FlowTrace instrumentation using the generated run-and-flowtrace.sh script.
+
+**Parameters:**
+- `projectPath` (required): Absolute path to project directory
+- `timeout` (optional, default: 60): Execution timeout in seconds
+
+**Example:**
+```typescript
+flowtrace.execute({
+  projectPath: "/path/to/my-project",
+  timeout: 90
+})
+```
+
+#### 5. `flowtrace.cleanup`
+
+Clean FlowTrace log files for testing iterations. Removes main log and/or truncated logs.
+
+**Parameters:**
+- `projectPath` (required): Absolute path to project directory
+- `cleanMain` (optional, default: true): Clean flowtrace.jsonl
+- `cleanTruncated` (optional, default: true): Clean flowtrace-jsonsl/ directory
+
+**Returns:**
+- Files deleted
+- Bytes freed
+- Summary statistics
+
+**Example:**
+```typescript
+flowtrace.cleanup({
+  projectPath: "/path/to/my-project",
+  cleanMain: true,
+  cleanTruncated: true
+})
+```
+
+#### 6. `flowtrace.status`
+
+Get comprehensive FlowTrace project status including initialization state and log statistics.
+
+**Parameters:**
+- `projectPath` (required): Absolute path to project directory
+
+**Returns:**
+- Initialization status
+- Configuration details
+- Log file sizes and counts
+
+**Example:**
+```typescript
+flowtrace.status({
+  projectPath: "/path/to/my-project"
+})
+```
+
+### Complete Workflow Example
+
+```typescript
+// 1. Detect project type
+const detection = await flowtrace.detect({ projectPath: "/path/to/my-project" });
+// → Language: node, Framework: react-cra
+
+// 2. Initialize FlowTrace
+await flowtrace.init({ projectPath: "/path/to/my-project", autoYes: true });
+// → Creates .flowtrace/, downloads agent, generates run script
+
+// 3. Build project
+await flowtrace.build({ projectPath: "/path/to/my-project" });
+// → Executes npm install
+
+// 4. Execute with instrumentation
+await flowtrace.execute({ projectPath: "/path/to/my-project", timeout: 60 });
+// → Runs with FlowTrace agent attached
+
+// 5. Check status
+await flowtrace.status({ projectPath: "/path/to/my-project" });
+// → Shows running status and log statistics
+
+// 6. Clean logs for next iteration
+await flowtrace.cleanup({ projectPath: "/path/to/my-project" });
+// → Removes logs, ready for fresh execution
+```
+
 ### Performance Analysis Tools (Dashboard)
 
 #### 1. `dashboard.open`
