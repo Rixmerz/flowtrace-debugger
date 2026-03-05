@@ -44,9 +44,12 @@ flowtrace-*.jsonl
 # NetBeans
 nbproject/
 nbbuild/
-dist/
 nbdist/
 .nb-gradle/
+
+# Build output (except bundled MCP server)
+mcp-server/dist/
+!mcp-server/dist/server.bundle.js
 
 # Node modules
 node_modules/
