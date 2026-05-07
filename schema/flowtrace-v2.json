@@ -43,7 +43,7 @@
     "commonProps": {
       "type": "object",
       "properties": {
-        "ts":         { "type": "number", "minimum": 0 },
+        "ts":         { "type": "number", "minimum": 1000000000, "maximum": 10000000000, "description": "Unix epoch seconds (float, sub-second precision)" },
         "trace_id":   { "$ref": "#/$defs/traceId" },
         "span_id":    { "$ref": "#/$defs/spanId" },
         "parent_id":  { "$ref": "#/$defs/parentId" },
@@ -63,7 +63,7 @@
       "title": "EnterEvent",
       "type": "object",
       "properties": {
-        "ts":         { "type": "number", "minimum": 0 },
+        "ts":         { "type": "number", "minimum": 1000000000, "maximum": 10000000000, "description": "Unix epoch seconds (float, sub-second precision)" },
         "trace_id":   { "$ref": "#/$defs/traceId" },
         "span_id":    { "$ref": "#/$defs/spanId" },
         "parent_id":  { "$ref": "#/$defs/parentId" },
@@ -88,7 +88,7 @@
       "title": "ExitEvent",
       "type": "object",
       "properties": {
-        "ts":          { "type": "number", "minimum": 0 },
+        "ts":          { "type": "number", "minimum": 1000000000, "maximum": 10000000000, "description": "Unix epoch seconds (float, sub-second precision)" },
         "trace_id":    { "$ref": "#/$defs/traceId" },
         "span_id":     { "$ref": "#/$defs/spanId" },
         "parent_id":   { "$ref": "#/$defs/parentId" },

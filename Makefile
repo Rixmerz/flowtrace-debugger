@@ -3,12 +3,14 @@
 # coordinates cross-cutting tasks (schema validation, top-level test
 # aggregation, benchmark harness placeholder).
 
-.PHONY: build test bench validate-schema clean help
+.PHONY: build test bench validate-schema build-java test-java clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
-	@echo "  make build            Build v2 subprojects (placeholder until S1+ land)"
-	@echo "  make test             Run validate-schema plus per-subproject tests"
+	@echo "  make build            Build all v2 subprojects (build-java + ...)"
+	@echo "  make build-java       Build capture/java/flowtrace-otel-extension shaded jar"
+	@echo "  make test             Run validate-schema + test-java + per-subproject tests"
+	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make bench            Benchmark harness (TODO Sprint 6)"
 	@echo "  make validate-schema  Validate examples/golden/*/expected.jsonl vs schema/flowtrace-v2.json"
 	@echo "  make clean            Remove transient build/test artifacts"
@@ -26,7 +28,7 @@ validate-schema:
 # Top-level test aggregator. v2-only path: schema validation is the
 # baseline contract. Per-subproject tests are added as v2 capture
 # layers land in S2-S4 (java, python, node, ts).
-test: validate-schema
+test: validate-schema test-java
 	@echo "==> mcp-server tests"
 	@cd mcp-server && node test/test-trace-tools.mjs
 	@echo "==> flowtrace-dashboard tests"
@@ -34,9 +36,18 @@ test: validate-schema
 	@echo "==> flowtrace-cli tests"
 	@cd flowtrace-cli && node test/test-cli.js
 
+# Java capture module
+build-java:
+	@echo "==> build-java: flowtrace-otel-extension"
+	@cd capture/java/flowtrace-otel-extension && mvn -q package
+
+test-java:
+	@echo "==> test-java: flowtrace-otel-extension"
+	@cd capture/java/flowtrace-otel-extension && mvn -q test
+
 # Build aggregator placeholder.
-build:
-	@echo "==> build: nothing wired at root level yet (per-subproject builds remain local)"
+build: build-java
+	@echo "==> build: done"
 
 # Benchmark harness — planned for Sprint 6.
 bench:

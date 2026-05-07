@@ -32,7 +32,20 @@ program
 program
   .command('run')
   .description('Ejecuta la app con instrumentación FlowTrace y emite JSONL v2')
+  .addHelpText('after', `
+Opciones:
+  --lang <java|python|node|ts>   Lenguaje del proyecto (auto-detect en S5)
+  --package-prefix <pkg>         Prefijo de paquete a instrumentar (Java)
+  --inject <mvn|gradle|java>     Estrategia de inyección JVM (default: JAVA_TOOL_OPTIONS)
+  --output <path>                Ruta del JSONL (default: .flowtrace/<ts>.jsonl)
+
+Ejemplos:
+  flowtrace run --lang java --package-prefix com.example -- java -jar app.jar
+  flowtrace run --lang java -- mvn spring-boot:run
+  flowtrace run --lang java --inject mvn -- mvn spring-boot:run`)
   .option('--lang <lang>', 'Lenguaje de la app: java|python|node|ts (auto en S5)')
+  .option('--package-prefix <pkg>', 'Prefijo de paquete a instrumentar (Java)')
+  .option('--inject <strategy>', 'Estrategia de inyección JVM: mvn|gradle|java (default: auto)')
   .option('-o, --out <path>', 'Ruta de salida JSONL (default: .flowtrace/<ISO>.jsonl)')
   .allowUnknownOption(true)
   .action(async (options, cmd) => {
