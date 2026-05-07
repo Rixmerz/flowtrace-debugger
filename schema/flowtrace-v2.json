@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowtrace.io/schema/v2/flowtrace-event.json",
+  "title": "FlowTrace v2 Event",
+  "description": "One JSON object per line in flowtrace.jsonl. OTel-compatible (W3C trace context). Two event types: 'enter' and 'exit'. 'exit' carries result, duration_ns, and optionally error.",
+  "type": "object",
+  "$defs": {
+    "traceId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$",
+      "description": "W3C trace_id: 32 lowercase hex characters."
+    },
+    "spanId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "W3C span_id: 16 lowercase hex characters."
+    },
+    "parentId": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9a-f]{16}$" }
+      ],
+      "description": "W3C parent span_id, or null for root spans."
+    },
+    "lang": {
+      "type": "string",
+      "enum": ["java", "python", "node", "ts"]
+    },
+    "visibility": {
+      "type": "string",
+      "enum": ["public", "private", "internal", "unknown"]
+    },
+    "errorObj": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "msg":  { "type": "string" },
+        "stack": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["type", "msg", "stack"],
+      "additionalProperties": false
+    },
+    "commonProps": {
+      "type": "object",
+      "properties": {
+        "ts":         { "type": "number", "minimum": 0 },
+        "trace_id":   { "$ref": "#/$defs/traceId" },
+        "span_id":    { "$ref": "#/$defs/spanId" },
+        "parent_id":  { "$ref": "#/$defs/parentId" },
+        "thread":     { "type": "string" },
+        "lang":       { "$ref": "#/$defs/lang" },
+        "module":     { "type": "string" },
+        "class":      { "type": "string" },
+        "method":     { "type": "string" },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "args":       { "type": "object" },
+        "depth":      { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "EnterEvent",
+      "type": "object",
+      "properties": {
+        "ts":         { "type": "number", "minimum": 0 },
+        "trace_id":   { "$ref": "#/$defs/traceId" },
+        "span_id":    { "$ref": "#/$defs/spanId" },
+        "parent_id":  { "$ref": "#/$defs/parentId" },
+        "event":      { "const": "enter" },
+        "thread":     { "type": "string" },
+        "lang":       { "$ref": "#/$defs/lang" },
+        "module":     { "type": "string" },
+        "class":      { "type": "string" },
+        "method":     { "type": "string" },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "args":       { "type": "object" },
+        "depth":      { "type": "integer", "minimum": 0 }
+      },
+      "required": [
+        "ts", "trace_id", "span_id", "parent_id", "event",
+        "thread", "lang", "module", "class", "method",
+        "visibility", "args", "depth"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "ExitEvent",
+      "type": "object",
+      "properties": {
+        "ts":          { "type": "number", "minimum": 0 },
+        "trace_id":    { "$ref": "#/$defs/traceId" },
+        "span_id":     { "$ref": "#/$defs/spanId" },
+        "parent_id":   { "$ref": "#/$defs/parentId" },
+        "event":       { "const": "exit" },
+        "thread":      { "type": "string" },
+        "lang":        { "$ref": "#/$defs/lang" },
+        "module":      { "type": "string" },
+        "class":       { "type": "string" },
+        "method":      { "type": "string" },
+        "visibility":  { "$ref": "#/$defs/visibility" },
+        "args":        { "type": "object" },
+        "result":      { "type": "object" },
+        "error":       { "$ref": "#/$defs/errorObj" },
+        "duration_ns": { "type": "integer", "minimum": 0 },
+        "depth":       { "type": "integer", "minimum": 0 }
+      },
+      "required": [
+        "ts", "trace_id", "span_id", "parent_id", "event",
+        "thread", "lang", "module", "class", "method",
+        "visibility", "args", "result", "duration_ns", "depth"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

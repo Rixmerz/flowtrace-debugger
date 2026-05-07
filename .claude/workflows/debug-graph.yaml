@@ -1,0 +1,733 @@
+# Universal Debug Workflow v2.0
+# Multi-strategy debugging: tests, FlowTrace, profiling, hybrid
+# Flow: understand -> reproduce -> classify -> [strategy] -> analyze -> hypothesize -> fix -> verify -> report
+
+metadata:
+  name: "Universal Debug"
+  description: "Debugging multi-estrategia. Clasifica el bug, selecciona la herramienta optima (tests, FlowTrace, profiling, hibrido), y ejecuta un ciclo de debug basado en evidencia."
+  version: "2.0.0"
+  type: "graph"
+  author: "AgentCockpit"
+  target_model: "sonnet"
+  mcps_required: []
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # FASE 1: ENTENDER EL PROBLEMA
+  # ---------------------------------------------------------------------------
+  - id: "understand"
+    name: "Entender el Problema"
+    is_start: true
+    model: sonnet
+    mcps_enabled: []
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Bash"
+      - "Task"
+    max_visits: 10
+    prompt_injection: |
+      ======================================================================
+      FASE 1: ENTENDER EL PROBLEMA
+      ======================================================================
+
+      Antes de tocar NADA, entiende el problema completamente.
+
+      PASOS:
+      1. Lee el reporte del bug o la descripcion del problema del usuario
+      2. Identifica los SINTOMAS concretos (que falla, cuando, como)
+      3. Lee el codigo fuente relevante (Read, Glob, Grep)
+      4. Identifica las rutas de ejecucion involucradas
+      5. Forma una PREGUNTA especifica: "Por que X hace Y cuando deberia hacer Z?"
+
+      NO modifiques nada. Solo lee y entiende.
+
+      SIGNAL: Cuando tengas la pregunta clara, di "problema entendido"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 2: REPRODUCIR EL BUG
+  # ---------------------------------------------------------------------------
+  - id: "reproduce"
+    name: "Reproducir el Bug"
+    model: sonnet
+    mcps_enabled: []
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 10
+    prompt_injection: |
+      ======================================================================
+      FASE 2: REPRODUCIR EL BUG
+      ======================================================================
+
+      Confirma que el bug existe ANTES de investigar.
+
+      DETECTAR STACK:
+      - Cargo.toml -> cargo test
+      - package.json -> npm test / npx vitest / npx jest
+      - go.mod -> go test ./...
+      - pyproject.toml / setup.py -> pytest
+      - *.csproj -> dotnet test
+      - Gemfile -> bundle exec rspec
+
+      PASOS:
+      1. Detecta el stack tecnologico (busca Cargo.toml, package.json, go.mod, etc.)
+      2. Busca tests existentes relacionados al bug (Glob, Grep)
+      3. Ejecuta tests relevantes con Bash:
+         - Si hay tests especificos: ejecuta solo esos
+         - Si no hay tests: ejecuta el test suite completo
+         - Si no hay test framework: intenta reproducir manualmente con Bash
+      4. Confirma que al menos un test falla o que el comportamiento incorrecto
+         se puede observar en la salida
+
+      IMPORTANTE: Write y Edit estan bloqueados. Solo OBSERVAS.
+      Bash esta disponible para ejecutar tests — ejecutar tests es observacion.
+
+      SIGNAL:
+      - Si el bug se reproduce: "bug reproducido"
+      - Si no puedes reproducirlo: "bug no reproducible"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 2b: BUG NO REPRODUCIBLE (END)
+  # ---------------------------------------------------------------------------
+  - id: "unreproducible"
+    name: "Bug No Reproducible"
+    is_end: true
+    model: sonnet
+    mcps_enabled: []
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 3
+    prompt_injection: |
+      ======================================================================
+      BUG NO REPRODUCIBLE
+      ======================================================================
+
+      El bug no se pudo reproducir. Genera un reporte con:
+
+      ## Reporte: Bug No Reproducible
+      - **Sintomas reportados**: [lo que dijo el usuario]
+      - **Intentos de reproduccion**: [que tests ejecutaste, que observaste]
+      - **Posibles razones**:
+        - Dependencia de estado externo (DB, API, cache)
+        - Condicion de carrera (intermitente)
+        - Diferencia de entorno (OS, version, config)
+        - Bug ya corregido en la version actual
+      - **Sugerencias**:
+        - Pedir mas contexto al usuario (pasos exactos, entorno)
+        - Agregar logging temporal en el area sospechosa
+        - Intentar con datos de entrada especificos del reporte
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 3: CLASIFICAR TIPO DE BUG
+  # ---------------------------------------------------------------------------
+  - id: "classify"
+    name: "Clasificar Bug"
+    model: sonnet
+    mcps_enabled: []
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 5
+    prompt_injection: |
+      ======================================================================
+      FASE 3: CLASIFICAR TIPO DE BUG
+      ======================================================================
+
+      Basandote en los sintomas y la reproduccion, clasifica el bug.
+
+      CATEGORIAS:
+      1. SERIALIZACION/DATA: Datos corruptos, parsing incorrecto, roundtrip falla,
+         schema mismatch, encoding, serde errors
+         -> Estrategia: tests dirigidos
+
+      2. LOGICA/FLUJO: Resultado incorrecto, branch equivocado, off-by-one,
+         estado inconsistente, missing early return
+         -> Estrategia: tests dirigidos
+
+      3. PERFORMANCE: Lento, timeout, uso excesivo de CPU/memoria,
+         N+1 queries, hot loops
+         -> Estrategia: FlowTrace profiling (o nativo)
+
+      4. INTEGRACION: Falla entre servicios, API contract roto,
+         headers faltantes, auth issues
+         -> Estrategia: FlowTrace tracing (o request replay)
+
+      5. CONCURRENCIA: Race condition, deadlock, dato corrupto intermitente,
+         orden no determinista
+         -> Estrategia: stress tests + instrumentacion
+
+      6. MEMORIA: Leak, use-after-free, stack overflow, OOM,
+         crecimiento unbounded
+         -> Estrategia: sanitizers + profiling
+
+      Analiza la evidencia de la fase de reproduccion y selecciona UNA categoria.
+
+      SIGNAL: Di exactamente una de estas frases:
+      - "bug de serializacion"
+      - "bug de logica"
+      - "bug de performance"
+      - "bug de integracion"
+      - "bug de concurrencia"
+      - "bug de memoria"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # ESTRATEGIA A: TESTS DIRIGIDOS (serializacion, logica)
+  # ---------------------------------------------------------------------------
+  - id: "strategy-tests"
+    name: "Estrategia: Tests Dirigidos"
+    model: sonnet
+    mcps_enabled: []
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 15
+    prompt_injection: |
+      ======================================================================
+      ESTRATEGIA: TESTS DIRIGIDOS
+      ======================================================================
+
+      Para bugs de serializacion/data y logica/flujo, los tests son la
+      herramienta mas efectiva.
+
+      PARA SERIALIZACION/DATA:
+      - Ejecuta tests de roundtrip: serialize -> deserialize -> compare
+      - Prueba edge cases: empty, null, unicode, max values, nested structures
+      - Verifica schema compliance con los datos reales
+      - Ejecuta con verbose output para ver valores intermedios
+
+      PARA LOGICA/FLUJO:
+      - Ejecuta tests unitarios del modulo afectado
+      - Agrega filtro para ejecutar solo tests relevantes:
+        cargo test [test_name]
+        npx jest --testNamePattern="[pattern]"
+        pytest -k "[pattern]"
+      - Observa VALORES de retorno, no solo pass/fail
+      - Ejecuta con flags de verbose:
+        cargo test -- --nocapture
+        npx jest --verbose
+        pytest -v -s
+
+      RECOPILA:
+      - Output completo de tests fallidos
+      - Valores esperados vs valores obtenidos
+      - Stack traces de errores
+      - Patrones en los fallos (todos fallan en el mismo punto?)
+
+      Write y Edit estan bloqueados. Solo observas y recopilas datos.
+
+      SIGNAL: Cuando tengas suficientes observaciones, di "observaciones recopiladas"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # ESTRATEGIA B: FLOWTRACE / PROFILING (performance, integracion)
+  # ---------------------------------------------------------------------------
+  - id: "strategy-flowtrace"
+    name: "Estrategia: FlowTrace / Profiling"
+    model: sonnet
+    mcps_enabled:
+      - "jig"
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 20
+    prompt_injection: |
+      ======================================================================
+      ESTRATEGIA: FLOWTRACE / PROFILING
+      ======================================================================
+
+      Para bugs de performance e integracion, necesitas observar el
+      comportamiento runtime.
+
+      IMPORTANTE: FlowTrace NO es un MCP directo. Accede via jig:
+      ```
+      execute_mcp_tool(
+        mcp_name="flowtrace",
+        tool_name="flowtrace_detect",
+        arguments={"projectPath": "/path/to/project"}
+      )
+      ```
+      Tool names usan underscores: flowtrace_detect, flowtrace_init,
+      log_open, log_search, dashboard_bottlenecks, etc.
+
+      SI FLOWTRACE DISPONIBLE y lenguaje soportado (Node.js, Java, Python):
+      1. execute_mcp_tool("flowtrace", "flowtrace_detect", {projectPath}) -> lenguaje
+      2. execute_mcp_tool("flowtrace", "flowtrace_init", {projectPath, autoYes: true})
+      3. execute_mcp_tool("flowtrace", "flowtrace_cleanup", {projectPath})
+      4. execute_mcp_tool("flowtrace", "flowtrace_build", {projectPath})
+      5. execute_mcp_tool("flowtrace", "flowtrace_execute", {projectPath})
+      6. execute_mcp_tool("flowtrace", "log_open", {path: "flowtrace.jsonl"})
+      7. Para PERFORMANCE:
+         - execute_mcp_tool("flowtrace", "dashboard_bottlenecks", {path, top: 10})
+         - execute_mcp_tool("flowtrace", "log_aggregate", {sessionId, groupBy, metric})
+         - execute_mcp_tool("flowtrace", "log_topK", {sessionId, byField, k: 20})
+      8. Para INTEGRACION:
+         - execute_mcp_tool("flowtrace", "log_timeline", {sessionId, filter})
+         - execute_mcp_tool("flowtrace", "log_flow", {sessionId, keys})
+         - execute_mcp_tool("flowtrace", "log_errors", {sessionId})
+
+      SI FLOWTRACE NO DISPONIBLE o lenguaje no soportado:
+      - Rust: cargo bench, flamegraph, criterion
+      - Go: go test -bench, pprof
+      - Node.js: --prof, clinic.js
+      - Python: cProfile, py-spy
+      - General: time, strace, ltrace
+      - Ejecuta profilers nativos con Bash
+
+      RECOPILA:
+      - Metricas de duracion por metodo/funcion
+      - Bottlenecks con score de impacto
+      - Patrones de error en trazas
+      - Timeline de eventos para integracion
+
+      SIGNAL: Cuando tengas suficientes observaciones, di "observaciones recopiladas"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # ESTRATEGIA C: HIBRIDA (concurrencia, memoria)
+  # ---------------------------------------------------------------------------
+  - id: "strategy-hybrid"
+    name: "Estrategia: Hibrida (Tests + Instrumentacion)"
+    model: sonnet
+    mcps_enabled:
+      - "jig"
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 20
+    prompt_injection: |
+      ======================================================================
+      ESTRATEGIA: HIBRIDA (Tests + Instrumentacion)
+      ======================================================================
+
+      Para bugs de concurrencia y memoria, combina tests estresantes
+      con instrumentacion.
+
+      IMPORTANTE: FlowTrace NO es un MCP directo. Accede via jig:
+      ```
+      execute_mcp_tool(
+        mcp_name="flowtrace",
+        tool_name="<tool_name>",
+        arguments={...}
+      )
+      ```
+
+      PARA CONCURRENCIA:
+      - Ejecuta tests con sanitizers:
+        RUSTFLAGS="-Z sanitizer=thread" cargo test
+        go test -race ./...
+        python -X faulthandler script.py
+      - Stress tests: ejecuta el mismo test N veces buscando intermitencia
+        cargo test [name] -- --test-threads=1
+        for i in {1..100}; do cargo test [name]; done
+      - Si FlowTrace disponible (via execute_mcp_tool):
+        execute_mcp_tool("flowtrace", "log_timeline", {sessionId, filter})
+        execute_mcp_tool("flowtrace", "log_flow", {sessionId, keys: ["thread"]})
+
+      PARA MEMORIA:
+      - Ejecuta con sanitizers:
+        RUSTFLAGS="-Z sanitizer=address" cargo test
+        valgrind --tool=memcheck ./target/debug/test
+        node --max-old-space-size=256 script.js
+      - Busca patrones de crecimiento:
+        Ejecuta test varias veces, observa RSS con ps/top
+      - Si FlowTrace disponible (via execute_mcp_tool):
+        execute_mcp_tool("flowtrace", "log_aggregate", {sessionId, groupBy, metric})
+        execute_mcp_tool("flowtrace", "dashboard_analyze", {path})
+
+      RECOPILA:
+      - Output de sanitizers (errores, warnings)
+      - Patrones de fallo intermitente (1 de N veces)
+      - Metricas de memoria (RSS, heap, allocations)
+      - Timeline de eventos concurrentes
+
+      SIGNAL: Cuando tengas suficientes observaciones, di "observaciones recopiladas"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 5: ANALIZAR DATOS
+  # ---------------------------------------------------------------------------
+  - id: "analyze"
+    name: "Analizar Datos"
+    model: sonnet
+    mcps_enabled:
+      - "jig"
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 20
+    prompt_injection: |
+      ======================================================================
+      FASE 5: ANALIZAR DATOS
+      ======================================================================
+
+      Analiza los datos recopilados de la estrategia anterior.
+      Busca EVIDENCIA, no suposiciones.
+
+      DATOS DE TESTS:
+      - Que tests fallaron y cuales pasaron?
+      - Valores esperados vs obtenidos — donde divergen?
+      - Hay un patron comun en los fallos?
+      - El stack trace apunta a que funcion/linea?
+
+      DATOS DE FLOWTRACE (via execute_mcp_tool):
+      - execute_mcp_tool("flowtrace", "log_search", {sessionId, filter})
+      - execute_mcp_tool("flowtrace", "log_aggregate", {sessionId, groupBy, metric})
+      - execute_mcp_tool("flowtrace", "log_flow", {sessionId, keys})
+      - execute_mcp_tool("flowtrace", "dashboard_bottlenecks", {path, top})
+
+      DATOS DE PROFILING:
+      - Donde se concentra el tiempo de ejecucion?
+      - Hay allocations excesivas?
+      - Los sanitizers reportaron errores?
+
+      Si necesitas MAS DATOS, puedes ejecutar mas tests o consultas con Bash.
+
+      Presenta un resumen de DATOS encontrados, no opiniones.
+
+      SIGNAL: Cuando tengas datos suficientes, di "analisis completo"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 6: FORMAR HIPOTESIS
+  # ---------------------------------------------------------------------------
+  - id: "hypothesize"
+    name: "Formar Hipotesis"
+    model: sonnet
+    mcps_enabled:
+      - "jig"
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 10
+    prompt_injection: |
+      ======================================================================
+      FASE 6: FORMAR HIPOTESIS
+      ======================================================================
+
+      Basandote en los DATOS recopilados, forma una hipotesis especifica.
+
+      FORMATO:
+      1. OBSERVACION: Que muestran los datos?
+         - Cita datos especificos (test output, trazas, metricas)
+      2. HIPOTESIS: Cual es la causa raiz?
+         - "El metodo X en archivo Y devuelve Z en lugar de W porque..."
+      3. PREDICCION: Si mi hipotesis es correcta, que deberia cambiar?
+         - "Si corrijo X, el test Y deberia pasar"
+      4. FIX PROPUESTO: Exactamente que lineas de que archivo modificar
+
+      Puedes ejecutar mas tests o consultas para validar tu hipotesis.
+
+      NO modifiques codigo todavia.
+
+      SIGNAL:
+      - Si la hipotesis esta clara: "hipotesis formada"
+      - Si necesitas mas datos: "necesito mas datos"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 7: IMPLEMENTAR FIX
+  # ---------------------------------------------------------------------------
+  - id: "fix"
+    name: "Implementar Fix"
+    model: sonnet
+    mcps_enabled:
+      - "*"
+    max_visits: 30
+    prompt_injection: |
+      ======================================================================
+      FASE 7: IMPLEMENTAR FIX
+      ======================================================================
+
+      Aplica el fix quirurgico basado en tu hipotesis.
+
+      REGLAS:
+      - Modifica SOLO los archivos y lineas identificados en la hipotesis
+      - No hagas refactoring adicional
+      - No agregues console.logs ni debug prints
+      - Cada cambio debe estar justificado por evidencia
+
+      Tienes acceso a TODAS las herramientas (Write, Edit, Bash, etc).
+
+      SIGNAL: Cuando el fix este implementado, di "fix implementado"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 8: VERIFICAR FIX
+  # ---------------------------------------------------------------------------
+  - id: "verify"
+    name: "Verificar Fix"
+    model: sonnet
+    mcps_enabled:
+      - "jig"
+    tools_blocked:
+      - "Write"
+      - "Edit"
+      - "Task"
+    max_visits: 15
+    prompt_injection: |
+      ======================================================================
+      FASE 8: VERIFICAR FIX
+      ======================================================================
+
+      Verifica que el fix funciona ejecutando los mismos tests/observaciones.
+
+      VERIFICACION CON TESTS (siempre):
+      1. Re-ejecuta los tests que fallaban en la fase de reproduccion
+      2. Ejecuta el test suite completo para verificar que no hay regresiones
+      3. Los tests que antes fallaban ahora deben PASAR
+      4. Ningun test nuevo debe FALLAR
+
+      VERIFICACION CON FLOWTRACE (si se uso, via execute_mcp_tool):
+      1. execute_mcp_tool("flowtrace", "flowtrace_cleanup", {projectPath})
+      2. execute_mcp_tool("flowtrace", "flowtrace_build", {projectPath})
+      3. execute_mcp_tool("flowtrace", "flowtrace_execute", {projectPath})
+      4. execute_mcp_tool("flowtrace", "log_open", {path})
+      5. execute_mcp_tool("flowtrace", "log_errors", {sessionId})
+      6. Comparar metricas antes/despues
+
+      CRITERIOS:
+      - El error original NO aparece
+      - No se introdujeron nuevos errores/fallos
+      - El rendimiento no empeoro (si aplica)
+
+      SIGNAL:
+      - Si la verificacion PASA: "verificacion exitosa"
+      - Si la verificacion FALLA: "verificacion fallida"
+
+      ======================================================================
+
+  # ---------------------------------------------------------------------------
+  # FASE 9: REPORTE
+  # ---------------------------------------------------------------------------
+  - id: "report"
+    name: "Generar Reporte de Debug"
+    is_end: true
+    model: sonnet
+    mcps_enabled:
+      - "jig"
+    tools_blocked:
+      - "Edit"
+      - "Task"
+    max_visits: 5
+    prompt_injection: |
+      ======================================================================
+      FASE 9: REPORTE DE DEBUG
+      ======================================================================
+
+      Genera un reporte conciso del debug realizado.
+
+      FORMATO:
+      ## Bug Report
+      - **Tipo de bug**: [serializacion|logica|performance|concurrencia|integracion|memoria]
+      - **Estrategia usada**: [tests|flowtrace|hibrida]
+      - **Sintomas**: [lo que reporto el usuario]
+      - **Causa raiz**: [identificada por la evidencia]
+      - **Evidencia**: [datos especificos: test output, trazas, metricas]
+      - **Fix aplicado**: [archivos y lineas modificados]
+      - **Verificacion**: [tests que pasaron, comparacion antes/despues]
+
+      Opcionalmente:
+      - flowtrace.cleanup para limpiar los logs de debug
+      - Sugerir tests de regresion adicionales
+
+      ======================================================================
+
+# =============================================================================
+# EDGES - Transiciones (15)
+# =============================================================================
+
+edges:
+  # understand -> reproduce
+  - id: "understand-to-reproduce"
+    from: "understand"
+    to: "reproduce"
+    condition:
+      type: "phrase"
+      phrases:
+        - "problema entendido"
+        - "problem understood"
+    priority: 1
+
+  # reproduce -> classify (bug reproduced)
+  - id: "reproduce-to-classify"
+    from: "reproduce"
+    to: "classify"
+    condition:
+      type: "phrase"
+      phrases:
+        - "bug reproducido"
+        - "bug reproduced"
+    priority: 1
+
+  # reproduce -> unreproducible (cannot reproduce)
+  - id: "reproduce-to-unreproducible"
+    from: "reproduce"
+    to: "unreproducible"
+    condition:
+      type: "phrase"
+      phrases:
+        - "bug no reproducible"
+        - "bug not reproducible"
+    priority: 2
+
+  # classify -> strategy-tests (serialization, logic)
+  - id: "classify-to-strategy-tests"
+    from: "classify"
+    to: "strategy-tests"
+    condition:
+      type: "phrase"
+      phrases:
+        - "bug de serializacion"
+        - "bug de logica"
+        - "serialization bug"
+        - "logic bug"
+    priority: 1
+
+  # classify -> strategy-flowtrace (performance, integration)
+  - id: "classify-to-strategy-flowtrace"
+    from: "classify"
+    to: "strategy-flowtrace"
+    condition:
+      type: "phrase"
+      phrases:
+        - "bug de performance"
+        - "bug de integracion"
+        - "performance bug"
+        - "integration bug"
+    priority: 1
+
+  # classify -> strategy-hybrid (concurrency, memory)
+  - id: "classify-to-strategy-hybrid"
+    from: "classify"
+    to: "strategy-hybrid"
+    condition:
+      type: "phrase"
+      phrases:
+        - "bug de concurrencia"
+        - "bug de memoria"
+        - "concurrency bug"
+        - "memory bug"
+    priority: 1
+
+  # strategy-tests -> analyze
+  - id: "strategy-tests-to-analyze"
+    from: "strategy-tests"
+    to: "analyze"
+    condition:
+      type: "phrase"
+      phrases:
+        - "observaciones recopiladas"
+        - "observations collected"
+    priority: 1
+
+  # strategy-flowtrace -> analyze
+  - id: "strategy-flowtrace-to-analyze"
+    from: "strategy-flowtrace"
+    to: "analyze"
+    condition:
+      type: "phrase"
+      phrases:
+        - "observaciones recopiladas"
+        - "observations collected"
+    priority: 1
+
+  # strategy-hybrid -> analyze
+  - id: "strategy-hybrid-to-analyze"
+    from: "strategy-hybrid"
+    to: "analyze"
+    condition:
+      type: "phrase"
+      phrases:
+        - "observaciones recopiladas"
+        - "observations collected"
+    priority: 1
+
+  # analyze -> hypothesize
+  - id: "analyze-to-hypothesize"
+    from: "analyze"
+    to: "hypothesize"
+    condition:
+      type: "phrase"
+      phrases:
+        - "analisis completo"
+        - "analysis complete"
+    priority: 1
+
+  # hypothesize -> fix
+  - id: "hypothesize-to-fix"
+    from: "hypothesize"
+    to: "fix"
+    condition:
+      type: "phrase"
+      phrases:
+        - "hipotesis formada"
+        - "hypothesis formed"
+    priority: 1
+
+  # hypothesize -> analyze (need more data)
+  - id: "hypothesize-to-analyze"
+    from: "hypothesize"
+    to: "analyze"
+    condition:
+      type: "phrase"
+      phrases:
+        - "necesito mas datos"
+        - "need more data"
+    priority: 2
+
+  # fix -> verify
+  - id: "fix-to-verify"
+    from: "fix"
+    to: "verify"
+    condition:
+      type: "phrase"
+      phrases:
+        - "fix implementado"
+        - "fix implemented"
+    priority: 1
+
+  # verify -> report (success)
+  - id: "verify-to-report"
+    from: "verify"
+    to: "report"
+    condition:
+      type: "phrase"
+      phrases:
+        - "verificacion exitosa"
+        - "verification passed"
+    priority: 1
+
+  # verify -> hypothesize (failure loop)
+  - id: "verify-to-hypothesize"
+    from: "verify"
+    to: "hypothesize"
+    condition:
+      type: "phrase"
+      phrases:
+        - "verificacion fallida"
+        - "verification failed"
+    priority: 2
