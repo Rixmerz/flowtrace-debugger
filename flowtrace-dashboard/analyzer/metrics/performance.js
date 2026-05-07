@@ -1,233 +1,184 @@
 /**
- * Performance Analyzer
- * Analyzes FlowTrace events to find performance bottlenecks
+ * v2 Performance Analyzer. Operates on v2 events: groups by trace_id, computes
+ * latency from `duration_ns`, and exposes a call-tree view via parent_id chain.
  */
+
+'use strict';
 
 class PerformanceAnalyzer {
   constructor(events) {
-    this.events = events;
+    this.events = events || [];
     this.methodStats = new Map();
-    this.callStacks = new Map();
+    this._buildMethodStats();
   }
 
-  /**
-   * Analyze all events and return comprehensive performance metrics
-   */
   analyze() {
-    this._buildMethodStats();
-
     return {
       slowMethods: this.findSlowMethods(),
       bottlenecks: this.findBottlenecks(),
       timeDistribution: this.calculateTimeDistribution(),
       errorHotspots: this.findErrorHotspots(),
-      summary: this.getSummary()
+      callTrees: this.buildCallTrees(),
+      summary: this.getSummary(),
     };
   }
 
-  /**
-   * Build statistics for each method
-   * @private
-   */
   _buildMethodStats() {
-    const exitEvents = this.events.filter(e => e.event === 'EXIT');
+    for (const e of this.events) {
+      if (e.event !== 'exit') continue;
+      const cls = e.class || '';
+      const key = `${cls}.${e.method}`;
+      let stats = this.methodStats.get(key);
+      if (!stats) {
+        stats = { class: cls, method: e.method, lang: e.lang, calls: [], errors: 0 };
+        this.methodStats.set(key, stats);
+      }
+      stats.calls.push({
+        duration_ns: e.duration_ns || 0,
+        ts: e.ts,
+        hasError: !!e.error,
+      });
+      if (e.error) stats.errors++;
+    }
+  }
 
-    exitEvents.forEach(event => {
-      const key = `${event.class}.${event.method}`;
+  findSlowMethods(top = 20) {
+    const out = [];
+    for (const [name, s] of this.methodStats) {
+      const durations = s.calls.map((c) => c.duration_ns).sort((a, b) => a - b);
+      const sum = durations.reduce((a, b) => a + b, 0);
+      const avg = sum / durations.length;
+      const pick = (p) => durations[Math.floor(durations.length * p)] || 0;
+      out.push({
+        name,
+        class: s.class,
+        method: s.method,
+        callCount: durations.length,
+        avg_ns: Math.round(avg),
+        min_ns: durations[0] || 0,
+        max_ns: durations[durations.length - 1] || 0,
+        p50_ns: pick(0.5),
+        p95_ns: pick(0.95),
+        p99_ns: pick(0.99),
+        total_ns: sum,
+        errors: s.errors,
+      });
+    }
+    out.sort((a, b) => b.avg_ns - a.avg_ns);
+    return out.slice(0, top);
+  }
 
-      if (!this.methodStats.has(key)) {
-        this.methodStats.set(key, {
-          class: event.class,
-          method: event.method,
-          calls: [],
-          exceptions: 0
+  findBottlenecks(top = 10) {
+    const out = [];
+    for (const [name, s] of this.methodStats) {
+      const sum = s.calls.reduce((a, c) => a + c.duration_ns, 0);
+      const avg = sum / s.calls.length;
+      out.push({
+        name,
+        class: s.class,
+        method: s.method,
+        callCount: s.calls.length,
+        avg_ns: Math.round(avg),
+        total_ns: sum,
+        impactScore: Math.round(s.calls.length * avg),
+      });
+    }
+    out.sort((a, b) => b.impactScore - a.impactScore);
+    return out.slice(0, top);
+  }
+
+  calculateTimeDistribution() {
+    let totalTime = 0;
+    for (const s of this.methodStats.values()) {
+      totalTime += s.calls.reduce((a, c) => a + c.duration_ns, 0);
+    }
+    const distribution = [];
+    for (const [name, s] of this.methodStats) {
+      const t = s.calls.reduce((a, c) => a + c.duration_ns, 0);
+      distribution.push({
+        name,
+        class: s.class,
+        method: s.method,
+        total_ns: t,
+        percentage: totalTime > 0 ? Math.round((t / totalTime) * 10000) / 100 : 0,
+      });
+    }
+    distribution.sort((a, b) => b.percentage - a.percentage);
+    return { total_ns: totalTime, distribution: distribution.slice(0, 20) };
+  }
+
+  findErrorHotspots() {
+    const out = [];
+    for (const [name, s] of this.methodStats) {
+      if (s.errors === 0) continue;
+      out.push({
+        name,
+        class: s.class,
+        method: s.method,
+        totalCalls: s.calls.length,
+        errors: s.errors,
+        errorRate: Math.round((s.errors / s.calls.length) * 10000) / 100,
+      });
+    }
+    out.sort((a, b) => b.errors - a.errors);
+    return out;
+  }
+
+  /** Group events by trace_id and emit a tree per trace. */
+  buildCallTrees() {
+    const byTrace = new Map();
+    for (const e of this.events) {
+      if (!byTrace.has(e.trace_id)) byTrace.set(e.trace_id, []);
+      byTrace.get(e.trace_id).push(e);
+    }
+    const trees = [];
+    for (const [trace_id, scoped] of byTrace) {
+      const enters = scoped.filter((e) => e.event === 'enter').sort((a, b) => a.ts - b.ts);
+      const exits = new Map();
+      for (const e of scoped) if (e.event === 'exit') exits.set(e.span_id, e);
+      const nodes = new Map();
+      for (const e of enters) {
+        nodes.set(e.span_id, {
+          span_id: e.span_id,
+          parent_id: e.parent_id,
+          method: e.method,
+          class: e.class,
+          module: e.module,
+          lang: e.lang,
+          depth: e.depth || 0,
+          duration_ns: exits.get(e.span_id)?.duration_ns ?? null,
+          children: [],
         });
       }
-
-      const stats = this.methodStats.get(key);
-      stats.calls.push({
-        duration: event.durationMicros || 0,
-        timestamp: event.timestamp,
-        hasException: !!event.exception
-      });
-
-      if (event.exception) {
-        stats.exceptions++;
+      const roots = [];
+      for (const node of nodes.values()) {
+        if (node.parent_id && nodes.has(node.parent_id)) {
+          nodes.get(node.parent_id).children.push(node);
+        } else {
+          roots.push(node);
+        }
       }
-    });
-  }
-
-  /**
-   * Find the slowest methods by average duration
-   * @param {number} top - Number of top results to return
-   * @returns {Array} Top slow methods with statistics
-   */
-  findSlowMethods(top = 20) {
-    const methods = Array.from(this.methodStats.entries()).map(([name, stats]) => {
-      const durations = stats.calls.map(c => c.duration);
-      const sorted = durations.sort((a, b) => a - b);
-
-      const sum = durations.reduce((a, b) => a + b, 0);
-      const avg = sum / durations.length;
-      const min = Math.min(...durations);
-      const max = Math.max(...durations);
-      const p50 = sorted[Math.floor(sorted.length * 0.5)];
-      const p95 = sorted[Math.floor(sorted.length * 0.95)];
-      const p99 = sorted[Math.floor(sorted.length * 0.99)];
-
-      return {
-        name,
-        class: stats.class,
-        method: stats.method,
-        callCount: durations.length,
-        avgDuration: Math.round(avg),
-        minDuration: Math.round(min),
-        maxDuration: Math.round(max),
-        p50: Math.round(p50),
-        p95: Math.round(p95),
-        p99: Math.round(p99),
-        totalTime: Math.round(sum),
-        exceptions: stats.exceptions
-      };
-    });
-
-    // Sort by average duration descending
-    methods.sort((a, b) => b.avgDuration - a.avgDuration);
-
-    return methods.slice(0, top);
-  }
-
-  /**
-   * Find bottlenecks (high frequency + high duration = high impact)
-   * @param {number} top - Number of results
-   * @returns {Array} Methods with highest impact
-   */
-  findBottlenecks(top = 10) {
-    const methods = Array.from(this.methodStats.entries()).map(([name, stats]) => {
-      const durations = stats.calls.map(c => c.duration);
-      const sum = durations.reduce((a, b) => a + b, 0);
-      const avg = sum / durations.length;
-
-      // Impact score = callCount * avgDuration
-      const impactScore = durations.length * avg;
-
-      return {
-        name,
-        class: stats.class,
-        method: stats.method,
-        callCount: durations.length,
-        avgDuration: Math.round(avg),
-        totalTime: Math.round(sum),
-        impactScore: Math.round(impactScore)
-      };
-    });
-
-    // Sort by impact score descending
-    methods.sort((a, b) => b.impactScore - a.impactScore);
-
-    return methods.slice(0, top);
-  }
-
-  /**
-   * Calculate time distribution across methods
-   * @returns {Object} Time distribution data
-   */
-  calculateTimeDistribution() {
-    const totalTime = Array.from(this.methodStats.values())
-      .reduce((sum, stats) => {
-        const methodTotal = stats.calls.reduce((s, c) => s + c.duration, 0);
-        return sum + methodTotal;
-      }, 0);
-
-    const distribution = Array.from(this.methodStats.entries()).map(([name, stats]) => {
-      const methodTotal = stats.calls.reduce((sum, c) => sum + c.duration, 0);
-      const percentage = totalTime > 0 ? (methodTotal / totalTime) * 100 : 0;
-
-      return {
-        name,
-        class: stats.class,
-        method: stats.method,
-        totalTime: Math.round(methodTotal),
-        percentage: Math.round(percentage * 100) / 100
-      };
-    });
-
-    // Sort by percentage descending
-    distribution.sort((a, b) => b.percentage - a.percentage);
-
-    return {
-      totalTime: Math.round(totalTime),
-      distribution: distribution.slice(0, 20),
-      others: {
-        percentage: Math.round((1 - distribution.slice(0, 20).reduce((sum, d) => sum + d.percentage, 0) / 100) * 100 * 100) / 100
-      }
-    };
-  }
-
-  /**
-   * Find methods with frequent exceptions
-   * @returns {Array} Methods with errors
-   */
-  findErrorHotspots() {
-    const methods = Array.from(this.methodStats.entries())
-      .filter(([_, stats]) => stats.exceptions > 0)
-      .map(([name, stats]) => {
-        const errorRate = (stats.exceptions / stats.calls.length) * 100;
-
-        return {
-          name,
-          class: stats.class,
-          method: stats.method,
-          totalCalls: stats.calls.length,
-          exceptions: stats.exceptions,
-          errorRate: Math.round(errorRate * 100) / 100
-        };
-      });
-
-    // Sort by exception count descending
-    methods.sort((a, b) => b.exceptions - a.exceptions);
-
-    return methods;
-  }
-
-  /**
-   * Get summary statistics
-   * @returns {Object} Summary
-   */
-  getSummary() {
-    const allDurations = [];
-    let totalCalls = 0;
-    let totalExceptions = 0;
-
-    this.methodStats.forEach(stats => {
-      stats.calls.forEach(call => {
-        allDurations.push(call.duration);
-        totalCalls++;
-        if (call.hasException) totalExceptions++;
-      });
-    });
-
-    if (allDurations.length === 0) {
-      return {
-        totalCalls: 0,
-        totalMethods: 0,
-        avgDuration: 0,
-        totalTime: 0,
-        errorRate: 0
-      };
+      trees.push({ trace_id, roots });
     }
+    return trees;
+  }
 
-    const sum = allDurations.reduce((a, b) => a + b, 0);
-    const avg = sum / allDurations.length;
-    const errorRate = (totalExceptions / totalCalls) * 100;
-
+  getSummary() {
+    let totalCalls = 0;
+    let totalErrors = 0;
+    let total_ns = 0;
+    for (const s of this.methodStats.values()) {
+      totalCalls += s.calls.length;
+      totalErrors += s.errors;
+      total_ns += s.calls.reduce((a, c) => a + c.duration_ns, 0);
+    }
     return {
       totalCalls,
       totalMethods: this.methodStats.size,
-      avgDuration: Math.round(avg),
-      totalTime: Math.round(sum),
-      totalExceptions,
-      errorRate: Math.round(errorRate * 100) / 100
+      avg_ns: totalCalls > 0 ? Math.round(total_ns / totalCalls) : 0,
+      total_ns,
+      totalErrors,
+      errorRate: totalCalls > 0 ? Math.round((totalErrors / totalCalls) * 10000) / 100 : 0,
     };
   }
 }

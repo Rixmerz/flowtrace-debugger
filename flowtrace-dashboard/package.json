@@ -7,7 +7,7 @@
     "start": "node server/server.js",
     "dev": "nodemon server/server.js",
     "cli": "node cli.js",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "node test/test-analyzer.js"
   },
   "bin": {
     "flowtrace-dashboard": "./cli.js"

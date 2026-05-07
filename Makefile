@@ -27,9 +27,12 @@ validate-schema:
 # baseline contract. Per-subproject tests are added as v2 capture
 # layers land in S2-S4 (java, python, node, ts).
 test: validate-schema
-	@echo "==> Running per-subproject tests (best-effort, v2 scope)"
-	@# Placeholder — empty pass is acceptable until S1+ refactors land.
-	@echo "    (no subproject tests wired yet; expand in S1+)"
+	@echo "==> mcp-server tests"
+	@cd mcp-server && node test/test-trace-tools.mjs
+	@echo "==> flowtrace-dashboard tests"
+	@cd flowtrace-dashboard && node test/test-analyzer.js
+	@echo "==> flowtrace-cli tests"
+	@cd flowtrace-cli && node test/test-cli.js
 
 # Build aggregator placeholder.
 build:
