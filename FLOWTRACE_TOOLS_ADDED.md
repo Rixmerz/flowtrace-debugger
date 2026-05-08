@@ -294,7 +294,7 @@ await flowtrace.cleanup({ projectPath: "/path" });
 await flowtrace.execute({ projectPath: "/path", timeout: 60 });
 
 // Analizar logs
-await log.open({ path: "/path/flowtrace.jsonl" });
+await log_open({ path: "/path/flowtrace.jsonl" });
 ```
 
 ### **2. Setup Inicial de Proyecto**

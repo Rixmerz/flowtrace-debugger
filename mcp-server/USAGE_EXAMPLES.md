@@ -106,7 +106,7 @@ await flowtrace.execute({
 });
 
 // Paso 3: Analizar logs (usando herramientas existentes)
-const session = await log.open({
+const session = await log_open({
   path: "/Users/user/my-app/flowtrace.jsonl"
 });
 

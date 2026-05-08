@@ -63,8 +63,8 @@ proxy_add name=flowtrace command=node \
   args=[/.../mcp-server/dist/server.js]
 ```
 
-8 tools embedded: `log.open`, `log.search`, `log.aggregate`, `log.schema`,
-`trace.tree`, `trace.find_error`, `trace.private_calls`, `trace.diff`.
+8 tools embedded: `log_open`, `log_search`, `log_aggregate`, `log_schema`,
+`trace_tree`, `trace_find_error`, `trace_private_calls`, `trace_diff`.
 
 ---
 
@@ -118,7 +118,7 @@ Lista para futuras sesiones — patrones que reviewer/demo encontraron:
 - **Node `bench`**: numbers son 0ms — fixture simplista. Real bench requiere CPU-bound loop.
 - **CLI auto-detect**: `requirements.txt`-only projects fallback a Spanish error. Acceptable MVP, mejorar S5+.
 - **Java**: `MAVEN_OPTS` strategy no maneja warnings sobre `-Xshare:auto` cuando JVM levanta.
-- **MCP `trace.tree` requires `trace_id` arg** — no hay default "first trace". Considerar agregar.
+- **MCP `trace_tree` requires `trace_id` arg** — no hay default "first trace". Considerar agregar.
 - **Demo bench `bench` informational**: 0ms en todos langs (fixtures triviales). No bloquea CI pero tampoco aporta señal.
 
 ### Deuda técnica
@@ -159,8 +159,8 @@ FLOWTRACE_ENABLE=1 FLOWTRACE_PACKAGE_PREFIX=app \
 FLOWTRACE_OUTPUT=/tmp/trace.jsonl python3 run_scenarios.py
 
 # luego MCP:
-log.open path=/tmp/trace.jsonl
-trace.find_error sessionId=...
+log_open path=/tmp/trace.jsonl
+trace_find_error sessionId=...
 ```
 
 ### Patrón delegación validado

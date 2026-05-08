@@ -22,7 +22,7 @@ All notable changes to FlowTrace.
 ### Added
 
 - `flowtrace run -- <cmd>` auto-detect lang (pom.xml/pyproject.toml/package.json/tsconfig.json).
-- MCP server v2 tools: `trace.tree`, `trace.find_error`, `trace.private_calls`, `trace.diff`.
+- MCP server v2 tools: `trace_tree`, `trace_find_error`, `trace_private_calls`, `trace_diff`.
 - W3C trace context propagation across async boundaries.
 - Schema validation: golden fixtures validate per JSON Schema 2020-12 in CI.
 - CI matrix: java(jdk17) × python(3.9/3.11/3.13) × node(20/22) + bench informational.
@@ -32,7 +32,7 @@ All notable changes to FlowTrace.
 
 ### Fixed
 
-- Python emitter: `error` ahora top-level en exit events (no anidado en `result.error`). `mcp-server trace.find_error` ahora localiza errores correctamente.
+- Python emitter: `error` ahora top-level en exit events (no anidado en `result.error`). `mcp-server trace_find_error` ahora localiza errores correctamente.
 - Java: `ts` en epoch seconds (no ms — bug schema-passing pero off 1000x).
 - Schema: bounds `ts ∈ [1e9, 1e10]` — atrapa ms-vs-s en validation.
 - Node: babel visitor recursión infinita (sentinel `_flowtraceWrapped` + `path.skip()`).

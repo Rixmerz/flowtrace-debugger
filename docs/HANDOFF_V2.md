@@ -98,16 +98,16 @@ JSON Schema source of truth: `schema/flowtrace-v2.json` (Sprint 0).
 
 **Tasks**
 - `mcp-server/`: update `types.ts` to v2. New tools:
-  - `trace.tree(trace_id)` — hierarchical call tree
-  - `trace.find_error(session)` — first exception + path from root
-  - `trace.private_calls(session)` — filter by `visibility=private`
-  - `trace.diff(session_a, session_b)` — regression compare
+  - `trace_tree(trace_id)` — hierarchical call tree
+  - `trace_find_error(session)` — first exception + path from root
+  - `trace_private_calls(session)` — filter by `visibility=private`
+  - `trace_diff(session_a, session_b)` — regression compare
 - `flowtrace-dashboard/`: `analyzer/` reads v2 fields, charts use `duration_ns`, group by `trace_id`.
 - `flowtrace-cli/`: simplify commands → `init`, `run`, `analyze`. Remove per-lang install (auto in `run`).
 
 **Checks**
 - [ ] `cd mcp-server && npm run build` ok
-- [ ] MCP tool `trace.tree` returns nested structure for sample golden trace
+- [ ] MCP tool `trace_tree` returns nested structure for sample golden trace
 - [ ] Dashboard renders chart from `examples/golden/java/expected.jsonl`
 - [ ] `flowtrace run --help` shows 3 commands only
 - [ ] Unit tests cover schema migration path v1→v2 (fail soft on unknown fields)

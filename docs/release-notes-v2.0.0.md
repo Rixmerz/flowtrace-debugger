@@ -8,7 +8,7 @@
 
 - **4 capture mechanisms** — OTel extension (Java), `sys.setprofile` (Python), `Module._load` patch (Node.js/CJS), `--experimental-loader` hook (Node.js/ESM). None require modifying user source code.
 - **OTel-compatible W3C trace IDs** — every span carries a `trace_id` (32 hex) and `span_id` (16 hex) compatible with OpenTelemetry collectors, Jaeger, and Zipkin.
-- **MCP server tools for AI agents** — `trace.tree`, `trace.find_error`, `trace.private_calls`, `trace.diff` let AI assistants reason over traces without writing custom parsers.
+- **MCP server tools for AI agents** — `trace_tree`, `trace_find_error`, `trace_private_calls`, `trace_diff` let AI assistants reason over traces without writing custom parsers.
 - **Slim CLI** — three commands: `init`, `run`, `analyze`. No install/update/status commands.
 - **Schema v2** — typed fields, snake_case, objects instead of serialized strings. See [migration guide](migration-v1-v2.md).
 

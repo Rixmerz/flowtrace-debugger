@@ -23,10 +23,10 @@ python3 run_scenarios.py
 ## Locate bugs via MCP
 
 ```
-log.open path=/tmp/demo-trace.jsonl     → sessionId
-trace.find_error sessionId=...           → L3 path + line
-log.search sessionId=... filter=_tax     → L2 args reveal qty vs subtotal
-trace.tree sessionId=... trace_id=...    → full call tree per scenario
+log_open path=/tmp/demo-trace.jsonl     → sessionId
+trace_find_error sessionId=...           → L3 path + line
+log_search sessionId=... filter=_tax     → L2 args reveal qty vs subtotal
+trace_tree sessionId=... trace_id=...    → full call tree per scenario
 ```
 
 ## Result

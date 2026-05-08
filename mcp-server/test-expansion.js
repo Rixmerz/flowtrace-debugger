@@ -117,5 +117,5 @@ console.log('\nMCP Server is ready to handle truncated logs');
 console.log('\nNext steps:');
 console.log('  1. Start MCP server: npm start');
 console.log('  2. Use log.expand tool to retrieve full data');
-console.log('  3. Use log.searchExpanded with autoExpand=true for automatic expansion');
+console.log('  3. Use log_searchExpanded with autoExpand=true for automatic expansion');
 console.log('');

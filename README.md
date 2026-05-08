@@ -56,10 +56,10 @@ El servidor MCP expone herramientas para que agentes de IA analicen trazas direc
 
 | Herramienta | Descripcion |
 |---|---|
-| `trace.tree` | Arbol de llamadas de una traza |
-| `trace.find_error` | Localiza la primera excepcion en el log |
-| `trace.private_calls` | Lista metodos internos no expuestos en la API |
-| `trace.diff` | Compara dos trazas (antes/despues de un cambio) |
+| `trace_tree` | Arbol de llamadas de una traza |
+| `trace_find_error` | Localiza la primera excepcion en el log |
+| `trace_private_calls` | Lista metodos internos no expuestos en la API |
+| `trace_diff` | Compara dos trazas (antes/despues de un cambio) |
 
 ```bash
 npx @flowtrace/mcp-server
@@ -78,7 +78,7 @@ FLOWTRACE_ENABLE=1 FLOWTRACE_PACKAGE_PREFIX=app \
 FLOWTRACE_OUTPUT=/tmp/trace.jsonl python3 run_scenarios.py
 ```
 
-Luego `trace.find_error` localiza el `KeyError` exacto (`repository.py:15`), `log.search filter=_tax` expone el bug L2 (argumento `qty` en vez de `subtotal`), y `trace.tree` muestra el arbol completo con duraciones por span.
+Luego `trace_find_error` localiza el `KeyError` exacto (`repository.py:15`), `log_search filter=_tax` expone el bug L2 (argumento `qty` en vez de `subtotal`), y `trace_tree` muestra el arbol completo con duraciones por span.
 
 ---
 

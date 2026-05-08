@@ -13,7 +13,7 @@
 
 ## Exposed Tools
 
-### 1. `log.open`
+### 1. `log_open`
 **Description**: Open a JSONL log file and return session id
 
 **Parameters**:
@@ -31,11 +31,11 @@
 
 ---
 
-### 2. `log.schema`
+### 2. `log_schema`
 **Description**: Return discovered fields and a sample row
 
 **Parameters**:
-- `sessionId` (string): Session ID from log.open
+- `sessionId` (string): Session ID from log_open
 
 **Returns**:
 ```json
@@ -49,7 +49,7 @@
 
 ---
 
-### 3. `log.search`
+### 3. `log_search`
 **Description**: Filter rows by mini-DSL and return selected fields
 
 **Parameters**:
@@ -65,7 +65,7 @@
 
 ---
 
-### 4. `log.aggregate`
+### 4. `log_aggregate`
 **Description**: Group and aggregate metrics over fields
 
 **Parameters**:
@@ -190,16 +190,16 @@
 
 ### Basic Analysis Workflow
 ```
-1. log.open → Get sessionId
-2. log.schema → Understand data structure
-3. log.search → Filter and explore events
-4. log.aggregate → Calculate metrics
+1. log_open → Get sessionId
+2. log_schema → Understand data structure
+3. log_search → Filter and explore events
+4. log_aggregate → Calculate metrics
 5. log.export → Save results
 ```
 
 ### Error Investigation Workflow
 ```
-1. log.open → Get sessionId
+1. log_open → Get sessionId
 2. log.errors → Find error events
 3. log.timeline → View chronological context
 4. log.flow → Correlate related events
@@ -207,8 +207,8 @@
 
 ### Performance Analysis Workflow
 ```
-1. log.open → Get sessionId
-2. log.aggregate → Calculate duration metrics
+1. log_open → Get sessionId
+2. log_aggregate → Calculate duration metrics
 3. log.topK → Find slowest operations
 4. log.timeline → Analyze timing patterns
 ```
@@ -323,7 +323,7 @@ console.log(fullData.fullLog.args); // Complete exception message
 
 ---
 
-### 12. `log.searchExpanded`
+### 12. `log_searchExpanded`
 **Description**: Search logs with automatic expansion of truncated entries
 
 **Parameters**:

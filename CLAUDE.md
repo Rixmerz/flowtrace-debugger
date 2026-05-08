@@ -112,7 +112,7 @@ Without a prefix, agents instrument frameworks and stdlib → logs explode. Each
 
 ### MCP server (`mcp-server/`)
 
-TypeScript MCP server using `@modelcontextprotocol/sdk`. Entry: `src/server.ts`. Sessions are in-memory `Map<sessionId, {rows, fields, path}>`; logs are loaded once per `log.open` and queried via `log.search` / `log.aggregate` / `log.schema`. Additional tools registered in `dashboard-tools.ts` and `flowtrace-tools.ts`. Output goes through stdio transport — never write to stdout outside the MCP protocol.
+TypeScript MCP server using `@modelcontextprotocol/sdk`. Entry: `src/server.ts`. Sessions are in-memory `Map<sessionId, {rows, fields, path}>`; logs are loaded once per `log_open` and queried via `log_search` / `log_aggregate` / `log_schema`. Additional tools registered in `dashboard-tools.ts` and `flowtrace-tools.ts`. Output goes through stdio transport — never write to stdout outside the MCP protocol.
 
 ### Dashboard (`flowtrace-dashboard/`)
 

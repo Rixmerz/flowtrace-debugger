@@ -55,18 +55,18 @@ Tool names use underscores: `flowtrace_detect`, `flowtrace_init`, `log_open`, `d
 - `flowtrace.status` - Get project state
 
 #### Log Analysis (12 tools)
-- `log.open` - Load JSONL, get sessionId
-- `log.schema` - Discover fields, sample row
-- `log.search` - Filter rows by substring, project fields, sort
+- `log_open` - Load JSONL, get sessionId
+- `log_schema` - Discover fields, sample row
+- `log_search` - Filter rows by substring, project fields, sort
 - `log.timeline` - Chronological event stream
 - `log.sample` - Representative samples
 - `log.topK` - Top N values for a field
-- `log.aggregate` - Group by fields, compute count/sum/avg/max/min
+- `log_aggregate` - Group by fields, compute count/sum/avg/max/min
 - `log.flow` - Correlate events by composite keys
 - `log.errors` - Auto-detect error patterns
 - `log.export` - Export to CSV/JSON
 - `log.expand` - Retrieve full data from truncated entries
-- `log.searchExpanded` - Search with auto-expansion
+- `log_searchExpanded` - Search with auto-expansion
 
 #### Performance Dashboard (4 tools)
 - `dashboard.open` - Analyze file with summary + dashboard URL
@@ -92,7 +92,7 @@ Tool names use underscores: `flowtrace_detect`, `flowtrace_init`, `log_open`, `d
 
 ### Performance Bugs
 **Strategy**: FlowTrace profiling (primary) or native profilers
-- FlowTrace: instrument, execute, dashboard.bottlenecks, log.aggregate by duration
+- FlowTrace: instrument, execute, dashboard.bottlenecks, log_aggregate by duration
 - Native fallback: `time`, `perf`, `flamegraph`, `cargo bench`, `hyperfine`
 - Identify hot paths, N+1 queries, unnecessary allocations
 

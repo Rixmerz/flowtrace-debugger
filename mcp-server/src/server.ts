@@ -31,10 +31,10 @@ function ok(payload: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
-// -- log.* tools (v2-aware) ------------------------------------------------
+// -- log_* tools (v2-aware) ------------------------------------------------
 
 mcp.tool(
-  "log.open",
+  "log_open",
   "Open a v2 JSONL trace log and return a session id",
   { path: z.string().describe("Absolute path to the JSONL log file") },
   async ({ path }) => {
@@ -47,9 +47,9 @@ mcp.tool(
 );
 
 mcp.tool(
-  "log.schema",
+  "log_schema",
   "Return discovered fields and a sample row for a v2 session",
-  { sessionId: z.string().describe("Session id from log.open") },
+  { sessionId: z.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const s = getSession(sessionId);
     return ok({
@@ -61,10 +61,10 @@ mcp.tool(
 );
 
 mcp.tool(
-  "log.search",
+  "log_search",
   "Filter v2 events by substring and return selected fields",
   {
-    sessionId: z.string().describe("Session id from log.open"),
+    sessionId: z.string().describe("Session id from log_open"),
     filter: z.string().optional().describe("Case-sensitive substring matched against the JSON form of each row"),
     fields: z.array(z.string()).optional().describe("Subset of fields to return"),
     limit: z.number().int().positive().optional().describe("Max rows (default 200)"),
@@ -84,10 +84,10 @@ mcp.tool(
 );
 
 mcp.tool(
-  "log.aggregate",
+  "log_aggregate",
   "Group v2 events by fields and aggregate (count/sum/avg/max/min)",
   {
-    sessionId: z.string().describe("Session id from log.open"),
+    sessionId: z.string().describe("Session id from log_open"),
     groupBy: z.array(z.string()).describe("Field names that form the composite group key"),
     metric: z.object({
       op: z.enum(["count", "sum", "avg", "max", "min"]).describe("Aggregation operator"),
@@ -121,13 +121,13 @@ mcp.tool(
   }
 );
 
-// -- trace.* tools ---------------------------------------------------------
+// -- trace_* tools ---------------------------------------------------------
 
 mcp.tool(
-  "trace.tree",
+  "trace_tree",
   "Build a hierarchical call tree for a given trace_id from a v2 session",
   {
-    sessionId: z.string().describe("Session id from log.open"),
+    sessionId: z.string().describe("Session id from log_open"),
     trace_id: z.string().describe("W3C trace id (32 hex chars) to scope the tree"),
   },
   async ({ sessionId, trace_id }) => {
@@ -138,9 +138,9 @@ mcp.tool(
 );
 
 mcp.tool(
-  "trace.find_error",
+  "trace_find_error",
   "Find the first error event in a v2 session and return its call path to root",
-  { sessionId: z.string().describe("Session id from log.open") },
+  { sessionId: z.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const s = getSession(sessionId);
     const events = v2OnlyEvents(s);
@@ -150,9 +150,9 @@ mcp.tool(
 );
 
 mcp.tool(
-  "trace.private_calls",
+  "trace_private_calls",
   "List private-visibility methods called in a v2 session, grouped by class.method",
-  { sessionId: z.string().describe("Session id from log.open") },
+  { sessionId: z.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const s = getSession(sessionId);
     const events = v2OnlyEvents(s);
@@ -161,7 +161,7 @@ mcp.tool(
 );
 
 mcp.tool(
-  "trace.diff",
+  "trace_diff",
   "Compare two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas > 20%",
   {
     sessionId_a: z.string().describe("Baseline session id (A)"),
