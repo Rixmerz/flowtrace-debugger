@@ -1,13 +1,13 @@
 {
   "name": "flowtrace-dashboard",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Performance analysis dashboard for FlowTrace logs",
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
     "dev": "nodemon server/server.js",
     "cli": "node cli.js",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "node test/test-analyzer.js"
   },
   "bin": {
     "flowtrace-dashboard": "./cli.js"

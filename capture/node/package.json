@@ -1,0 +1,24 @@
+{
+  "name": "@flowtrace/capture-node",
+  "version": "2.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "main": "./src/runtime/index.js",
+  "exports": {
+    ".": "./src/runtime/index.js",
+    "./bootstrap": "./src/bootstrap.mjs",
+    "./runtime/instrument": "./src/runtime/instrument.js"
+  },
+  "scripts": {
+    "test": "node --test 'test/*.mjs'"
+  },
+  "dependencies": {
+    "@babel/generator": "^7.29.1",
+    "@babel/parser": "^7.29.3",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
+    "@swc/core": "^1.7.0"
+  }
+}

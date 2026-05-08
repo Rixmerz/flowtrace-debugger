@@ -1,6 +1,6 @@
 {
   "name": "@flowtrace/cli",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Universal FlowTrace installer and project manager for Java and Node.js",
   "main": "lib/index.js",
   "bin": {

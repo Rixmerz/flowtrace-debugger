@@ -1,0 +1,152 @@
+name: v2-ci
+
+on:
+  push:
+    branches: [v2/main]
+  pull_request:
+    branches: [v2/main]
+
+jobs:
+  validate-schema:
+    name: Validate golden fixtures vs schema v2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Ajv (scripts/)
+        working-directory: scripts
+        run: npm install --no-audit --no-fund
+
+      - name: Run schema validation
+        run: make validate-schema
+
+  java-tests:
+    name: Java tests (JDK 17)
+    runs-on: ubuntu-latest
+    needs: validate-schema
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build and test Java capture module
+        run: make build-java test-java
+
+  python-tests:
+    name: Python tests (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: validate-schema
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.11', '3.13']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build and test Python capture module
+        run: make build-python test-python
+
+  node-tests:
+    name: Node tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    needs: validate-schema
+    strategy:
+      matrix:
+        node-version: ['20', '22']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install pnpm deps (no frozen lockfile)
+        working-directory: capture/node
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build and test Node capture module
+        run: make test-node
+
+  cli-tests:
+    name: CLI tests
+    runs-on: ubuntu-latest
+    needs: validate-schema
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CLI deps
+        working-directory: flowtrace-cli
+        run: npm install --no-audit --no-fund
+
+      - name: Run CLI tests
+        run: |
+          cd flowtrace-cli && for t in test/test-cli.js test/test-cli-java.js test/test-cli-python.js test/test-cli-node.js test/test-detect.js test/test-cli-autodetect.js test/test-analyze.js; do
+            node $t || exit 1
+          done
+
+  bench:
+    name: Benchmark harness (informational)
+    runs-on: ubuntu-latest
+    needs: validate-schema
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python capture module
+        run: make build-python
+
+      - name: Run bench
+        run: make bench
+
+      - name: Upload bench results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: benchmarks/results-*.json
+          if-no-files-found: ignore

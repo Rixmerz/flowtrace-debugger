@@ -1,0 +1,91 @@
+# demo-feature — tutorial-executable workflow
+#
+# This file is documented inline. Read it top-to-bottom as a tutorial on what
+# jig workflows can do. Run it: graph_activate(graph_id="demo-feature").
+
+id: demo-feature
+name: Demo Feature Development
+description: |
+  A 4-phase tutorial flow that demonstrates jig's main enforcement mechanisms:
+  tools_blocked, mcps_enabled, prompt_injection, tension_gate.
+  Copy this file to a new name and adapt to your own workflows.
+
+nodes:
+  # -------------------------------------------------------------------
+  # Phase 1 — understand
+  # Edit/Write are BLOCKED. The agent must read + analyze before touching.
+  # -------------------------------------------------------------------
+  - id: understand
+    name: Understand
+    tools_blocked: [Edit, Write]
+    mcps_enabled: [serena, sequentialthinking]  # only navigation + reasoning
+    prompt_injection: |
+      You are in the 'understand' phase. Goals:
+        1. Read the files relevant to the task.
+        2. Use mcp tools to map symbols and dependencies:
+           - find_symbol, get_symbols_overview (semantic navigation)
+           - sequentialthinking (structured reasoning on non-trivial decisions)
+        3. Do NOT edit or write anything yet.
+        4. When you have a clear mental model, advance with graph_traverse.
+
+  # -------------------------------------------------------------------
+  # Phase 2 — design
+  # Write is allowed only in docs/ (see tools_blocked regex).
+  # Use this phase to sketch the design in a markdown file.
+  # -------------------------------------------------------------------
+  - id: design
+    name: Design
+    tools_blocked: [Edit]
+    # Note: the enforcer can restrict Write to specific path patterns by
+    # intercepting tool_input.file_path. For now we rely on the agent to
+    # honor the prompt_injection and only write to docs/.
+    prompt_injection: |
+      You are in the 'design' phase. Goals:
+        1. Write a short design note under docs/design/<feature>.md.
+        2. Describe: data shape, interfaces, open questions.
+        3. No production code yet.
+        4. Advance with graph_traverse when the design is reviewable.
+
+  # -------------------------------------------------------------------
+  # Phase 3 — implement
+  # Full Edit/Write access, but a tension gate catches new architecture debt.
+  # -------------------------------------------------------------------
+  - id: implement
+    name: Implement
+    mcps_enabled: [serena, dcc]
+    tension_gate:
+      blocks_on: [god_file, circular_dependency]
+      max_new:
+        critical: 0
+        high: 3
+    prompt_injection: |
+      You are in the 'implement' phase. Write the code per the design.
+      - Prefer focused commits (one logical change each).
+      - If DCC delta reports new smells between steps, address them before
+        adding more code — technical debt compounds cheaply here.
+      - Advance to 'validate' when tests exist.
+
+  # -------------------------------------------------------------------
+  # Phase 4 — validate
+  # Edit/Write are BLOCKED again. Only test execution + reading.
+  # -------------------------------------------------------------------
+  - id: validate
+    name: Validate
+    tools_blocked: [Edit, Write]
+    prompt_injection: |
+      You are in the 'validate' phase. Goals:
+        1. Run the test suite (Bash → pytest / npm test / cargo test).
+        2. Run any linters / type checkers.
+        3. Fix failures by going back to 'implement' (graph_traverse back).
+        4. Complete the workflow when the suite is green.
+
+edges:
+  - from: understand
+    to: design
+  - from: design
+    to: implement
+  - from: implement
+    to: validate
+  - from: validate
+    to: implement      # allow looping back when tests fail
+    condition: tests_failing

@@ -1,34 +1,85 @@
+// FlowTrace v2 — canonical event types. Source of truth: schema/flowtrace-v2.json.
+// Events are one JSON object per line in a JSONL stream. ENTER and EXIT are
+// paired by span_id; ERROR may stand alone or replace EXIT.
+
 export type JsonValue = string | number | boolean | null | JsonObject | JsonArray;
-export interface JsonObject { [key: string]: any; }
+export interface JsonObject { [key: string]: unknown; }
 export interface JsonArray extends Array<JsonValue> {}
 
-export interface LogEvent extends JsonObject {
-  timestamp?: number;
+// Branded W3C-format hex IDs. We don't enforce hex at the type level (zod/JSON
+// Schema does that at runtime); the brand exists to prevent accidental swaps
+// between trace_id (32 hex chars) and span_id (16 hex chars).
+export type TraceId = string & { readonly __brand: "TraceId" };
+export type SpanId = string & { readonly __brand: "SpanId" };
+
+export type Visibility = "public" | "private" | "internal" | "unknown";
+export type Lang = "java" | "python" | "node" | "ts" | string;
+
+export interface BaseEvent {
+  ts: number;                 // float seconds since epoch
+  trace_id: TraceId;
+  span_id: SpanId;
+  parent_id: SpanId | null;
+  thread: string;
+  lang: Lang;
+  module?: string;
+  class?: string;
+  method: string;
+  visibility?: Visibility;
+  depth?: number;
+}
+
+export interface EnterEvent extends BaseEvent {
+  event: "enter";
+  args?: JsonObject | JsonArray;
+}
+
+export interface ErrorInfo {
+  type: string;
+  msg: string;
+  stack?: string[];
+}
+
+export interface ExitEvent extends BaseEvent {
+  event: "exit";
+  args?: JsonObject | JsonArray;
+  result?: JsonValue;
+  duration_ns: number;
+  error?: ErrorInfo;          // exit-with-error variant
+}
+
+export interface ErrorEvent extends BaseEvent {
+  event: "error";
+  error: ErrorInfo;
+  duration_ns?: number;
+}
+
+export type TraceEvent = EnterEvent | ExitEvent | ErrorEvent;
+
+// V1 (legacy) event shape — kept only so the compat shim can recognise it.
+// New code MUST NOT consume v1 fields directly.
+export interface LegacyV1Event {
+  timestamp: number;          // ms since epoch (v1 marker)
+  event: "ENTER" | "EXIT" | "EXCEPTION";
+  thread?: string;
   class?: string;
   method?: string;
-  event?: string;
-  args?: JsonValue;
-  result?: JsonValue;
-  durationMillis?: number;
+  args?: unknown;
+  result?: unknown;
   durationMicros?: number;
-  truncatedFields?: Record<string, { originalLength: number; threshold: number }>;
-  fullLogFile?: string;
-  [key: string]: any;
+  durationMillis?: number;
+  [k: string]: unknown;
 }
 
 export interface OpenSession {
   id: string;
   path: string;
-  count: number;
+  rows: TraceEvent[];
   fields: Record<string, number>;
-  index: Partial<{ method: Map<string, number[]>; class: Map<string, number[]>; event: Map<string, number[]>; }>;
+  schemaVersion: "v2" | "v1";
+  malformed: number;          // count of dropped lines
 }
 
 export interface ServerConfig {
   logPaths?: string[];
-  correlationKeys?: string[];
-  timestampField?: string;
-  durationFields?: string[];
-  errorKeys?: string[];
-  fieldAliases?: Record<string, string>;
 }
