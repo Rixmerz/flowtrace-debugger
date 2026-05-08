@@ -105,3 +105,61 @@ def test_source_not_modified():
     h1 = _original_sha256()
     h2 = _original_sha256()
     assert h1 == h2
+
+
+def test_instrumented_module_preserves_dunder_file():
+    """Regression: FlowtraceFinder must preserve spec.has_location so __file__ is set.
+
+    Reason: a previous implementation rebuilt ModuleSpec without copying
+    has_location=True, which made CPython skip assigning module.__file__.
+    User code relying on Path(__file__).parent or pkg.__file__ then broke.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pkg_dir = Path(tmpdir) / "ft_pkg_dunder"
+        pkg_dir.mkdir()
+        (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+        mod_path = pkg_dir / "leaf.py"
+        mod_path.write_text(
+            "from pathlib import Path\n"
+            "MY_FILE = __file__\n"
+            "MY_PARENT = str(Path(__file__).parent)\n"
+            "def hello():\n"
+            "    return MY_FILE\n",
+            encoding="utf-8",
+        )
+
+        probe = (
+            "import sys, json\n"
+            f"sys.path.insert(0, {str(tmpdir)!r})\n"
+            "import ft_pkg_dunder.leaf as m\n"
+            "print(json.dumps({'file': m.__file__, 'my_file': m.MY_FILE, 'parent': m.MY_PARENT, 'hello': m.hello()}))\n"
+        )
+
+        existing_pythonpath = os.environ.get("PYTHONPATH", "")
+        pythonpath = os.pathsep.join(
+            [str(STUB_DIR), str(CAPTURE_PKG)] + ([existing_pythonpath] if existing_pythonpath else [])
+        )
+
+        env = {
+            **os.environ,
+            "PYTHONPATH": pythonpath,
+            "FLOWTRACE_ENABLE": "1",
+            "FLOWTRACE_PACKAGE_PREFIX": "ft_pkg_dunder",
+        }
+        env.pop("FLOWTRACE_OUTPUT", None)
+
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode == 0, f"probe failed: {result.stderr}"
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+
+        expected_file = str(mod_path)
+        assert payload["file"] == expected_file, f"module.__file__ mismatch: {payload}"
+        assert payload["my_file"] == expected_file, f"top-level __file__ broken: {payload}"
+        assert payload["parent"] == str(pkg_dir), f"Path(__file__).parent broken: {payload}"
+        assert payload["hello"] == expected_file, f"function-scope __file__ broken: {payload}"

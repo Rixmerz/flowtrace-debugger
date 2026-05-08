@@ -78,12 +78,8 @@ class FlowtraceFinder(importlib.abc.MetaPathFinder):
             return None
 
         loader = FlowtraceSourceLoader(name, origin)
-        new_spec = importlib.machinery.ModuleSpec(
-            name=name,
-            loader=loader,
-            origin=origin,
-            is_package=spec.submodule_search_locations is not None,
-        )
-        if spec.submodule_search_locations is not None:
-            new_spec.submodule_search_locations = list(spec.submodule_search_locations)
-        return new_spec
+        # Mutate the spec PathFinder gave us instead of rebuilding it.
+        # Rebuilding loses has_location=True (default False on bare ModuleSpec),
+        # which makes CPython skip setting __file__ on the module.
+        spec.loader = loader
+        return spec
