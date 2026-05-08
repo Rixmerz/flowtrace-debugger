@@ -52,7 +52,7 @@ test-java:
 # Python capture module
 build-python:
 	@echo "==> build-python: flowtrace-runtime (editable install)"
-	@cd capture/python && pip install -e . --quiet
+	@cd capture/python && pip install -e .[dev] --quiet
 
 test-python:
 	@echo "==> test-python: flowtrace-runtime"

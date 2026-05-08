@@ -83,8 +83,12 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Install pnpm deps (no frozen lockfile)
+        working-directory: capture/node
+        run: pnpm install --no-frozen-lockfile
+
       - name: Build and test Node capture module
-        run: make build-node test-node
+        run: make test-node
 
   cli-tests:
     name: CLI tests
@@ -98,6 +102,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Install CLI deps
+        working-directory: flowtrace-cli
+        run: npm install --no-audit --no-fund
 
       - name: Run CLI tests
         run: |
