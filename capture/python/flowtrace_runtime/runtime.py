@@ -176,7 +176,8 @@ def _ft_exit_error(ctx: dict, exc: BaseException) -> None:
         "method": ctx["method"],
         "visibility": ctx["visibility"],
         "args": ctx["args"],
-        "result": {"error": error_info},
+        "result": {},
+        "error": error_info,
         "duration_ns": duration_ns,
         "depth": ctx["depth"],
     })
