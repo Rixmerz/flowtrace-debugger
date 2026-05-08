@@ -156,6 +156,11 @@ async function runCommand(options = {}, restArgs = []) {
     return runPython({ options, restArgs, cwd, outPath });
   }
 
+  // ---- Node / TypeScript path ----
+  if (lang === 'node' || lang === 'ts') {
+    return runNode({ options, restArgs, cwd, outPath });
+  }
+
   // ---- Other langs: stub (S3-S4) ----
   console.log(chalk.cyan('FlowTrace v2 run'));
   console.log(chalk.gray(`  lang  : ${lang}`));
@@ -332,8 +337,81 @@ async function runPython({ options, restArgs, cwd, outPath }) {
   });
 }
 
+// ---------- Node / TypeScript injection ----------
+
+/**
+ * Build env for Node/TS injection via --import bootstrap.mjs.
+ * @param {object} opts
+ * @param {string} opts.bootstrapPath - absolute path to bootstrap.mjs
+ * @param {string} opts.prefix        - package prefix
+ * @param {string} opts.outPath       - absolute path to output JSONL
+ * @returns {object} env
+ */
+function buildNodeEnv({ bootstrapPath, prefix, outPath }) {
+  const existing = process.env.NODE_OPTIONS || '';
+  const importFlag = `--import file://${bootstrapPath} --enable-source-maps`;
+  const nodeOptions = existing
+    ? `${importFlag} ${existing}`
+    : importFlag;
+
+  return {
+    ...process.env,
+    NODE_OPTIONS: nodeOptions,
+    FLOWTRACE_OUTPUT: outPath,
+    FLOWTRACE_PACKAGE_PREFIX: prefix,
+  };
+}
+
+async function runNode({ options, restArgs, cwd, outPath }) {
+  const root = repoRoot();
+
+  // 1. Resolve bootstrap path
+  const bootstrapPath = path.join(root, 'capture', 'node', 'src', 'bootstrap.mjs');
+  if (!fs.existsSync(bootstrapPath)) {
+    console.error(chalk.red('Error:'), `No se encontró el bootstrap de Node: ${bootstrapPath}`);
+    console.log(chalk.gray('Asegúrate de que capture/node/src/bootstrap.mjs existe.'));
+    process.exit(1);
+  }
+
+  // 2. Detect package prefix
+  let prefix = options.packagePrefix || options['package-prefix'];
+  if (!prefix) {
+    // Default: relative cwd path (instruments all project files)
+    prefix = cwd;
+    console.log(chalk.gray(`  prefix (cwd): ${prefix}`));
+  }
+
+  // 3. Validate user command
+  if (!restArgs.length) {
+    console.error(chalk.red('Error:'), 'Debes proporcionar el comando a ejecutar después de --.');
+    console.log(chalk.gray('Ejemplo: flowtrace run --lang node -- node app.js'));
+    process.exit(1);
+  }
+
+  // 4. Build env and spawn (env vars only — do NOT splice into argv)
+  const env = buildNodeEnv({ bootstrapPath, prefix, outPath });
+  const [cmd, ...args] = restArgs;
+
+  console.log(chalk.cyan('FlowTrace v2 — Node instrumentado'));
+  console.log(chalk.gray(`  bootstrap : ${bootstrapPath}`));
+  console.log(chalk.gray(`  prefix    : ${prefix}`));
+  console.log(chalk.gray(`  salida    : ${outPath}`));
+  console.log(chalk.gray(`  comando   : ${restArgs.join(' ')}`));
+
+  const child = spawn(cmd, args, { env, stdio: 'inherit' });
+  process.on('SIGINT', () => child.kill('SIGINT'));
+
+  return new Promise((resolve) => {
+    child.on('close', (code) => {
+      process.exit(code ?? 0);
+      resolve();
+    });
+  });
+}
+
 // Export internals for testing
 runCommand._buildJavaInjection = buildJavaInjection;
+runCommand._buildNodeEnv = buildNodeEnv;
 runCommand._detectGroupIdFromPom = detectGroupIdFromPom;
 runCommand._ensureGitignore = ensureGitignore;
 runCommand._detectPythonPrefix = detectPythonPrefix;

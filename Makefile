@@ -3,16 +3,18 @@
 # coordinates cross-cutting tasks (schema validation, top-level test
 # aggregation, benchmark harness placeholder).
 
-.PHONY: build test bench validate-schema build-java test-java build-python test-python clean help
+.PHONY: build test bench validate-schema build-java test-java build-python test-python build-node test-node clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
-	@echo "  make build            Build all v2 subprojects (build-java + build-python)"
+	@echo "  make build            Build all v2 subprojects (build-java + build-python + build-node)"
 	@echo "  make build-java       Build capture/java/flowtrace-otel-extension shaded jar"
 	@echo "  make build-python     Install capture/python flowtrace-runtime in editable mode"
-	@echo "  make test             Run validate-schema + test-java + test-python + per-subproject tests"
+	@echo "  make test             Run validate-schema + test-java + test-python + test-node + per-subproject tests"
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make test-python      Run pytest for the Python capture module"
+	@echo "  make build-node       Install capture/node npm dependencies"
+	@echo "  make test-node        Run node:test suite for the Node capture module"
 	@echo "  make bench            Benchmark harness (TODO Sprint 6)"
 	@echo "  make validate-schema  Validate examples/golden/*/expected.jsonl vs schema/flowtrace-v2.json"
 	@echo "  make clean            Remove transient build/test artifacts"
@@ -30,7 +32,7 @@ validate-schema:
 # Top-level test aggregator. v2-only path: schema validation is the
 # baseline contract. Per-subproject tests are added as v2 capture
 # layers land in S2-S4 (java, python, node, ts).
-test: validate-schema test-java test-python
+test: validate-schema test-java test-python test-node
 	@echo "==> mcp-server tests"
 	@cd mcp-server && node test/test-trace-tools.mjs
 	@echo "==> flowtrace-dashboard tests"
@@ -56,8 +58,17 @@ test-python:
 	@echo "==> test-python: flowtrace-runtime"
 	@cd capture/python && python -m pytest tests/ -v
 
+# Node capture module
+build-node:
+	@echo "==> build-node: @flowtrace/capture-node"
+	@cd capture/node && (command -v pnpm >/dev/null 2>&1 && pnpm install --silent || npm install --silent --no-audit --no-fund)
+
+test-node:
+	@echo "==> test-node: @flowtrace/capture-node"
+	@cd capture/node && node --test test/*.mjs
+
 # Build aggregator.
-build: build-java build-python
+build: build-java build-python build-node
 	@echo "==> build: done"
 
 # Benchmark harness — planned for Sprint 6.
