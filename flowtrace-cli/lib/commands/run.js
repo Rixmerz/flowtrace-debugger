@@ -8,6 +8,7 @@ const fs   = require('fs');
 const path = require('path');
 const { spawnSync, spawn } = require('child_process');
 const chalk = require('chalk');
+const { detectLang, detectPackagePrefix } = require('../detect');
 
 const SUPPORTED_LANGS = new Set(['java', 'python', 'node', 'ts']);
 
@@ -121,26 +122,49 @@ function buildJavaInjection({ otelAgent, flExt, prefix, outPath, strategy, userA
 async function runCommand(options = {}, restArgs = []) {
   const cwd = process.cwd();
 
-  // Read config
+  // Read config (optional in v2 — auto-init if missing)
   const cfgPath = path.join(cwd, '.flowtrace', 'config.json');
-  if (!fs.existsSync(cfgPath)) {
-    console.error(chalk.red('Error:'), 'FlowTrace no está inicializado.');
-    console.log(chalk.gray('Ejecuta: flowtrace init'));
-    process.exit(1);
+  let config = {};
+  if (fs.existsSync(cfgPath)) {
+    config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
   }
-  const config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
 
-  const lang = options.lang || config.lang || 'auto';
-  if (lang !== 'auto' && !SUPPORTED_LANGS.has(lang)) {
+  // Determine language: CLI flag > config > auto-detect
+  let lang = options.lang || config.lang || null;
+  if (!lang || lang === 'auto') {
+    const detected = detectLang(cwd);
+    if (detected === null) {
+      console.error(chalk.red('Error:'), 'No se pudo detectar el lenguaje del proyecto.');
+      console.log(chalk.gray('Archivos reconocidos: pom.xml, build.gradle, pyproject.toml, setup.py, requirements.txt, package.json'));
+      console.log(chalk.gray('O usa: flowtrace run --lang <java|python|node|ts> -- <cmd>'));
+      process.exit(1);
+    }
+    if (Array.isArray(detected)) {
+      // Multi-lang: prompt via inquirer
+      const inquirer = require('inquirer');
+      const { choice } = await inquirer.prompt([{
+        type: 'list',
+        name: 'choice',
+        message: 'Se detectaron varios lenguajes. Selecciona:',
+        choices: detected,
+      }]);
+      lang = choice;
+    } else {
+      lang = detected;
+      console.log(chalk.gray(`  lang (detectado): ${lang}`));
+    }
+  }
+
+  if (!SUPPORTED_LANGS.has(lang)) {
     console.error(chalk.red('Error:'), `Lenguaje no soportado: ${lang}`);
     console.log(chalk.gray(`Soportados: ${[...SUPPORTED_LANGS].join(', ')}`));
     process.exit(2);
   }
 
-  // Build output path
+  // Build output path with ISO-UTC-no-colons filename
   const outDir = path.join(cwd, '.flowtrace');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const stamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+Z$/, 'Z');
   const outPath = options.out || path.join(outDir, `${stamp}.jsonl`);
 
   // Auto-add .flowtrace/ to .gitignore
