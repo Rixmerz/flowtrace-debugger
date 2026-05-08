@@ -33,15 +33,49 @@ function nowTs() {
  * @param {IArguments|Array} args
  * @returns {object}
  */
+/**
+ * Return the max-arg-length limit from env. 0 = no truncation. Default 512.
+ * @returns {number}
+ */
+function getMaxArgLength() {
+  const raw = process.env.FLOWTRACE_MAX_ARG_LENGTH;
+  if (raw === undefined) return 512;
+  const n = parseInt(raw, 10);
+  return isNaN(n) ? 512 : Math.max(0, n);
+}
+
+/**
+ * If the JSON representation of a value exceeds maxArgLength, replace it
+ * with a truncation marker string.
+ * @param {*} value - Already JSON-safe value.
+ * @returns {*}
+ */
+function truncateIfNeeded(value) {
+  const maxLen = getMaxArgLength();
+  if (maxLen === 0) return value;
+  let s;
+  try {
+    s = JSON.stringify(value);
+  } catch {
+    s = String(value);
+  }
+  if (s.length > maxLen) {
+    return `<truncated:${s.slice(0, maxLen)}...>`;
+  }
+  return value;
+}
+
 function serializeArgs(paramNames, args) {
   const out = {};
   for (let i = 0; i < args.length; i++) {
     const key = paramNames[i] ?? `arg${i}`;
+    let safe;
     try {
-      out[key] = JSON.parse(JSON.stringify(args[i]));
+      safe = JSON.parse(JSON.stringify(args[i]));
     } catch {
-      out[key] = String(args[i]);
+      safe = String(args[i]);
     }
+    out[key] = truncateIfNeeded(safe);
   }
   return out;
 }

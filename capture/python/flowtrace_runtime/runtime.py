@@ -6,6 +6,8 @@ by FlowtraceSourceLoader.exec_module before the module code executes.
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 import traceback
@@ -16,13 +18,36 @@ from .emitter import Emitter
 from .ids import new_span_id, new_trace_id
 
 
+def _get_max_arg_length() -> int:
+    """Read FLOWTRACE_MAX_ARG_LENGTH env var. 0 = no truncation. Default 512."""
+    raw = os.environ.get("FLOWTRACE_MAX_ARG_LENGTH", "512")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 512
+
+
+def _truncate_if_needed(serialized: Any) -> Any:
+    """If JSON representation exceeds max-arg-length, replace with truncation marker."""
+    max_len = _get_max_arg_length()
+    if max_len == 0:
+        return serialized
+    try:
+        s = json.dumps(serialized, separators=(",", ":"))
+    except Exception:
+        s = repr(serialized)
+    if len(s) > max_len:
+        return f"<truncated:{s[:max_len]}...>"
+    return serialized
+
+
 def _serialize_args(locals_dict: dict[str, Any]) -> dict[str, Any]:
     """Convert locals dict to a JSON-safe args dict, skipping self/cls."""
     result: dict[str, Any] = {}
     for k, v in locals_dict.items():
         if k in ("self", "cls", "_ft_ctx", "_ft_result", "_ft_exc"):
             continue
-        result[k] = _to_json_safe(v)
+        result[k] = _truncate_if_needed(_to_json_safe(v))
     return result
 
 

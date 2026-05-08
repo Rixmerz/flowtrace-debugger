@@ -71,9 +71,9 @@ test-node:
 build: build-java build-python build-node
 	@echo "==> build: done"
 
-# Benchmark harness — planned for Sprint 6.
+# Benchmark harness — Sprint 6.
 bench:
-	@echo "TODO S6: bench harness (10k call hot loop per lang vs baseline)"
+	@bash benchmarks/run-bench.sh
 
 clean:
 	@echo "==> clean: removing scripts/node_modules"
