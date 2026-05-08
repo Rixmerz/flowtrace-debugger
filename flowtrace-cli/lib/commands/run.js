@@ -151,6 +151,11 @@ async function runCommand(options = {}, restArgs = []) {
     return runJava({ options, restArgs, cwd, outPath });
   }
 
+  // ---- Python path ----
+  if (lang === 'python') {
+    return runPython({ options, restArgs, cwd, outPath });
+  }
+
   // ---- Other langs: stub (S3-S4) ----
   console.log(chalk.cyan('FlowTrace v2 run'));
   console.log(chalk.gray(`  lang  : ${lang}`));
@@ -224,9 +229,114 @@ async function runJava({ options, restArgs, cwd, outPath }) {
   });
 }
 
+// ---------- Python injection ----------
+
+/**
+ * Detect package prefix from pyproject.toml or setup.py in cwd.
+ * Returns null if not found.
+ */
+function detectPythonPrefix(cwd) {
+  // Try pyproject.toml [project] name field.
+  const pyprojectPath = path.join(cwd, 'pyproject.toml');
+  if (fs.existsSync(pyprojectPath)) {
+    const src = fs.readFileSync(pyprojectPath, 'utf-8');
+    const m = src.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
+    if (m) return m[1].trim().replace(/-/g, '_');
+  }
+  // Try setup.py name= argument.
+  const setupPath = path.join(cwd, 'setup.py');
+  if (fs.existsSync(setupPath)) {
+    const src = fs.readFileSync(setupPath, 'utf-8');
+    const m = src.match(/name\s*=\s*["']([^"']+)["']/);
+    if (m) return m[1].trim().replace(/-/g, '_');
+  }
+  return null;
+}
+
+/**
+ * Build env for Python injection.
+ * Prepends BOTH the stub dir (contains sitecustomize.py) AND the parent of
+ * flowtrace_runtime/ (capture/python/) so that `import flowtrace_runtime`
+ * resolves correctly without a pip install.
+ */
+function buildPythonEnv({ prefix, outPath, stubDir }) {
+  const root = repoRoot();
+  // capture/python/ is the directory that contains the flowtrace_runtime/ package.
+  const runtimeParent = path.resolve(root, 'capture', 'python');
+  const existing = process.env.PYTHONPATH || '';
+  const parts = [stubDir, runtimeParent];
+  if (existing) parts.push(existing);
+  return {
+    ...process.env,
+    PYTHONPATH: parts.join(path.delimiter),
+    FLOWTRACE_ENABLE: '1',
+    FLOWTRACE_PACKAGE_PREFIX: prefix,
+    FLOWTRACE_OUTPUT: outPath,
+  };
+}
+
+async function runPython({ options, restArgs, cwd, outPath }) {
+  const root = repoRoot();
+
+  // 1. Resolve stub dir (ships with capture/python/stub/).
+  const stubDir = path.join(root, 'capture', 'python', 'stub');
+  if (!fs.existsSync(stubDir)) {
+    console.error(chalk.red('Error:'), `No se encontró el directorio stub de Python: ${stubDir}`);
+    console.log(chalk.gray('Asegúrate de que capture/python/stub/sitecustomize.py existe.'));
+    process.exit(1);
+  }
+
+  // 2. Copy stub to .flowtrace/python-stub/ (project-local).
+  const localStub = path.join(cwd, '.flowtrace', 'python-stub');
+  if (!fs.existsSync(localStub)) fs.mkdirSync(localStub, { recursive: true });
+  const srcSite = path.join(stubDir, 'sitecustomize.py');
+  const dstSite = path.join(localStub, 'sitecustomize.py');
+  fs.copyFileSync(srcSite, dstSite);
+
+  // 3. Resolve package prefix.
+  let prefix = options.packagePrefix || options['package-prefix'];
+  if (!prefix) {
+    prefix = detectPythonPrefix(cwd);
+    if (!prefix) {
+      console.error(chalk.red('Error:'), 'No se pudo detectar el package prefix automáticamente.');
+      console.log(chalk.gray('Usa: flowtrace run --lang python --package-prefix mipaquete -- python app.py'));
+      process.exit(1);
+    }
+    console.log(chalk.gray(`  prefix (detectado): ${prefix}`));
+  }
+
+  // 4. Validate user command.
+  if (!restArgs.length) {
+    console.error(chalk.red('Error:'), 'Debes proporcionar el comando a ejecutar después de --.');
+    console.log(chalk.gray('Ejemplo: flowtrace run --lang python -- python app.py'));
+    process.exit(1);
+  }
+
+  // 5. Build env and spawn.
+  const env = buildPythonEnv({ prefix, outPath, stubDir: localStub });
+  const [cmd, ...args] = restArgs;
+
+  console.log(chalk.cyan('FlowTrace v2 — Python instrumentado'));
+  console.log(chalk.gray(`  prefix  : ${prefix}`));
+  console.log(chalk.gray(`  salida  : ${outPath}`));
+  console.log(chalk.gray(`  comando : ${restArgs.join(' ')}`));
+
+  const child = spawn(cmd, args, { env, stdio: 'inherit' });
+  process.on('SIGINT', () => child.kill('SIGINT'));
+
+  return new Promise((resolve) => {
+    child.on('close', (code) => {
+      process.exit(code ?? 0);
+      resolve();
+    });
+  });
+}
+
 // Export internals for testing
 runCommand._buildJavaInjection = buildJavaInjection;
 runCommand._detectGroupIdFromPom = detectGroupIdFromPom;
 runCommand._ensureGitignore = ensureGitignore;
+runCommand._detectPythonPrefix = detectPythonPrefix;
+runCommand._buildPythonEnv = buildPythonEnv;
 
 module.exports = runCommand;
