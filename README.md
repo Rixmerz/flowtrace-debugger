@@ -67,6 +67,19 @@ npx @flowtrace/mcp-server
 
 Configura tu IDE para apuntar a este servidor y los agentes de IA podran analizar los logs automaticamente.
 
+### Demo end-to-end
+
+`demo/fastapi-bugged/` contiene 3 bugs intencionales en niveles distintos (api, logica, datos). Ejemplo:
+
+```bash
+cd demo/fastapi-bugged
+PYTHONPATH=$PWD:<repo>/capture/python:<repo>/capture/python/stub \
+FLOWTRACE_ENABLE=1 FLOWTRACE_PACKAGE_PREFIX=app \
+FLOWTRACE_OUTPUT=/tmp/trace.jsonl python3 run_scenarios.py
+```
+
+Luego `trace.find_error` localiza el `KeyError` exacto (`repository.py:15`), `log.search filter=_tax` expone el bug L2 (argumento `qty` en vez de `subtotal`), y `trace.tree` muestra el arbol completo con duraciones por span.
+
 ---
 
 ## Dashboard
