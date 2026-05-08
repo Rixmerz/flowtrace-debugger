@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flowtrace-runtime"
-version = "2.0.0a1"
+version = "2.0.0"
 description = "FlowTrace v2 Python runtime — JSONL emitter and W3C trace context helpers"
 requires-python = ">=3.9"
 dependencies = []
