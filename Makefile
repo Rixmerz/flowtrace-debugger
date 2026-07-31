@@ -60,7 +60,7 @@ truncation-parity:
 # layers land in S2-S4 (java, python, node, ts).
 test: validate-schema golden-verify truncation-parity test-java test-python test-node
 	@echo "==> mcp-server tests"
-	@cd mcp-server && node test/test-trace-tools.mjs
+	@cd mcp-server && npm run build && node test/test-trace-tools.mjs && node test/test-diagnose.mjs
 	@echo "==> flowtrace-dashboard tests"
 	@cd flowtrace-dashboard && node test/test-analyzer.js && node test/test-v2-field-names.js
 	@echo "==> flowtrace-cli tests"

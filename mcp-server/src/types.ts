@@ -78,6 +78,8 @@ export interface OpenSession {
   fields: Record<string, number>;
   schemaVersion: "v2" | "v1";
   malformed: number;          // count of dropped lines
+  /** Explicit problem statement for the client, or null. See lib/diagnose.ts. */
+  warning: string | null;
 }
 
 export interface ServerConfig {

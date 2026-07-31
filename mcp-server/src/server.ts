@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "node:fs";
 import { loadJsonl } from "./lib/jsonl";
+import { diagnoseLoad } from "./lib/diagnose";
 import type { OpenSession, TraceEvent } from "./types";
 import {
   traceTree,
@@ -41,8 +42,11 @@ mcp.tool(
     if (!fs.existsSync(path)) throw new Error(`File not found: ${path}`);
     const { rows, fields, schemaVersion, malformed } = await loadJsonl(path);
     const id = genId();
-    sessions.set(id, { id, path, rows, fields, schemaVersion, malformed });
-    return ok({ sessionId: id, count: rows.length, schemaVersion, malformed });
+    // The warning is returned to the CLIENT, not just logged to stderr, which the
+    // MCP transport makes invisible to the caller. See lib/diagnose.ts.
+    const { warning } = diagnoseLoad(path, schemaVersion, rows.length, malformed);
+    sessions.set(id, { id, path, rows, fields, schemaVersion, malformed, warning });
+    return ok({ sessionId: id, count: rows.length, schemaVersion, malformed, warning });
   }
 );
 
@@ -56,6 +60,10 @@ mcp.tool(
       schemaVersion: s.schemaVersion,
       fields: s.fields,
       sampleRow: s.rows[0] ?? null,
+      // Repeated here because "what am I looking at" is the natural follow-up
+      // call, and a session opened earlier in a conversation may be the only
+      // context the agent still has.
+      warning: s.warning,
     });
   }
 );
