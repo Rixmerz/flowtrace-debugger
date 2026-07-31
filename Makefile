@@ -75,14 +75,24 @@ test-java:
 	@echo "==> test-java: flowtrace-otel-extension"
 	@cd capture/java/flowtrace-otel-extension && mvn -q test
 
-# Python capture module
+# Python capture module.
+#
+# PYTHON/PIP are overridable and default to the versioned names. `python` and
+# `pip` are unversioned aliases that modern systems no longer provide — macOS
+# removed `python` in 12.3 and most Linux distributions ship only `python3` — so
+# `make test-python` died with "python: command not found", and with it the whole
+# `make test` aggregate, right after the schema and parity checks passed. Override
+# on the command line if your environment differs: make test PYTHON=python3.11
+PYTHON ?= python3
+PIP ?= $(PYTHON) -m pip
+
 build-python:
 	@echo "==> build-python: flowtrace-runtime (editable install)"
-	@cd capture/python && pip install -e .[dev] --quiet
+	@cd capture/python && $(PIP) install -e .[dev] --quiet
 
 test-python:
 	@echo "==> test-python: flowtrace-runtime"
-	@cd capture/python && python -m pytest tests/ -v
+	@cd capture/python && $(PYTHON) -m pytest tests/ -v
 
 # Node capture module
 build-node:
