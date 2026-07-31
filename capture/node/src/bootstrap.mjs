@@ -6,9 +6,11 @@
  * This file:
  *   1. Installs the CJS hook (Module.prototype._compile patch).
  *   2. Registers the ESM loader via module.register().
- *   3. Mutates NODE_OPTIONS so that worker_threads and child_process
+ *   3. Installs W3C trace-context propagation (HTTP in/out + subprocess env)
+ *      so a trace survives network and process boundaries.
+ *   4. Mutates NODE_OPTIONS so that worker_threads and child_process
  *      spawned via Node inherit the same --import flag (idempotent).
- *   4. Sets FLOWTRACE_INITED=1.
+ *   5. Sets FLOWTRACE_INITED=1.
  */
 
 import { register } from 'node:module';
@@ -25,7 +27,15 @@ install();
 const loaderUrl = new URL('./esm/loader.mjs', import.meta.url).href;
 register(loaderUrl, import.meta.url);
 
-// ── 3. Worker propagation ────────────────────────────────────
+// ── 3. Trace-context propagation ─────────────────────────────
+// Outbound/inbound HTTP headers and child-process env. Installed before user
+// code loads so that clients and servers created at import time are covered.
+import { install as installHttpPropagation } from './runtime/http.js';
+import { install as installSubprocessPropagation } from './runtime/subprocess.js';
+installHttpPropagation();
+installSubprocessPropagation();
+
+// ── 4. Worker propagation ────────────────────────────────────
 const bootstrapAbsPath = fileURLToPath(import.meta.url);
 const bootstrapFlag    = `--import file://${bootstrapAbsPath}`;
 
@@ -36,5 +46,5 @@ if (!existing.includes(bootstrapFlag)) {
     : `${bootstrapFlag} --enable-source-maps`;
 }
 
-// ── 4. Init marker ───────────────────────────────────────────
+// ── 5. Init marker ───────────────────────────────────────────
 process.env.FLOWTRACE_INITED = '1';

@@ -8,7 +8,24 @@ if TYPE_CHECKING:
     from .emitter import Emitter
 
 __version__ = "2.0.0a1"
-__all__ = ["install", "uninstall", "get_emitter"]
+__all__ = [
+    "install",
+    "uninstall",
+    "get_emitter",
+    # W3C trace-context propagation. Exposed because web frameworks each
+    # surface inbound headers differently and must wire themselves up.
+    "continue_trace",
+    "current_traceparent",
+    "extract",
+    "inject",
+]
+
+from .propagation import (  # noqa: E402  (public re-export)
+    continue_trace,
+    current_traceparent,
+    extract,
+    inject,
+)
 
 
 def install() -> None:

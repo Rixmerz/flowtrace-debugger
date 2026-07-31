@@ -10,6 +10,7 @@
 import { getCurrent, runInSpan, storage } from './context.js';
 import { emit } from './emitter.js';
 import { newSpanId, newTraceId } from './ids.js';
+import { rootSeed } from './propagation.js';
 
 // High-resolution timestamp baseline established once at module load.
 const BASELINE_MS = Date.now();
@@ -92,7 +93,12 @@ function serializeArgs(paramNames, args) {
  * @returns {{ span_id: string, trace_id: string, parent_id: string|null, depth: number, start: bigint }}
  */
 export function __ft_enter(module_, cls, method, visibility, paramNames, args) {
-  const parent = getCurrent();
+  // No in-process parent means this is a local root span. Before minting a
+  // fresh trace_id, adopt any inbound W3C context (env seed or extracted HTTP
+  // header) so the trace continues across the process/network boundary
+  // instead of starting over. rootSeed()'s synthetic parent has depth -1, so
+  // the arithmetic below still yields depth 0 for this span.
+  const parent = getCurrent() ?? rootSeed();
   const span_id = newSpanId();
   const trace_id = parent ? parent.trace_id : newTraceId();
   const parent_id = parent ? parent.span_id : null;
