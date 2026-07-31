@@ -117,7 +117,7 @@ function methodName(node) {
  *
  * Wraps the original body in:
  *
- *   const __ft_ctx = __ft_enter(module, class, method, visibility, [...params], arguments);
+ *   const __ft_ctx = __ft_enter(module, class, method, visibility, [...params], arguments, lang);
  *   let __ft_result;
  *   try {
  *     __ft_result = __ft_run(__ft_ctx, () => { <original body> });
@@ -139,14 +139,17 @@ function methodName(node) {
  * @param {string[]} paramNames
  * @param {boolean} isAsync
  * @param {boolean} isArrow - arrows have no `arguments`; use rest param capture
+ * @param {'node'|'ts'} lang - emitted as the event's `lang`; see the call site
+ *   for why this is threaded through rather than derived at runtime.
  * @returns {import('@babel/types').BlockStatement}
  */
-function buildInstrumentedBody(originalBody, mod, cls, method, visibility, paramNames, isAsync, isArrow) {
+function buildInstrumentedBody(originalBody, mod, cls, method, visibility, paramNames, isAsync, isArrow, lang) {
   const modLit    = t.stringLiteral(mod);
   const clsLit    = cls ? t.stringLiteral(cls) : t.nullLiteral();
   const methodLit = t.stringLiteral(method);
   const visLit    = t.stringLiteral(visibility);
   const paramsArr = t.arrayExpression(paramNames.map(n => t.stringLiteral(n)));
+  const langLit   = t.stringLiteral(lang);
 
   // For arrow functions, `arguments` is not available; use a captured array
   // __ft_args that we inject via a rest parameter trick at call sites.
@@ -159,7 +162,8 @@ function buildInstrumentedBody(originalBody, mod, cls, method, visibility, param
   const ctxDecl = t.variableDeclaration('const', [
     t.variableDeclarator(
       t.identifier('__ft_ctx'),
-      t.callExpression(t.identifier('__ft_enter'), [modLit, clsLit, methodLit, visLit, paramsArr, argsExpr])
+      t.callExpression(t.identifier('__ft_enter'),
+        [modLit, clsLit, methodLit, visLit, paramsArr, argsExpr, langLit])
     ),
   ]);
 
@@ -297,6 +301,13 @@ export function transform(source, opts = {}) {
   if (isTs) {
     try {
       const swc = getSwc();
+      // swc's module.type decides whether the stripped output is ESM or CJS.
+      // This was hardcoded to 'commonjs', which downgraded every TypeScript
+      // file to CommonJS regardless of how it was loaded — so the ESM loader
+      // declared format:'module' while handing Node code containing
+      // `exports.__esModule`, and the module failed to evaluate. Honour the
+      // caller's declared module type instead.
+      const swcModuleType = (opts.moduleType ?? 'esm') === 'cjs' ? 'commonjs' : 'es6';
       const stripped = swc.transformSync(source, {
         filename,
         jsc: {
@@ -307,7 +318,7 @@ export function transform(source, opts = {}) {
           },
           target: 'es2022',
         },
-        module: { type: 'commonjs' },
+        module: { type: swcModuleType },
         sourceMaps: false,
       });
       jsSource = stripped.code;
@@ -338,6 +349,14 @@ export function transform(source, opts = {}) {
   }
 
   const mod = moduleId(filename);
+
+  // The schema's lang enum distinguishes "ts" from "node", and the CLI, the
+  // README and examples/golden/ts all advertise TypeScript as a first-class
+  // runtime — but the runtime helpers hardcoded lang:'node', so a .ts file was
+  // indistinguishable from a .js one and `lang == "ts"` matched nothing, ever.
+  // The extension is only known here at transform time, so it is threaded into
+  // the injected __ft_enter call and carried on the span ctx from there.
+  const lang = isTs ? 'ts' : 'node';
 
   // Detect module type for the runtime import.
   let moduleType = opts.moduleType;
@@ -373,7 +392,7 @@ export function transform(source, opts = {}) {
 
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, currentClass, name, vis, params, isAsync, false
+        path.node.body, mod, currentClass, name, vis, params, isAsync, false, lang
       );
       path.skip();
     },
@@ -388,7 +407,7 @@ export function transform(source, opts = {}) {
 
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, currentClass, name, 'private', params, isAsync, false
+        path.node.body, mod, currentClass, name, 'private', params, isAsync, false, lang
       );
       path.skip();
     },
@@ -405,7 +424,7 @@ export function transform(source, opts = {}) {
 
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, null, name, 'public', params, isAsync, false
+        path.node.body, mod, null, name, 'public', params, isAsync, false, lang
       );
       path.skip();
     },
@@ -425,7 +444,7 @@ export function transform(source, opts = {}) {
 
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, null, name, 'public', params, isAsync, false
+        path.node.body, mod, null, name, 'public', params, isAsync, false, lang
       );
       path.skip();
     },
@@ -448,7 +467,7 @@ export function transform(source, opts = {}) {
 
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, null, name, 'public', params, isAsync, true
+        path.node.body, mod, null, name, 'public', params, isAsync, true, lang
       );
       path.skip();
     },

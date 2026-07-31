@@ -60,7 +60,7 @@ export function install() {
 
     let transformed;
     try {
-      const key = cacheKey(content);
+      const key = cacheKey(content, 'cjs');
       let code = cacheGet(key);
       if (!code) {
         const result = transform(content, {

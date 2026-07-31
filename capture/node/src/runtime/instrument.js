@@ -90,9 +90,12 @@ function serializeArgs(paramNames, args) {
  * @param {string} visibility - "public" | "private".
  * @param {string[]} paramNames - Formal parameter names (for arg labeling).
  * @param {IArguments|Array} args - Actual arguments.
- * @returns {{ span_id: string, trace_id: string, parent_id: string|null, depth: number, start: bigint }}
+ * @param {'node'|'ts'} [lang='node'] - Supplied by the transform, which is the
+ *   only place the source extension is known. Defaults to 'node' so a trace
+ *   produced by an older transform still emits a schema-valid lang.
+ * @returns {{ span_id: string, trace_id: string, parent_id: string|null, depth: number, lang: string, start: bigint }}
  */
-export function __ft_enter(module_, cls, method, visibility, paramNames, args) {
+export function __ft_enter(module_, cls, method, visibility, paramNames, args, lang = 'node') {
   // No in-process parent means this is a local root span. Before minting a
   // fresh trace_id, adopt any inbound W3C context (env seed or extracted HTTP
   // header) so the trace continues across the process/network boundary
@@ -104,7 +107,9 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args) {
   const parent_id = parent ? parent.span_id : null;
   const depth = parent ? parent.depth + 1 : 0;
 
-  const ctx = { span_id, trace_id, parent_id, depth, start: process.hrtime.bigint() };
+  // lang rides on the ctx so __ft_exit / __ft_exit_error can read it without
+  // the transform having to thread it through their argument lists too.
+  const ctx = { span_id, trace_id, parent_id, depth, lang, start: process.hrtime.bigint() };
 
   emit({
     ts: nowTs(),
@@ -113,7 +118,7 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args) {
     parent_id,
     event: 'enter',
     thread: 'main',
-    lang: 'node',
+    lang,
     module: module_,
     class: cls,
     method,
@@ -154,7 +159,7 @@ export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, arg
     parent_id: ctx.parent_id,
     event: 'exit',
     thread: 'main',
-    lang: 'node',
+    lang: ctx.lang ?? 'node',
     module: module_,
     class: cls,
     method,
@@ -188,7 +193,7 @@ export function __ft_exit_error(ctx, module_, cls, method, visibility, paramName
     parent_id: ctx.parent_id,
     event: 'exit',
     thread: 'main',
-    lang: 'node',
+    lang: ctx.lang ?? 'node',
     module: module_,
     class: cls,
     method,

@@ -6,6 +6,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { extname } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 // Dynamic import of transform and cache so the loader module itself is lean.
 // These are loaded lazily on first instrumented file.
@@ -29,6 +30,16 @@ async function getCache() {
 
 const RUNTIME_SPECIFIER = '@flowtrace/capture-node/runtime/instrument';
 
+/** Extensions we instrument. */
+const INSTRUMENTED_EXTS = ['.js', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
+
+/**
+ * TypeScript extensions. Node's own resolver has no format mapping for these,
+ * so delegating to nextLoad() throws ERR_UNKNOWN_FILE_EXTENSION before we ever
+ * see the source — see the comment in load().
+ */
+const TS_EXTS = ['.ts', '.tsx', '.mts', '.cts'];
+
 /**
  * Returns true if the URL should be instrumented.
  */
@@ -38,7 +49,7 @@ function shouldInstrument(url) {
   if (path.includes('/node_modules/')) return false;
 
   const ext = extname(path);
-  if (!['.js', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'].includes(ext)) return false;
+  if (!INSTRUMENTED_EXTS.includes(ext)) return false;
 
   const prefix = process.env.FLOWTRACE_PACKAGE_PREFIX;
   if (!prefix) {
@@ -48,9 +59,66 @@ function shouldInstrument(url) {
 }
 
 /**
+ * Read, transform and return a TypeScript module without consulting Node's
+ * default loader.
+ *
+ * `.cts` declares CommonJS; every other TS extension declares ESM, matching
+ * TypeScript's own convention.
+ *
+ * @param {string} url
+ * @returns {Promise<{format: string, source: string, shortCircuit: true}|null>}
+ *   null if the file could not be read or transformed, so the caller can fall
+ *   back to Node's normal (erroring) path instead of masking the problem.
+ */
+async function loadTypeScript(url) {
+  try {
+    const filename = fileURLToPath(url);
+    const source = await readFile(filename, 'utf8');
+    const format = extname(filename) === '.cts' ? 'commonjs' : 'module';
+
+    const cache = await getCache();
+    const transformFn = await getTransform();
+
+    const moduleType = format === 'commonjs' ? 'cjs' : 'esm';
+    const key = cache.cacheKey(source, moduleType);
+    let code = cache.cacheGet(key);
+    if (!code) {
+      const out = transformFn(source, {
+        filename,
+        moduleType,
+        runtimePath: RUNTIME_SPECIFIER,
+      });
+      code = out.code;
+      cache.cachePut(key, code, out.map);
+    }
+
+    return { format, source: code, shortCircuit: true };
+  } catch (e) {
+    process.stderr.write(`[flowtrace] TS load failed for ${url}: ${e.message}\n`);
+    return null;
+  }
+}
+
+/**
  * ESM loader load hook.
  */
 export async function load(url, context, nextLoad) {
+  // TypeScript must be handled BEFORE delegating. Node's default loader has no
+  // format mapping for .ts/.tsx/.mts/.cts, so `await nextLoad(...)` throws
+  // ERR_UNKNOWN_FILE_EXTENSION and the transform never runs. Because that throw
+  // happened on line one of this hook, TypeScript was unloadable over ESM
+  // entirely — which is why `lang: "ts"` had never once been emitted despite
+  // being in the schema enum, the CLI and examples/golden/ts.
+  //
+  // So for TS we read the file ourselves and declare the format, rather than
+  // asking Node to classify a file it does not recognise.
+  if (shouldInstrument(url) && TS_EXTS.includes(extname(fileURLToPath(url)))) {
+    const tsResult = await loadTypeScript(url);
+    if (tsResult) return tsResult;
+    // Fall through on failure so a transform bug degrades to Node's own error
+    // rather than a silent empty module.
+  }
+
   const result = await nextLoad(url, context);
 
   if (!shouldInstrument(url)) return result;
@@ -74,7 +142,7 @@ export async function load(url, context, nextLoad) {
     const cache = await getCache();
     const transformFn = await getTransform();
 
-    const key = cache.cacheKey(source);
+    const key = cache.cacheKey(source, 'esm');
     let code = cache.cacheGet(key);
     if (!code) {
       const out = transformFn(source, {

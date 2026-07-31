@@ -30,12 +30,22 @@ function ensureCacheDir() {
 }
 
 /**
- * Build a cache key (sha256 hex) from source + version fingerprints.
+ * Build a cache key (sha256 hex) from source + version fingerprints + the
+ * transform variant.
+ *
+ * `variant` is load-bearing, not decoration. The transform's output depends on
+ * the target module system as well as the source: identical TypeScript emits
+ * `import` under ESM and `exports.__esModule` under CommonJS. Keying on source
+ * alone made those two collide, so whichever was compiled first was served to
+ * the other — producing a CommonJS module where Node had been told to expect
+ * ESM, and vice versa.
  *
  * @param {string} source
+ * @param {string} [variant=''] - Anything that changes the output for identical
+ *   input; currently the module type ('esm' | 'cjs').
  * @returns {string}
  */
-export function cacheKey(source) {
+export function cacheKey(source, variant = '') {
   return createHash('sha256')
     .update(source)
     .update('\x00')
@@ -44,6 +54,8 @@ export function cacheKey(source) {
     .update(NODE_VERSION)
     .update('\x00')
     .update(BABEL_VERSION)
+    .update('\x00')
+    .update(variant)
     .digest('hex');
 }
 
