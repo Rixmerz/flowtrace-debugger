@@ -75,3 +75,7 @@ Thumbs.db
 
 # livespec local index state
 .mcp-docs/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
