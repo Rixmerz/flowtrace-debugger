@@ -28,5 +28,7 @@ const start = process.hrtime.bigint();
 runHotLoop();
 const end = process.hrtime.bigint();
 
-const elapsedMs = Number((end - start) / 1_000_000n);
-console.log(`BENCH_RESULT_MS=${elapsedMs}`);
+// Nanoseconds, not milliseconds: an uninstrumented 10k loop of add() takes well
+// under 1 ms, so a millisecond reading is 0 and every derived figure (overhead %,
+// per-event cost) collapses to garbage.
+console.log(`BENCH_RESULT_NS=${end - start}`);

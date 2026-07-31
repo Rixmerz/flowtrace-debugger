@@ -34,6 +34,12 @@ flowtrace-*.jsonl
 # git, so validate-schema had nothing to check and passed anyway.
 !examples/golden/*/expected.jsonl
 
+# Benchmark run artifacts. The measured baseline lives in benchmarks/BASELINE.md,
+# which is updated deliberately; timestamped result files just accumulate (six of
+# them were committed, all of them the 0%-overhead no-op the harness produced
+# when it silently failed to instrument anything).
+benchmarks/results-*.json
+
 # IDE
 .idea/
 *.iml

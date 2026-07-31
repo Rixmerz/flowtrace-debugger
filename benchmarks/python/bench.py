@@ -27,12 +27,14 @@ def main() -> None:
     for i in range(500):
         add(i, 1)
 
-    start = time.perf_counter()
+    # Nanoseconds, not milliseconds: an uninstrumented 10k loop of add() takes
+    # well under 1 ms, so a millisecond reading is 0 and every derived figure
+    # (overhead %, per-event cost) collapses to garbage.
+    start = time.perf_counter_ns()
     runHotLoop()
-    end = time.perf_counter()
+    end = time.perf_counter_ns()
 
-    elapsed_ms = int((end - start) * 1000)
-    print(f"BENCH_RESULT_MS={elapsed_ms}")
+    print(f"BENCH_RESULT_NS={end - start}")
 
 
 if __name__ == "__main__":

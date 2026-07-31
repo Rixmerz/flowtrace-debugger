@@ -158,7 +158,10 @@ jobs:
     name: Benchmark harness (informational)
     runs-on: ubuntu-latest
     needs: validate-schema
-    continue-on-error: true
+    # No longer continue-on-error: the harness now fails when an instrumented run
+    # emits zero events, which is a real defect (broken agent wiring, unset
+    # prefix) and must not be swallowed. The per-event gates carry 2-4x headroom
+    # over measured values so runner jitter cannot trip them.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -179,8 +182,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Python capture module
-        run: make build-python
+      - name: Build all capture layers
+        run: make build-java build-python build-node
 
       - name: Run bench
         run: make bench

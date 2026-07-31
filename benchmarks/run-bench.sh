@@ -1,127 +1,235 @@
 #!/usr/bin/env bash
 # FlowTrace v2 benchmark harness — 10k hot-loop per lang × (baseline | instrumented).
-# Usage: bash benchmarks/run-bench.sh
-# Outputs: benchmarks/results-<lang>-<timestamp>.json  (one file per lang)
-# Prints a summary table to stdout.
+#
+# Usage: bash benchmarks/run-bench.sh [java|python|node ...]
+# Outputs: benchmarks/results-<lang>-<timestamp>.json (one per lang) + a summary.
+#
+# ---------------------------------------------------------------------------
+# Why this was rewritten
+# ---------------------------------------------------------------------------
+# The previous harness could not measure anything, and every failure mode
+# reported 0% overhead:
+#
+#   1. It looked for flowtrace-otel-extension-*-SNAPSHOT.jar, which stopped
+#      existing when the project was released to 2.0.0.
+#   2. It passed the extension jar as -javaagent. The extension has no
+#      Premain-Class; it is an OTel javaagent *extension* and must be loaded via
+#      -Dotel.javaagent.extensions on top of the real agent.
+#   3. Python was instrumented with exec(open(...).read()) after install(). The
+#      import hook only rewrites *imported modules*, so exec'd source was never
+#      instrumented at all.
+#   4. FLOWTRACE_PACKAGE_PREFIX was never set. Python and Java instrument
+#      NOTHING without it.
+#   5. Each of those fell back to `instrumented = baseline`, and
+#      compute_overhead() returned 0 whenever the baseline was 0 — so total
+#      failure was indistinguishable from zero cost. All six committed
+#      results-*.json files were that no-op.
+#   6. Overhead was expressed as a percentage. An uninstrumented 10k loop of
+#      add() runs in well under a millisecond, so the percentage is either a
+#      division by ~0 or meaningless. The advertised gates (<15% / <20%) were not
+#      merely unverified, they were unexpressible.
+#
+# So: the primary metric here is COST PER EVENT in microseconds, which is the
+# figure that transfers to a real workload — multiply it by how many traced calls
+# a request makes. Absolute wall-clock times are reported alongside it, and the
+# percentage is deliberately NOT reported.
+#
+# The load-bearing assertion is that an instrumented run must actually emit
+# events. That single check catches every defect listed above, all of which
+# previously presented as "0% overhead".
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BENCH_DIR="$REPO_ROOT/benchmarks"
 TIMESTAMP=$(date +%Y%m%dT%H%M%S)
+ITERATIONS=10000
 
-# Overhead gates (informational only — non-blocking unless explicitly asserted).
-JAVA_GATE=15
-PYTHON_GATE=20
-NODE_GATE=15
+# Per-event cost ceilings, in microseconds. These are honest placeholders taken
+# from a first real measurement, not vendor claims — move them deliberately when
+# the numbers move, and say why in the commit.
+JAVA_GATE_US=40
+PYTHON_GATE_US=40
+NODE_GATE_US=15
 
-declare -A baseline_ms
-declare -A instrumented_ms
-declare -A overhead_pct
+JAVA_EXT_DIR="$REPO_ROOT/capture/java/flowtrace-otel-extension"
+PY_CAPTURE="$REPO_ROOT/capture/python"
+NODE_BOOTSTRAP="$REPO_ROOT/capture/node/src/bootstrap.mjs"
+
+# Plain indexed arrays only: macOS ships bash 3.2, which has no associative
+# arrays and no ${var^^} uppercase expansion. The previous harness used both, so
+# it aborted immediately on macOS and only ever ran in CI — where it produced the
+# 0%% no-op results that are the reason this file was rewritten.
+SUMMARY_ROWS=()
+
+failures=0
+skipped=""
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-run_and_extract_ms() {
-  # Run command, capture stdout, extract BENCH_RESULT_MS=<n>.
-  local output
-  output=$("$@" 2>/dev/null) || true
-  echo "$output" | grep -oE 'BENCH_RESULT_MS=[0-9]+' | cut -d= -f2 || true
+die_lang() {
+  # Record a hard failure for one language. Never substitutes a fake number.
+  local lang=$1 reason=$2
+  echo "  [$lang] FAIL: $reason" >&2
+  failures=$((failures + 1))
 }
 
-write_result() {
-  local lang=$1
+skip_lang() {
+  # Toolchain genuinely absent. Reported and counted — never silently passed.
+  local lang=$1 reason=$2
+  echo "  [$lang] SKIP: $reason" >&2
+  skipped="$skipped $lang"
+}
+
+extract_ns() {
+  # Run a command and echo the BENCH_RESULT_NS it printed, or nothing.
+  local output
+  if ! output=$("$@" 2>/dev/null); then
+    return 1
+  fi
+  echo "$output" | grep -oE 'BENCH_RESULT_NS=[0-9]+' | cut -d= -f2 | head -1
+}
+
+count_events() {
+  local file=$1
+  if [ -f "$file" ]; then wc -l < "$file" | tr -d ' '; else echo 0; fi
+}
+
+# Microseconds per emitted event. awk, because bash integer division cannot
+# express a sub-microsecond figure.
+per_event_us() {
+  local base_ns=$1 instr_ns=$2 n_events=$3
+  awk -v b="$base_ns" -v i="$instr_ns" -v n="$n_events" \
+    'BEGIN { if (n <= 0) { print "0.000" } else { printf "%.3f", (i - b) / n / 1000 } }'
+}
+
+gate_for() {
+  # bash 3.2 has no ${var^^}, so uppercase via tr and dereference indirectly.
+  local upper
+  upper=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')
+  eval "printf '%s' \"\${${upper}_GATE_US}\""
+}
+
+record() {
+  local lang=$1 base_ns=$2 instr_ns=$3 n_events=$4
   local file="$BENCH_DIR/results-${lang}-${TIMESTAMP}.json"
+  local us gate verdict
+  us=$(per_event_us "$base_ns" "$instr_ns" "$n_events")
+  gate=$(gate_for "$lang")
+  verdict=$(awk -v v="$us" -v g="$gate" 'BEGIN { print (v > g) ? "WARN" : "ok" }')
+
   cat > "$file" <<JSON
 {
   "lang": "${lang}",
   "timestamp": "${TIMESTAMP}",
-  "iterations": 10000,
-  "baseline_ms": ${baseline_ms[$lang]},
-  "instrumented_ms": ${instrumented_ms[$lang]},
-  "overhead_pct": ${overhead_pct[$lang]}
+  "iterations": ${ITERATIONS},
+  "baseline_ns": ${base_ns},
+  "instrumented_ns": ${instr_ns},
+  "events_emitted": ${n_events},
+  "us_per_event": ${us},
+  "gate_us": ${gate},
+  "within_gate": $([ "$verdict" = "ok" ] && echo true || echo false)
 }
 JSON
-  echo "  Wrote: $file" >&2
+  echo "  Wrote: ${file#"$REPO_ROOT"/}" >&2
+
+  SUMMARY_ROWS+=("$(printf '%-8s | %13s | %17s | %7s | %8s | %s' \
+    "$lang" \
+    "$(awk -v n="$base_ns"  'BEGIN { printf "%.2f", n/1e6 }')" \
+    "$(awk -v n="$instr_ns" 'BEGIN { printf "%.2f", n/1e6 }')" \
+    "$n_events" \
+    "$us" \
+    "$verdict (<${gate}us)")")
 }
 
-compute_overhead() {
-  local base=$1
-  local instr=$2
-  if [ "$base" -eq 0 ]; then
-    echo 0
-  else
-    echo $(( (instr - base) * 100 / base ))
+# Shared post-run validation. An instrumented run that emitted nothing was not
+# instrumented, whatever the clock says.
+finish_lang() {
+  local lang=$1 outfile=$2 bns=$3 ins=$4
+
+  if [ -z "$bns" ]; then die_lang "$lang" "baseline produced no BENCH_RESULT_NS"; return 1; fi
+  if [ -z "$ins" ]; then die_lang "$lang" "instrumented run produced no BENCH_RESULT_NS"; return 1; fi
+
+  local n
+  n=$(count_events "$outfile")
+  if [ "$n" -eq 0 ]; then
+    die_lang "$lang" "instrumented run emitted 0 events — it was NOT instrumented"
+    return 1
   fi
+
+  record "$lang" "$bns" "$ins" "$n"
 }
 
 # ---------------------------------------------------------------------------
-# Java
+# Java — real OTel agent + FlowTrace extension
 # ---------------------------------------------------------------------------
 
 bench_java() {
-  echo "[java] compiling Bench.java..." >&2
+  command -v java  >/dev/null || { skip_lang java "java not on PATH"; return; }
+  command -v javac >/dev/null || { skip_lang java "javac not on PATH"; return; }
+
+  # Derive the version from the pom rather than globbing for a hardcoded one.
+  local version
+  version=$(sed -n 's|.*<version>\(.*\)</version>.*|\1|p' "$JAVA_EXT_DIR/pom.xml" | head -1)
+  local ext="$JAVA_EXT_DIR/target/flowtrace-otel-extension-${version}.jar"
+  local agent="$JAVA_EXT_DIR/target/dependency/opentelemetry-javaagent.jar"
+
+  [ -f "$ext" ]   || { skip_lang java "extension jar missing ($ext) — run 'make build-java'"; return; }
+  [ -f "$agent" ] || { skip_lang java "OTel agent jar missing — run 'make build-java'"; return; }
+
   cd "$BENCH_DIR/java"
-  javac Bench.java 2>/dev/null
+  javac Bench.java
 
   echo "[java] baseline..." >&2
-  local bms
-  bms=$(run_and_extract_ms java Bench)
-  baseline_ms[java]="${bms:-0}"
+  local bns; bns=$(extract_ns java Bench) || true
 
   echo "[java] instrumented..." >&2
-  local jar
-  jar=$(ls "$REPO_ROOT/capture/java/flowtrace-otel-extension/target/flowtrace-otel-extension-"*"-SNAPSHOT.jar" 2>/dev/null | grep -v original | head -1 || true)
-  local ims
-  if [ -n "$jar" ]; then
-    local outfile
-    outfile=$(mktemp /tmp/ft-bench-java-XXXXXX.jsonl)
-    ims=$(FLOWTRACE_OUTPUT="$outfile" \
-      run_and_extract_ms java \
-        -javaagent:"$jar" \
-        -Dflowtrace.package-prefix=Bench \
-        -Dflowtrace.max-arg-length=512 \
-        Bench)
-    rm -f "$outfile"
-  else
-    echo "  [java] agent jar not found, using baseline as instrumented" >&2
-    ims=$bms
-  fi
-  instrumented_ms[java]="${ims:-0}"
-  overhead_pct[java]=$(compute_overhead "${baseline_ms[java]}" "${instrumented_ms[java]}")
+  local out; out=$(mktemp /tmp/ft-bench-java-XXXXXX.jsonl)
+  local ins; ins=$(extract_ns java \
+    -javaagent:"$agent" \
+    -Dotel.javaagent.extensions="$ext" \
+    -Dflowtrace.package-prefix=Bench \
+    -Dflowtrace.output="$out" \
+    -Dflowtrace.max-arg-length=512 \
+    -Dotel.traces.exporter=none -Dotel.metrics.exporter=none \
+    -Dotel.logs.exporter=none -Dotel.javaagent.logging=none \
+    Bench) || true
 
+  finish_lang java "$out" "$bns" "$ins" || true
+  rm -f "$out"
   cd "$REPO_ROOT"
 }
 
 # ---------------------------------------------------------------------------
-# Python
+# Python — via the sitecustomize stub, so the main module really is transformed
 # ---------------------------------------------------------------------------
 
 bench_python() {
+  command -v python3 >/dev/null || { skip_lang python "python3 not on PATH"; return; }
+  [ -d "$PY_CAPTURE/stub" ] || { skip_lang python "capture/python/stub missing"; return; }
+
+  cd "$BENCH_DIR/python"
+
   echo "[python] baseline..." >&2
-  local bms
-  bms=$(run_and_extract_ms python3 "$BENCH_DIR/python/bench.py")
-  baseline_ms[python]="${bms:-0}"
+  local bns; bns=$(extract_ns python3 bench.py) || true
 
   echo "[python] instrumented..." >&2
-  local ims
-  if python3 -c "import flowtrace_runtime" 2>/dev/null; then
-    local outfile
-    outfile=$(mktemp /tmp/ft-bench-python-XXXXXX.jsonl)
-    ims=$(FLOWTRACE_OUTPUT="$outfile" \
-      FLOWTRACE_MAX_ARG_LENGTH=512 \
-      run_and_extract_ms python3 \
-        -c "
-import flowtrace_runtime.bootstrap as _b; _b.install()
-exec(open('$BENCH_DIR/python/bench.py').read())
-")
-    rm -f "$outfile"
-  else
-    echo "  [python] flowtrace_runtime not installed, using baseline as instrumented" >&2
-    ims=$bms
-  fi
-  instrumented_ms[python]="${ims:-0}"
-  overhead_pct[python]=$(compute_overhead "${baseline_ms[python]}" "${instrumented_ms[python]}")
+  local out; out=$(mktemp /tmp/ft-bench-python-XXXXXX.jsonl)
+  # The import hook cannot see __main__, so the stub re-runs the script through
+  # runpy with the transformed loader. FLOWTRACE_PACKAGE_PREFIX is mandatory:
+  # Python instruments nothing when it is unset.
+  local ins
+  ins=$(PYTHONPATH="$PY_CAPTURE/stub:$PY_CAPTURE" \
+        FLOWTRACE_ENABLE=1 \
+        FLOWTRACE_PACKAGE_PREFIX=bench \
+        FLOWTRACE_OUTPUT="$out" \
+        FLOWTRACE_MAX_ARG_LENGTH=512 \
+        extract_ns python3 bench.py) || true
+
+  finish_lang python "$out" "$bns" "$ins" || true
+  rm -f "$out"
+  cd "$REPO_ROOT"
 }
 
 # ---------------------------------------------------------------------------
@@ -129,65 +237,71 @@ exec(open('$BENCH_DIR/python/bench.py').read())
 # ---------------------------------------------------------------------------
 
 bench_node() {
+  command -v node >/dev/null || { skip_lang node "node not on PATH"; return; }
+  [ -f "$NODE_BOOTSTRAP" ] || { skip_lang node "bootstrap.mjs missing"; return; }
+
+  cd "$BENCH_DIR/node"
+
   echo "[node] baseline..." >&2
-  local bms
-  bms=$(run_and_extract_ms node "$BENCH_DIR/node/bench.js")
-  baseline_ms[node]="${bms:-0}"
+  local bns; bns=$(extract_ns node bench.js) || true
 
   echo "[node] instrumented..." >&2
-  local loader="$REPO_ROOT/capture/node/src/bootstrap.mjs"
-  local ims
-  if [ -f "$loader" ]; then
-    local outfile
-    outfile=$(mktemp /tmp/ft-bench-node-XXXXXX.jsonl)
-    ims=$(FLOWTRACE_OUTPUT="$outfile" \
-      FLOWTRACE_MAX_ARG_LENGTH=512 \
-      run_and_extract_ms node \
-        --import "$loader" \
-        "$BENCH_DIR/node/bench.js")
-    rm -f "$outfile"
-  else
-    echo "  [node] bootstrap loader not found, using baseline as instrumented" >&2
-    ims=$bms
-  fi
-  instrumented_ms[node]="${ims:-0}"
-  overhead_pct[node]=$(compute_overhead "${baseline_ms[node]}" "${instrumented_ms[node]}")
+  local out; out=$(mktemp /tmp/ft-bench-node-XXXXXX.jsonl)
+  # Empty prefix = everything under cwd, which is what we want here. NODE_OPTIONS
+  # is cleared so the bootstrap is not imported twice.
+  local ins
+  ins=$(FLOWTRACE_OUTPUT="$out" \
+        FLOWTRACE_PACKAGE_PREFIX= \
+        FLOWTRACE_MAX_ARG_LENGTH=512 \
+        NODE_OPTIONS= \
+        extract_ns node --import "file://$NODE_BOOTSTRAP" bench.js) || true
+
+  finish_lang node "$out" "$bns" "$ins" || true
+  rm -f "$out"
+  cd "$REPO_ROOT"
 }
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-echo "FlowTrace v2 — Benchmark Harness (10k iterations)"
-echo "=================================================="
+LANGS=("$@")
+[ ${#LANGS[@]} -eq 0 ] && LANGS=(java python node)
 
-bench_java
-write_result java
+echo "FlowTrace v2 — Benchmark Harness (${ITERATIONS} iterations)"
+echo "=========================================================="
 
-bench_python
-write_result python
-
-bench_node
-write_result node
-
-# Print summary table.
-echo ""
-echo "Lang     | Baseline (ms) | Instrumented (ms) | Overhead %"
-echo "---------|---------------|-------------------|-----------"
-for lang in java python node; do
-  gate_var="${lang^^}_GATE"
-  gate="${!gate_var}"
-  pct="${overhead_pct[$lang]}"
-  flag=""
-  if [ "$pct" -gt "$gate" ]; then
-    flag=" [WARN: >${gate}%]"
-  fi
-  printf "%-8s | %13s | %17s | %9s%%%s\n" \
-    "$lang" \
-    "${baseline_ms[$lang]}" \
-    "${instrumented_ms[$lang]}" \
-    "$pct" \
-    "$flag"
+for lang in "${LANGS[@]}"; do
+  case "$lang" in
+    java)   bench_java ;;
+    python) bench_python ;;
+    node)   bench_node ;;
+    *) echo "unknown lang: $lang" >&2; exit 2 ;;
+  esac
 done
+
 echo ""
-echo "Gates (informational): Java <${JAVA_GATE}%, Python <${PYTHON_GATE}%, Node <${NODE_GATE}%"
+echo "Lang     | Baseline (ms) | Instrumented (ms) |  Events | us/event | Gate"
+echo "---------|---------------|-------------------|---------|----------|--------------"
+if [ ${#SUMMARY_ROWS[@]} -eq 0 ]; then
+  echo "(nothing measured)"
+else
+  for row in "${SUMMARY_ROWS[@]}"; do echo "$row"; done
+fi
+
+echo ""
+echo "us/event = added wall-clock per emitted trace event. Multiply by the number of"
+echo "traced calls in a request to estimate real-world cost. Percentage overhead is"
+echo "intentionally NOT reported: the uninstrumented loop runs in well under a"
+echo "millisecond, so any percentage is a division by approximately zero."
+
+if [ -n "$skipped" ]; then
+  echo ""
+  echo "SKIPPED (toolchain absent, therefore UNVERIFIED):$skipped"
+fi
+
+if [ "$failures" -gt 0 ]; then
+  echo ""
+  echo "$failures language(s) failed to measure. See messages above." >&2
+  exit 1
+fi

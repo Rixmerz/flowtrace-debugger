@@ -62,16 +62,56 @@ if os.environ.get("FLOWTRACE_ENABLE") == "1":
                 }
                 _globs.update(HELPERS)
 
-                # Replace sys.argv[0] path so tracebacks are correct.
-                exec(_code, _globs)  # noqa: S102
-                # Prevent Python from running the original script again.
-                # Replace argv[0] with a no-op so the interpreter has nothing to run.
-                sys.argv[0] = ""
-                # os._exit(0) skips atexit; emitter.emit() flushes per-line so no data loss.
-                # Adding buffered I/O to emitter would require switching to sys.exit() +
-                # handling site module SystemExit interception.
                 import os as _os
-                _os._exit(0)
+                import traceback as _tb
+
+                def _leave(_status):
+                    """Flush the traced program's own streams, then hard-exit.
+
+                    os._exit skips interpreter shutdown — which is exactly where
+                    Python flushes sys.stdout/sys.stderr. Python block-buffers
+                    stdout whenever it is not a TTY, so without these flushes a
+                    traced program silently produced NO output at all when its
+                    stdout was a pipe: `calculator.py` printed 5 normally and
+                    nothing under FlowTrace, while still emitting all 8 events.
+                    The original comment here reasoned only about the emitter's
+                    own writes and overlooked the user program entirely.
+                    """
+                    try:
+                        sys.stdout.flush()
+                    except Exception:
+                        pass
+                    try:
+                        sys.stderr.flush()
+                    except Exception:
+                        pass
+                    # Prevent the interpreter from running the original script
+                    # again after sitecustomize returns.
+                    sys.argv[0] = ""
+                    _os._exit(_status)
+
+                try:
+                    exec(_code, _globs)  # noqa: S102
+                except SystemExit as _se:
+                    # Preserve the program's own exit status.
+                    if _se.code is None:
+                        _leave(0)
+                    elif isinstance(_se.code, int):
+                        _leave(_se.code)
+                    else:
+                        print(_se.code, file=sys.stderr)
+                        _leave(1)
+                except BaseException:
+                    # The TRACED PROGRAM raised — this is not a FlowTrace
+                    # installation failure. Letting it reach the outer handler
+                    # printed a misleading "could not install hook" warning and,
+                    # worse, let the interpreter then execute the script a second
+                    # time, re-running all its side effects. Tracing a program
+                    # that crashes is the primary use case for a debugger, so it
+                    # has to behave exactly like an uninstrumented run.
+                    _tb.print_exc()
+                    _leave(1)
+                _leave(0)
 
     except SystemExit:
         raise

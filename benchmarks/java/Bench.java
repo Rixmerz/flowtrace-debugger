@@ -33,7 +33,9 @@ public class Bench {
         runHotLoop();
         long end = System.nanoTime();
 
-        long elapsedMs = (end - start) / 1_000_000;
-        System.out.println("BENCH_RESULT_MS=" + elapsedMs);
+        // Nanoseconds, not milliseconds: an uninstrumented 10k loop of add()
+        // takes well under 1 ms, so a millisecond reading is 0 and every derived
+        // figure (overhead %, per-event cost) collapses to garbage.
+        System.out.println("BENCH_RESULT_NS=" + (end - start));
     }
 }
