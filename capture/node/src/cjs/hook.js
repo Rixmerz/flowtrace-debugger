@@ -30,11 +30,26 @@ const RUNTIME_PATH = fileURLToPath(new URL('../runtime/instrument.js', import.me
  * @param {string} filename
  * @returns {boolean}
  */
+/**
+ * Extensions this hook instruments.
+ *
+ * `.cts` is CommonJS TypeScript, and its omission was a real gap rather than a
+ * cosmetic one: Node resolves `require('./x.cts')` and hands the source to
+ * Module._compile, but has no type stripping of its own, so it died on the first
+ * type annotation. Because the extension was not listed here, FlowTrace declined
+ * to intercept and the file was unloadable. Listing it routes the source through
+ * the transform, which strips types via swc — so adding it both instruments the
+ * file and makes it loadable at all.
+ *
+ * `.mjs` and `.mts` are always ESM and never reach Module._compile; they are
+ * handled by src/esm/loader.mjs. `.mjs` is kept here only because removing a
+ * harmless entry is not worth the churn.
+ */
+const INSTRUMENTED_EXTS = ['.js', '.cjs', '.mjs', '.ts', '.tsx', '.cts'];
+
 function shouldInstrument(filename) {
   if (filename.includes('/node_modules/')) return false;
-  if (!filename.endsWith('.js') && !filename.endsWith('.cjs') &&
-      !filename.endsWith('.mjs') && !filename.endsWith('.ts') &&
-      !filename.endsWith('.tsx')) return false;
+  if (!INSTRUMENTED_EXTS.includes(extname(filename))) return false;
 
   const prefix = process.env.FLOWTRACE_PACKAGE_PREFIX;
   if (!prefix) {

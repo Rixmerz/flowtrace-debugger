@@ -10,7 +10,12 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "jsonschema>=4.21"]
+# httpx and aiohttp are TEST-only. The runtime has zero required dependencies;
+# patches.py imports them defensively and skips when absent. They are pinned here
+# so tests/test_patches_httpclients.py actually runs in CI instead of quietly
+# importorskip-ing itself — a silent skip is how the Java integration test stayed
+# dead for an entire release.
+dev = ["pytest>=7.4", "jsonschema>=4.21", "httpx>=0.27", "aiohttp>=3.9"]
 
 [tool.setuptools.packages.find]
 where = ["."]
