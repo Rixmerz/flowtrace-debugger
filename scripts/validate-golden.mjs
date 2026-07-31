@@ -34,8 +34,15 @@ let totalLines = 0;
 let totalFiles = 0;
 let failures = 0;
 
+/**
+ * Directories under examples/golden/ that are not themselves a language fixture.
+ * `truncation/` holds per-language subdirectories and has no expected.jsonl of
+ * its own.
+ */
+const NON_LANG_DIRS = new Set(['truncation']);
+
 const langDirs = readdirSync(goldenRoot).filter(d =>
-  statSync(join(goldenRoot, d)).isDirectory()
+  statSync(join(goldenRoot, d)).isDirectory() && !NON_LANG_DIRS.has(d)
 );
 
 for (const lang of langDirs) {
@@ -44,7 +51,15 @@ for (const lang of langDirs) {
   try {
     raw = readFileSync(fixturePath, 'utf8');
   } catch {
-    console.warn(`SKIP ${lang}: no expected.jsonl`);
+    // A missing fixture is a failure, not a skip. This used to `continue`, so
+    // when no fixture existed at all — which was the case for every language —
+    // the script validated zero events and still exited 0. CI's first job
+    // therefore reported success while checking nothing.
+    failures += 1;
+    console.error(
+      `FAIL ${lang}: no expected.jsonl. ` +
+      `Generate it with: node scripts/golden.mjs generate ${lang}`
+    );
     continue;
   }
   totalFiles += 1;

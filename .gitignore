@@ -27,6 +27,13 @@ flowtrace.jsonl
 flowtrace-*.jsonl
 *.jsonl
 
+# ...except the golden fixtures. These are the cross-language behavioural
+# contract, not a captured trace. The blanket *.jsonl rule above is the actual
+# reason they were never committed despite every golden README calling
+# expected.jsonl "the spec" — they were generated and then silently ignored by
+# git, so validate-schema had nothing to check and passed anyway.
+!examples/golden/*/expected.jsonl
+
 # IDE
 .idea/
 *.iml

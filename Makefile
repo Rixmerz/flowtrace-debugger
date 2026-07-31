@@ -3,20 +3,22 @@
 # coordinates cross-cutting tasks (schema validation, top-level test
 # aggregation, benchmark harness placeholder).
 
-.PHONY: build test bench validate-schema build-java test-java build-python test-python build-node test-node clean help
+.PHONY: build test bench validate-schema golden-generate golden-verify build-java test-java build-python test-python build-node test-node clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
 	@echo "  make build            Build all v2 subprojects (build-java + build-python + build-node)"
 	@echo "  make build-java       Build capture/java/flowtrace-otel-extension shaded jar"
 	@echo "  make build-python     Install capture/python flowtrace-runtime in editable mode"
-	@echo "  make test             Run validate-schema + test-java + test-python + test-node + per-subproject tests"
+	@echo "  make test             Run validate-schema + golden-verify + per-language + per-subproject tests"
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make test-python      Run pytest for the Python capture module"
 	@echo "  make build-node       Install capture/node npm dependencies"
 	@echo "  make test-node        Run node:test suite for the Node capture module"
 	@echo "  make bench            Benchmark harness (TODO Sprint 6)"
 	@echo "  make validate-schema  Validate examples/golden/*/expected.jsonl vs schema/flowtrace-v2.json"
+	@echo "  make golden-verify    Re-run each capture layer and diff against expected.jsonl"
+	@echo "  make golden-generate  Regenerate expected.jsonl from the current layers (review the diff!)"
 	@echo "  make clean            Remove transient build/test artifacts"
 
 # Schema validation: Node + Ajv 2020-12 driver in scripts/validate-golden.mjs.
@@ -29,10 +31,25 @@ validate-schema:
 	  else echo "ERROR: need pnpm or npm to install ajv" >&2; exit 2; fi ))
 	@node scripts/validate-golden.mjs
 
+# Golden fixtures. `verify` re-runs every capture layer, normalizes the volatile
+# fields (ids, timestamps, durations) and diffs against the committed fixture, so
+# a behavioural regression — a method that stopped being instrumented, a changed
+# arg shape, a broken parent chain — fails here rather than reaching a consumer.
+#
+# `generate` overwrites the fixtures. Always read the resulting diff: it is the
+# behaviour change you are about to bless.
+golden-verify:
+	@echo "==> golden-verify: re-running capture layers and diffing fixtures"
+	@node scripts/golden.mjs verify
+
+golden-generate:
+	@echo "==> golden-generate: rewriting examples/golden/*/expected.jsonl"
+	@node scripts/golden.mjs generate
+
 # Top-level test aggregator. v2-only path: schema validation is the
 # baseline contract. Per-subproject tests are added as v2 capture
 # layers land in S2-S4 (java, python, node, ts).
-test: validate-schema test-java test-python test-node
+test: validate-schema golden-verify test-java test-python test-node
 	@echo "==> mcp-server tests"
 	@cd mcp-server && node test/test-trace-tools.mjs
 	@echo "==> flowtrace-dashboard tests"

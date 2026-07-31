@@ -208,7 +208,7 @@ public class FlowtraceAdvice {
             } else if (arg instanceof Number || arg instanceof Boolean || arg instanceof Character) {
                 map.put("arg" + i, arg);
             } else {
-                String s = arg.toString();
+                String s = stringify(arg);
                 if (maxLen > 0 && s.length() > maxLen) {
                     s = s.substring(0, maxLen) + "...[truncated]";
                 }
@@ -216,6 +216,33 @@ public class FlowtraceAdvice {
             }
         }
         return map;
+    }
+
+    /**
+     * Render an argument as a string, serializing array <em>contents</em>.
+     *
+     * <p>Arrays inherit {@code Object.toString()}, which produces
+     * {@code [Ljava.lang.String;@35cec305} — a type descriptor plus an identity
+     * hash code. That is worthless for debugging (it names no value) and differs
+     * on every run, which is how it was found: the Java golden fixture failed its
+     * own determinism check on {@code main(String[] args)}.
+     *
+     * <p>It was also a cross-language inconsistency — the Node and Python layers
+     * both serialize array and list contents — so the same call traced in two
+     * languages disagreed about what its arguments were.
+     */
+    private static String stringify(Object arg) {
+        if (!arg.getClass().isArray()) return arg.toString();
+        if (arg instanceof Object[])  return Arrays.deepToString((Object[]) arg);
+        if (arg instanceof int[])     return Arrays.toString((int[]) arg);
+        if (arg instanceof long[])    return Arrays.toString((long[]) arg);
+        if (arg instanceof double[])  return Arrays.toString((double[]) arg);
+        if (arg instanceof float[])   return Arrays.toString((float[]) arg);
+        if (arg instanceof short[])   return Arrays.toString((short[]) arg);
+        if (arg instanceof byte[])    return Arrays.toString((byte[]) arg);
+        if (arg instanceof char[])    return Arrays.toString((char[]) arg);
+        if (arg instanceof boolean[]) return Arrays.toString((boolean[]) arg);
+        return arg.toString();
     }
 
     public static int maxArgLength() {

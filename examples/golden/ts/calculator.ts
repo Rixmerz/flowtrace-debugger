@@ -20,7 +20,11 @@ export class Calculator {
   }
 }
 
-if (require.main === module) {
-  // eslint-disable-next-line no-console
-  console.log(new Calculator().run());
-}
+// Executed on import rather than behind `require.main === module`. That guard is
+// a CommonJS idiom, and a .ts file is loaded as ESM, where `require` does not
+// exist — so merely evaluating `require.main` threw a ReferenceError and this
+// fixture could not be loaded at all, in either module system. Node cannot use a
+// .ts file as an entry point either, so "run on import" is the only shape that
+// actually executes.
+// eslint-disable-next-line no-console
+console.log(new Calculator().run());
