@@ -78,7 +78,11 @@ program
   .option('--last', 'Usa el JSONL más reciente en .flowtrace/')
   .action(async (file, options) => {
     try {
-      await require('../lib/commands/analyze')(file, options);
+      // The exit code is propagated: analyze reports a port conflict or a
+      // rejected file by returning exitCode, and dropping it meant the process
+      // exited 0 on failure, so no script or CI step could detect it.
+      const result = await require('../lib/commands/analyze')(file, options);
+      if (result && result.exitCode) process.exit(result.exitCode);
     } catch (err) {
       console.error(chalk.red('Error:'), err.message);
       process.exit(1);

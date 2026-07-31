@@ -42,6 +42,64 @@ function repoRoot() {
   return path.resolve(__dirname, '..', '..', '..'); // <repo>
 }
 
+
+/**
+ * Is a FlowTrace dashboard already serving on this port?
+ *
+ * Returns 'flowtrace' if /health identifies one, 'other' if something else
+ * answers, or null if the port is free.
+ *
+ * Needed because the command used to spawn a second server unconditionally. When
+ * the port was taken the child died on EADDRINUSE while this process went on to
+ * announce the URL and open the browser — pointing the user at whatever was
+ * already there. A stale dashboard from an earlier run looks like a working one,
+ * which cost real debugging time during the audit that found this.
+ *
+ * @param {string} url
+ * @returns {Promise<'flowtrace'|'other'|null>}
+ */
+async function probeDashboard(url) {
+  try {
+    const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return 'other';
+    const body = await res.json().catch(() => null);
+    return body && body.service === 'flowtrace-dashboard' ? 'flowtrace' : 'other';
+  } catch {
+    return null; // nothing listening, or not HTTP
+  }
+}
+
+/**
+ * Hand a trace to an already-running dashboard.
+ *
+ * Repeatedly running `flowtrace run` then `flowtrace analyze` is the normal
+ * workflow, so reusing the live server is the behaviour the user expects — and it
+ * avoids the port conflict entirely.
+ *
+ * @param {string} url
+ * @param {string} filePath
+ * @returns {Promise<boolean>} true if the dashboard accepted the file
+ */
+async function pushToDashboard(url, filePath) {
+  try {
+    const res = await fetch(`${url}/api/analyze-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.error(chalk.red('Error:'), `el dashboard rechazó el archivo (${res.status}). ${detail}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(chalk.red('Error:'), `no se pudo enviar el archivo al dashboard: ${err.message}`);
+    return false;
+  }
+}
+
 async function analyzeCommand(file, options = {}) {
   const cwd = process.cwd();
   let target = file;
@@ -75,6 +133,23 @@ async function analyzeCommand(file, options = {}) {
   console.log(chalk.cyan('FlowTrace analyze'));
   console.log(chalk.gray(`  archivo : ${target}`));
   console.log(chalk.gray(`  dashboard: ${url}`));
+
+  // Reuse a live dashboard rather than spawning a second one onto a taken port.
+  const existing = await probeDashboard(url);
+  if (existing === 'flowtrace') {
+    console.log(chalk.gray('  Dashboard ya en ejecución — enviando el archivo...'));
+    const ok = await pushToDashboard(url, target);
+    if (!ok) return { file: target, exitCode: 1 };
+    console.log(chalk.green('OK'), `Análisis cargado en ${url}`);
+    openBrowser(url);
+    return { file: target, exitCode: 0 };
+  }
+  if (existing === 'other') {
+    console.error(chalk.red('Error:'), `el puerto ${PORT} está ocupado por otro servicio.`);
+    console.log(chalk.gray(`  Cierra ese proceso, o usa FLOWTRACE_DASHBOARD_PORT=<otro>.`));
+    return { file: target, exitCode: 1 };
+  }
+
   console.log(chalk.gray('Iniciando servidor de dashboard...'));
 
   const env = { ...process.env, PORT: String(PORT), FLOWTRACE_FILE: target };

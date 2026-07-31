@@ -39,6 +39,45 @@ const upload = multer({
 // Store analysis results in memory (in production, use Redis or DB)
 const analysisCache = new Map();
 
+
+/**
+ * Analyze a file from disk and register it in the cache.
+ *
+ * Extracted from POST /api/analyze-file so the server can pre-load a trace at
+ * startup. `flowtrace analyze` passed FLOWTRACE_FILE to the dashboard process and
+ * nothing ever read it, so the command printed the file path, opened the browser,
+ * and presented an empty dashboard — the user then had to find and upload the file
+ * by hand. Opening the dashboard ON a specific trace is the command's entire
+ * purpose.
+ *
+ * @param {string} filePath - absolute path to a .jsonl trace
+ * @returns {Promise<{id: string, fileName: string, filePath: string, results: object}>}
+ */
+async function ingestFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`File not found: ${filePath}`);
+  }
+  if (!filePath.endsWith('.jsonl')) {
+    throw new Error(`File must be a .jsonl file: ${filePath}`);
+  }
+
+  const analyzer = new FlowTraceAnalyzer();
+  const results = await analyzer.analyze(filePath);
+  // Suffixed to stay unique when several files are ingested in the same
+  // millisecond, which pre-loading plus an upload can do.
+  const analysisId = `analysis-${Date.now()}-${analysisCache.size}`;
+
+  const entry = {
+    id: analysisId,
+    fileName: path.basename(filePath),
+    filePath,
+    uploadTime: new Date(),
+    results,
+  };
+  analysisCache.set(analysisId, entry);
+  return entry;
+}
+
 /**
  * POST /api/analyze
  * Upload and analyze a JSONL file
@@ -142,50 +181,26 @@ router.delete('/analyze/:id', (req, res) => {
 router.post('/analyze-file', async (req, res) => {
   try {
     const { filePath } = req.body;
-
     if (!filePath) {
       return res.status(400).json({ error: 'File path is required' });
     }
 
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-
-    // Check if it's a .jsonl file
-    if (!filePath.endsWith('.jsonl')) {
-      return res.status(400).json({ error: 'File must be a .jsonl file' });
-    }
-
-    const analyzer = new FlowTraceAnalyzer();
-
     console.log(`Analyzing file from path: ${filePath}`);
-
-    const results = await analyzer.analyze(filePath);
-
-    // Generate analysis ID
-    const analysisId = `analysis-${Date.now()}`;
-
-    // Cache results
-    analysisCache.set(analysisId, {
-      id: analysisId,
-      fileName: path.basename(filePath),
-      filePath,
-      uploadTime: new Date(),
-      results
-    });
+    const entry = await ingestFile(filePath);
 
     res.json({
-      analysisId,
-      fileName: path.basename(filePath),
-      filePath,
-      results
+      analysisId: entry.id,
+      fileName: entry.fileName,
+      filePath: entry.filePath,
+      results: entry.results,
     });
-
   } catch (error) {
     console.error('Analysis error:', error);
-    res.status(500).json({ error: error.message });
+    // Distinguish "you asked for something that is not there" from a real fault.
+    const missing = /File not found|must be a \.jsonl/.test(error.message);
+    res.status(missing ? 404 : 500).json({ error: error.message });
   }
 });
 
 module.exports = router;
+module.exports.ingestFile = ingestFile;
