@@ -103,6 +103,12 @@
           <!-- Pass basedir so FlowtraceIntegrationTest can locate jars -->
           <systemPropertyVariables>
             <project.basedir>${project.basedir}</project.basedir>
+            <!-- The integration test locates the shaded extension jar by name.
+                 It used to hardcode "2.0.0-SNAPSHOT"; when the version was
+                 released to 2.0.0 the file stopped existing and the test's
+                 assumeTrue() skipped it forever, silently and with a green
+                 build. Injecting the real version keeps the two in sync. -->
+            <project.version>${project.version}</project.version>
           </systemPropertyVariables>
         </configuration>
       </plugin>

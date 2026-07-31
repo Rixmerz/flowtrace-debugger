@@ -60,10 +60,18 @@ class FlowtraceIntegrationTest {
                         + " — run 'mvn process-test-resources' with network access first. "
                         + "Skipping integration test.");
 
+        // The version comes from the pom via surefire rather than being written
+        // out here. The hardcoded "2.0.0-SNAPSHOT" stopped matching the moment
+        // the project was released to 2.0.0, and because the guard below is an
+        // assumption rather than an assertion, this test then skipped itself on
+        // every run — silently, with a green build. Deriving the name means a
+        // future version bump cannot re-break it.
+        String version = System.getProperty("project.version", "");
         File extensionJar = new File(projectBase,
-                "target/flowtrace-otel-extension-2.0.0-SNAPSHOT.jar");
+                "target/flowtrace-otel-extension-" + version + ".jar");
         assumeTrue(extensionJar.exists(),
-                "Extension jar not built — run 'mvn package' first. Skipping integration test.");
+                "Extension jar not built at " + extensionJar.getAbsolutePath()
+                        + " — run 'mvn package' first. Skipping integration test.");
 
         // Calculator is compiled to target/test-classes during test-compile phase.
         File testClasses = new File(projectBase, "target/test-classes");
