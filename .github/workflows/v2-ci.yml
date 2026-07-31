@@ -1,10 +1,13 @@
 name: v2-ci
 
+# v2/main was merged into main (b48824b) and deleted as an active branch, so
+# these triggers matched nothing and the whole workflow silently stopped
+# running. Kept v2/main listed so any lingering branch still gets checked.
 on:
   push:
-    branches: [v2/main]
+    branches: [main, v2/main]
   pull_request:
-    branches: [v2/main]
+    branches: [main, v2/main]
 
 jobs:
   validate-schema:

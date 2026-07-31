@@ -44,6 +44,7 @@ public class FlowtraceInstrumentationModule extends InstrumentationModule {
                 "io.flowtrace.emitter.FlowtraceEmitter",
                 "io.flowtrace.emitter.TraceEvent",
                 "io.flowtrace.advice.DepthTracker",
+                "io.flowtrace.advice.TraceparentSeed",
                 "io.flowtrace.advice.FlowtraceAdvice"
         );
     }
