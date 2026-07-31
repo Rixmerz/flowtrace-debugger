@@ -197,11 +197,28 @@ public class FlowtraceAdvice {
 
     // ---- helpers — must be public: ByteBuddy inlines advice into the target class ----
 
+    /**
+     * Map a Java access modifier onto the schema's visibility enum.
+     *
+     * <p>The enum is {@code public | private | internal | unknown} — there is no
+     * "protected". This used to return {@code "protected"} verbatim, which is not
+     * a permitted value, so <strong>every event from a protected method was
+     * schema-invalid</strong>. Protected methods are everywhere in Java: template
+     * methods, framework base classes, anything extending a Spring or JUnit type.
+     *
+     * <p>{@code protected} and package-private both collapse to
+     * {@code internal}: neither is part of a type's public API, and neither is
+     * private to it. That does lose the distinction between them — the schema's
+     * four values are a lowest common denominator across four languages, and
+     * widening the enum would be a contract change requiring coordinated updates
+     * in every consumer. The distinction that {@code visibility} exists to
+     * capture, public versus private, is preserved exactly.
+     */
     public static String visibilityFromModifiers(int mod) {
-        if (Modifier.isPublic(mod))    return "public";
-        if (Modifier.isPrivate(mod))   return "private";
-        if (Modifier.isProtected(mod)) return "protected";
-        return "internal"; // package-private
+        if (Modifier.isPublic(mod))  return "public";
+        if (Modifier.isPrivate(mod)) return "private";
+        // protected and package-private: visible beyond the type, but not API.
+        return "internal";
     }
 
     public static Map<String, Object> buildArgs(Object[] args) {

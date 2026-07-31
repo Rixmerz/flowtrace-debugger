@@ -89,13 +89,94 @@ function collectParamNames(node) {
 }
 
 /**
- * Determine visibility from method key + private flag.
- * @param {import('@babel/types').ClassMethod|import('@babel/types').ClassPrivateMethod} node
- * @returns {'public'|'private'}
+ * Read TypeScript access modifiers from the ORIGINAL source, keyed "Class.method".
+ *
+ * Necessary because swc strips TypeScript before Babel ever parses, so by the time
+ * the instrumentation pass runs the `private` / `protected` modifiers are gone and
+ * `node.accessibility` is permanently undefined. The check for it in
+ * methodVisibility was therefore dead code for every TypeScript file: a method
+ * declared `private` was reported as public.
+ *
+ * That matters more than it looks. Labelling private calls is the feature that
+ * distinguishes FlowTrace from ordinary framework-level tracing, and `private` is
+ * far more common in TypeScript codebases than the `#field` syntax — so the
+ * headline capability silently did not work for the language it was most often
+ * used in.
+ *
+ * Best-effort: a parse failure yields an empty map and visibility falls back to
+ * the JavaScript-only detection, which is what happened before this existed.
+ *
+ * @param {string} source - untranspiled TS source
+ * @param {string} ext - lowercased file extension, to enable the jsx plugin
+ * @returns {Map<string, 'public'|'private'|'protected'>}
  */
-function methodVisibility(node) {
+function collectTsAccessibility(source, ext) {
+  const map = new Map();
+  try {
+    const plugins = [
+      'typescript',
+      'classProperties',
+      'classPrivateMethods',
+      'classPrivateProperties',
+      'decorators-legacy',
+    ];
+    if (ext === '.tsx') plugins.push('jsx');
+
+    const tsAst = parser.parse(source, { sourceType: 'unambiguous', plugins });
+
+    let cls = null;
+    traverse(tsAst, {
+      ClassDeclaration: {
+        enter(p) { cls = p.node.id ? p.node.id.name : '<anonymous>'; },
+        exit() { cls = null; },
+      },
+      ClassExpression: {
+        enter(p) { cls = p.node.id ? p.node.id.name : '<anonymous>'; },
+        exit() { cls = null; },
+      },
+      ClassMethod(p) {
+        if (!p.node.accessibility) return;
+        const key = t.isIdentifier(p.node.key) ? p.node.key.name
+          : t.isStringLiteral(p.node.key) ? p.node.key.value
+            : null;
+        if (key) map.set(`${cls}.${key}`, p.node.accessibility);
+      },
+    });
+  } catch {
+    // Deliberately silent: this is an enrichment pass, and the transform must
+    // still succeed on sources Babel's TS plugin cannot handle.
+  }
+  return map;
+}
+
+/**
+ * @param {import('@babel/types').Node} node
+ * @param {string|null} cls - enclosing class name, for the accessibility lookup
+ * @param {Map<string,string>} tsAccess - from collectTsAccessibility()
+ * @returns {'public'|'private'|'internal'}
+ */
+function methodVisibility(node, cls, tsAccess) {
+  // #field methods are real JavaScript privacy and survive TS stripping.
   if (t.isClassPrivateMethod(node)) return 'private';
+
+  // Present only when Babel parsed TS directly; kept because it costs nothing
+  // and is correct when it does fire.
   if (node.accessibility === 'private') return 'private';
+  if (node.accessibility === 'protected') return 'internal';
+
+  if (tsAccess && tsAccess.size > 0) {
+    const key = t.isIdentifier(node.key) ? node.key.name
+      : t.isStringLiteral(node.key) ? node.key.value
+        : null;
+    if (key) {
+      // 'protected' maps to 'internal': the schema enum is
+      // public|private|internal|unknown and has no protected, matching how the
+      // Java layer collapses protected and package-private.
+      const access = tsAccess.get(`${cls}.${key}`);
+      if (access === 'private') return 'private';
+      if (access === 'protected') return 'internal';
+    }
+  }
   return 'public';
 }
 
@@ -321,6 +402,10 @@ export function transform(source, opts = {}) {
 
   let jsSource = source;
 
+  // Read TS access modifiers from the untranspiled source: swc is about to
+  // delete them, and they are the only place `private`/`protected` survive.
+  const tsAccess = isTs ? collectTsAccessibility(source, ext) : null;
+
   // Step 1: Strip TypeScript via swc if needed.
   if (isTs) {
     try {
@@ -415,7 +500,7 @@ export function transform(source, opts = {}) {
 
       const name  = methodName(path.node);
       if (path.node.generator) { skippedGenerators.push(name); return; }
-      const vis   = methodVisibility(path.node);
+      const vis   = methodVisibility(path.node, currentClass, tsAccess);
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
