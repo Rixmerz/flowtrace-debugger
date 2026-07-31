@@ -234,7 +234,15 @@ public class FlowtraceAdvice {
             } else {
                 String s = stringify(arg);
                 if (maxLen > 0 && s.length() > maxLen) {
-                    s = s.substring(0, maxLen) + "...[truncated]";
+                    // Marker format must match the Node and Python layers exactly:
+                    // <truncated:PREFIX...>. Java emitted PREFIX...[truncated],
+                    // a third format, and benchmarks/truncation-parity.sh asserts
+                    // the presence of "<truncated:" — so Java would have failed
+                    // that parity check the moment it actually ran (it was being
+                    // skipped by a stale -SNAPSHOT jar glob). TRUNCATION_SYSTEM.md
+                    // additionally documents "...[truncated]" as the OLD marker
+                    // that was replaced, so this was the one layer still emitting it.
+                    s = "<truncated:" + s.substring(0, maxLen) + "...>";
                 }
                 map.put("arg" + i, s);
             }

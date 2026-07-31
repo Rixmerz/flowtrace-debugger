@@ -67,6 +67,10 @@ jobs:
       - name: Verify golden fixtures reproduce
         run: make golden-verify
 
+      # Same job because it needs the same three toolchains already built above.
+      - name: Verify truncation parity across layers
+        run: make truncation-parity
+
   java-tests:
     name: Java tests (JDK 17)
     runs-on: ubuntu-latest

@@ -84,13 +84,51 @@ class FlowtraceAdviceArgsTest {
     }
 
     @Test
-    void longValuesAreTruncatedWithAMarker() {
+    void longValuesAreTruncatedWithTheSharedMarker() {
         String original = System.getProperty("flowtrace.max-arg-length");
         try {
             System.setProperty("flowtrace.max-arg-length", "10");
             Map<String, Object> args = FlowtraceAdvice.buildArgs(
                     new Object[]{"0123456789abcdefghij"});
-            assertEquals("0123456789...[truncated]", args.get("arg0"));
+
+            // The marker format is a CROSS-LANGUAGE contract, not a Java detail:
+            // benchmarks/truncation-parity.sh asserts all three layers emit
+            // "<truncated:". Java used to emit "PREFIX...[truncated]" — a third
+            // format — and would have failed that check the moment it actually ran
+            // (it was being skipped by a stale -SNAPSHOT jar glob).
+            assertEquals("<truncated:0123456789...>", args.get("arg0"));
+        } finally {
+            if (original == null) System.clearProperty("flowtrace.max-arg-length");
+            else System.setProperty("flowtrace.max-arg-length", original);
+        }
+    }
+
+    @Test
+    void truncationMarkerMatchesTheOtherLayersPrefixAndSuffix() {
+        String original = System.getProperty("flowtrace.max-arg-length");
+        try {
+            System.setProperty("flowtrace.max-arg-length", "5");
+            String value = (String) FlowtraceAdvice.buildArgs(
+                    new Object[]{"abcdefghijklmnop"}).get("arg0");
+
+            // Asserted as prefix/suffix rather than a whole string, so this keeps
+            // holding if the elided content ever changes but the marker must not.
+            assertTrue(value.startsWith("<truncated:"), "wrong prefix: " + value);
+            assertTrue(value.endsWith("...>"), "wrong suffix: " + value);
+        } finally {
+            if (original == null) System.clearProperty("flowtrace.max-arg-length");
+            else System.setProperty("flowtrace.max-arg-length", original);
+        }
+    }
+
+    @Test
+    void maxArgLengthOfZeroDisablesTruncation() {
+        String original = System.getProperty("flowtrace.max-arg-length");
+        try {
+            System.setProperty("flowtrace.max-arg-length", "0");
+            String long_ = "y".repeat(5000);
+            assertEquals(long_, FlowtraceAdvice.buildArgs(new Object[]{long_}).get("arg0"),
+                    "0 must mean unlimited, matching the documented knob");
         } finally {
             if (original == null) System.clearProperty("flowtrace.max-arg-length");
             else System.setProperty("flowtrace.max-arg-length", original);

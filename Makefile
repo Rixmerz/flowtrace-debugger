@@ -3,7 +3,7 @@
 # coordinates cross-cutting tasks (schema validation, top-level test
 # aggregation, benchmark harness placeholder).
 
-.PHONY: build test bench validate-schema golden-generate golden-verify build-java test-java build-python test-python build-node test-node clean help
+.PHONY: build test bench validate-schema golden-generate golden-verify truncation-parity build-java test-java build-python test-python build-node test-node clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
@@ -19,6 +19,7 @@ help:
 	@echo "  make validate-schema  Validate examples/golden/*/expected.jsonl vs schema/flowtrace-v2.json"
 	@echo "  make golden-verify    Re-run each capture layer and diff against expected.jsonl"
 	@echo "  make golden-generate  Regenerate expected.jsonl from the current layers (review the diff!)"
+	@echo "  make truncation-parity Assert all three layers emit the same truncation marker"
 	@echo "  make clean            Remove transient build/test artifacts"
 
 # Schema validation: Node + Ajv 2020-12 driver in scripts/validate-golden.mjs.
@@ -46,10 +47,18 @@ golden-generate:
 	@echo "==> golden-generate: rewriting examples/golden/*/expected.jsonl"
 	@node scripts/golden.mjs generate
 
+# Cross-language truncation contract. The script existed but nothing ever invoked
+# it, and every one of its three paths was silently broken — so "truncation
+# parity" had never been verified for any language. It needs all three toolchains
+# built; a missing one is reported UNVERIFIED, never passed over.
+truncation-parity:
+	@echo "==> truncation-parity: same marker across java/python/node"
+	@bash benchmarks/truncation-parity.sh
+
 # Top-level test aggregator. v2-only path: schema validation is the
 # baseline contract. Per-subproject tests are added as v2 capture
 # layers land in S2-S4 (java, python, node, ts).
-test: validate-schema golden-verify test-java test-python test-node
+test: validate-schema golden-verify truncation-parity test-java test-python test-node
 	@echo "==> mcp-server tests"
 	@cd mcp-server && node test/test-trace-tools.mjs
 	@echo "==> flowtrace-dashboard tests"

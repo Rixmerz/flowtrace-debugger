@@ -21,6 +21,24 @@ const Module   = _require('module');
 const RUNTIME_PATH = fileURLToPath(new URL('../runtime/instrument.js', import.meta.url));
 
 /**
+ * FlowTrace's own source root (capture/node/). Anything under it is never
+ * instrumented.
+ *
+ * The only exclusion used to be '/node_modules/', which covers the installed-as-a
+ * -dependency case but not FlowTrace running FROM SOURCE. With the default prefix
+ * ("everything under cwd"), starting a traced program from a directory that
+ * contains capture/node made the hook transform instrument.js itself — and the
+ * traced program then died with a SyntaxError on our own `export` statement
+ * before emitting a single event. That is what made benchmarks/truncation-parity.sh
+ * report node as failing: it invoked the fixture from the repository root.
+ *
+ * Scoped to src/ specifically, NOT the whole package: test/fixtures/ lives beside
+ * it and must remain instrumentable, or every fixture-based test silently stops
+ * producing events.
+ */
+const SELF_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
+/**
  * Returns true if the given filename should be instrumented.
  * Filtering is driven by FLOWTRACE_PACKAGE_PREFIX env var:
  *   - If the env var is not set, instrument all non-node_modules files under cwd.
@@ -49,6 +67,8 @@ const INSTRUMENTED_EXTS = ['.js', '.cjs', '.mjs', '.ts', '.tsx', '.cts'];
 
 function shouldInstrument(filename) {
   if (filename.includes('/node_modules/')) return false;
+  // Never instrument ourselves — see SELF_ROOT.
+  if (filename.startsWith(SELF_ROOT)) return false;
   if (!INSTRUMENTED_EXTS.includes(extname(filename))) return false;
 
   const prefix = process.env.FLOWTRACE_PACKAGE_PREFIX;

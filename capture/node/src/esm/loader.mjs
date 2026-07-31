@@ -30,6 +30,24 @@ async function getCache() {
 
 const RUNTIME_SPECIFIER = '@flowtrace/capture-node/runtime/instrument';
 
+/**
+ * FlowTrace's own source root (capture/node/). Anything under it is never
+ * instrumented.
+ *
+ * The only exclusion used to be '/node_modules/', which covers the installed-as-a
+ * -dependency case but not FlowTrace running FROM SOURCE. With the default prefix
+ * ("everything under cwd"), starting a traced program from a directory that
+ * contains capture/node made the hook transform instrument.js itself — and the
+ * traced program then died with a SyntaxError on our own `export` statement
+ * before emitting a single event. That is what made benchmarks/truncation-parity.sh
+ * report node as failing: it invoked the fixture from the repository root.
+ *
+ * Scoped to src/ specifically, NOT the whole package: test/fixtures/ lives beside
+ * it and must remain instrumentable, or every fixture-based test silently stops
+ * producing events.
+ */
+const SELF_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
 /** Extensions we instrument. */
 const INSTRUMENTED_EXTS = ['.js', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
 
@@ -47,6 +65,8 @@ function shouldInstrument(url) {
   if (!url.startsWith('file://')) return false;
   const path = fileURLToPath(url);
   if (path.includes('/node_modules/')) return false;
+  // Never instrument ourselves — see SELF_ROOT.
+  if (path.startsWith(SELF_ROOT)) return false;
 
   const ext = extname(path);
   if (!INSTRUMENTED_EXTS.includes(ext)) return false;
