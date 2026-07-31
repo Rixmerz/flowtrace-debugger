@@ -344,3 +344,13 @@ if __name__ == "__main__":
     print("  WS     /ws/{room_id}/{client_id}")
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+# livespec: Spec Explorer at /explorer (auto-wired by export_explorer / index_project)
+try:
+    from livespec_mcp.explorer import mount_explorer
+    mount_explorer(app, prefix="/explorer")
+except ImportError:
+    pass  # livespec-mcp not installed in this runtime
+except FileNotFoundError:
+    pass  # run export_explorer to generate .mcp-docs/explorer/

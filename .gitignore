@@ -72,3 +72,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# livespec local index state
+.mcp-docs/
