@@ -7,6 +7,7 @@ by FlowtraceSourceLoader.exec_module before the module code executes.
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -51,14 +52,56 @@ def _serialize_args(locals_dict: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _to_json_safe(v: Any) -> Any:
-    """Convert a value to something JSON-serializable."""
-    if v is None or isinstance(v, (bool, int, float, str)):
+#: Maximum nesting depth walked when serializing an argument. Beyond this the
+#: value is elided. Cycle detection alone is not enough: a deeply nested but
+#: acyclic structure would still be walked to exhaustion.
+_MAX_DEPTH = 8
+
+
+def _to_json_safe(v: Any, _seen: frozenset[int] = frozenset(), _depth: int = 0) -> Any:
+    """Convert a value to something JSON-serializable.
+
+    Two things here are not defensive niceties; both were real failures:
+
+    - **Non-finite floats.** ``json.dumps`` emits bare ``NaN`` / ``Infinity``,
+      which Python's own parser accepts as a non-standard extension but which is
+      NOT valid JSON. Every consumer in this repository is JavaScript, and
+      ``JSON.parse`` rejects both — so a single NaN in an argument invalidated the
+      entire event line for the MCP server, the dashboard analyzer and the schema
+      validator alike. They are emitted as strings, which is valid and preserves
+      the information.
+
+    - **Cycles.** This function used to recurse unconditionally, so a structure
+      containing a reference to itself raised RecursionError *inside the traced
+      program*. Instrumentation crashing the program it is observing is the worst
+      outcome available, and self-referential structures are ordinary: parent/child
+      trees, ORM back-references, self-referential config.
+
+    ``_seen`` is threaded per PATH rather than shared across the whole walk, so a
+    value legitimately appearing twice in sibling branches (a DAG) is serialized
+    twice instead of being falsely reported as circular.
+    """
+    # bool is a subclass of int; both pass through unchanged.
+    if v is None or isinstance(v, (bool, int, str)):
         return v
-    if isinstance(v, (list, tuple)):
-        return [_to_json_safe(i) for i in v]
-    if isinstance(v, dict):
-        return {str(k): _to_json_safe(vv) for k, vv in v.items()}
+
+    if isinstance(v, float):
+        if math.isnan(v):
+            return "NaN"
+        if math.isinf(v):
+            return "Infinity" if v > 0 else "-Infinity"
+        return v
+
+    if isinstance(v, (list, tuple, dict)):
+        if id(v) in _seen:
+            return "<circular>"
+        if _depth >= _MAX_DEPTH:
+            return f"<max depth {_MAX_DEPTH}>"
+        seen = _seen | {id(v)}
+        if isinstance(v, dict):
+            return {str(k): _to_json_safe(vv, seen, _depth + 1) for k, vv in v.items()}
+        return [_to_json_safe(i, seen, _depth + 1) for i in v]
+
     return repr(v)
 
 
@@ -124,9 +167,13 @@ def _ft_exit(ctx: dict, result: Any) -> None:
     """Called after the function body completes normally."""
     duration_ns = time.perf_counter_ns() - ctx["start_ns"]
 
-    if isinstance(result, dict):
-        result_val = result
-    elif result is None:
+    # A dict return used to be emitted AS the result object, unwrapped and without
+    # passing through _to_json_safe at all. Two problems: the shape disagreed with
+    # Node and Java, which always wrap in {"value": ...}, so the same function
+    # traced in two languages disagreed about what it returned; and skipping the
+    # serializer meant a returned dict containing a cycle or a NaN reintroduced
+    # both of the failures that function exists to prevent.
+    if result is None:
         result_val = {}
     else:
         result_val = {"value": _to_json_safe(result)}

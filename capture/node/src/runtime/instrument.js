@@ -92,15 +92,120 @@ function truncateIfNeeded(value) {
   return value;
 }
 
+/**
+ * Maximum nesting depth walked when serializing a value. Cycle detection alone is
+ * not enough: a deeply nested but acyclic structure would still be walked to
+ * exhaustion.
+ */
+const MAX_DEPTH = 8;
+
+/**
+ * Convert an arbitrary JavaScript value into something JSON-safe.
+ *
+ * This replaces a `JSON.parse(JSON.stringify(v))` round-trip with a
+ * `String(v)` fallback. That approach silently destroyed several everyday values,
+ * because JSON.stringify has no representation for them and the catch branch was
+ * reached only for values that made it *throw*:
+ *
+ *   - `new Error('boom')` -> `{}`. Errors have no enumerable own properties, so
+ *     stringify succeeded and produced an empty object. Passing an error as an
+ *     argument is common and losing it entirely is the opposite of useful.
+ *   - `new Map([...])` and `new Set([...])` -> `{}`, for the same reason.
+ *   - a function -> its full SOURCE TEXT, which after instrumentation includes
+ *     FlowTrace's own injected `__ft_enter`/`__ft_run` scaffolding. Enormous, and
+ *     it leaked the transform's internals into the user's trace.
+ *   - `undefined` -> the literal string `"undefined"`, because
+ *     JSON.stringify(undefined) returns undefined and JSON.parse then throws.
+ *   - `NaN` / `Infinity` -> `null`, indistinguishable from an actual null.
+ *   - a circular object -> `"[object Object]"`, losing every field.
+ *
+ * Python's serializer already produced informative output for the equivalent
+ * values, so this was also a cross-language divergence: the same argument traced
+ * in two languages disagreed about what it was.
+ *
+ * `seen` is threaded per PATH, not shared across the whole walk, so a value that
+ * legitimately appears twice in sibling branches (a DAG) is serialized twice
+ * rather than falsely reported as circular.
+ *
+ * @param {*} value
+ * @param {Set<object>} [seen]
+ * @param {number} [depth]
+ */
+function toJsonSafe(value, seen = new Set(), depth = 0) {
+  if (value === undefined || value === null) return null;
+
+  const type = typeof value;
+
+  if (type === 'boolean' || type === 'string') return value;
+
+  if (type === 'number') {
+    // JSON has no NaN/Infinity; stringify turns both into null, which is
+    // indistinguishable from a real null. Strings keep the information and stay
+    // valid JSON. Python's layer emits the same strings.
+    if (Number.isNaN(value)) return 'NaN';
+    if (!Number.isFinite(value)) return value > 0 ? 'Infinity' : '-Infinity';
+    return value;
+  }
+
+  if (type === 'bigint') return `${value}n`;
+  if (type === 'symbol') return String(value);
+  if (type === 'function') {
+    // Name only. Never the source: after instrumentation it contains our own
+    // injected scaffolding.
+    return `<function ${value.name || 'anonymous'}>`;
+  }
+
+  // ── objects ────────────────────────────────────────────────────────
+  if (seen.has(value)) return '<circular>';
+  if (depth >= MAX_DEPTH) return `<max depth ${MAX_DEPTH}>`;
+  const nextSeen = new Set(seen).add(value);
+  const recur = (v) => toJsonSafe(v, nextSeen, depth + 1);
+
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message };
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof RegExp) return String(value);
+  if (value instanceof Map) {
+    const out = {};
+    for (const [k, v] of value) out[String(k)] = recur(v);
+    return out;
+  }
+  if (value instanceof Set) return [...value].map(recur);
+  if (Array.isArray(value)) return value.map(recur);
+
+  // Plain-ish object. toJSON is honoured because a value that defines it has
+  // told us how it wants to be represented.
+  if (typeof value.toJSON === 'function') {
+    try {
+      return recur(value.toJSON());
+    } catch {
+      /* fall through to field walk */
+    }
+  }
+
+  const out = {};
+  for (const key of Object.keys(value)) {
+    try {
+      out[key] = recur(value[key]);
+    } catch {
+      // A throwing getter must not take the whole event down.
+      out[key] = '<unreadable>';
+    }
+  }
+  return out;
+}
+
 function serializeArgs(paramNames, args) {
   const out = {};
   for (let i = 0; i < args.length; i++) {
     const key = paramNames[i] ?? `arg${i}`;
     let safe;
     try {
-      safe = JSON.parse(JSON.stringify(args[i]));
+      safe = toJsonSafe(args[i]);
     } catch {
-      safe = String(args[i]);
+      // Last resort, so an exotic value cannot cost us the event.
+      safe = '<unserializable>';
     }
     out[key] = truncateIfNeeded(safe);
   }
@@ -186,11 +291,11 @@ export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, arg
     serializedResult = {};
   } else {
     try {
-      serializedResult = { value: JSON.parse(JSON.stringify(result)) };
+      // Same serializer as the arguments: a returned Error, Map or circular
+      // object deserves the same treatment as one passed in.
+      serializedResult = { value: truncateIfNeeded(toJsonSafe(result)) };
     } catch {
-      // Unserializable (circular, BigInt, function): report its string form
-      // rather than dropping the event.
-      serializedResult = { value: String(result) };
+      serializedResult = { value: '<unserializable>' };
     }
   }
 
