@@ -143,10 +143,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      # test-run-passthrough.js and test-analyze-dashboard.js drive `flowtrace run`
+      # for real, so the Node CAPTURE layer's dependencies (@babel/*, @swc/core)
+      # have to be present. Without them the transform died with MODULE_NOT_FOUND,
+      # every traced run emitted nothing, and five tests failed — while passing
+      # locally, where capture/node/node_modules already existed. This is the
+      # environment difference CI exists to catch, and it caught it on the first
+      # run after the trigger was fixed.
+      - name: Install capture layer deps
+        run: make build-node
+
+      - name: Install dashboard deps
+        working-directory: flowtrace-dashboard
+        run: npm install --no-audit --no-fund
 
       - name: Install CLI deps
         working-directory: flowtrace-cli
