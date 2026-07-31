@@ -64,7 +64,7 @@ test: validate-schema golden-verify truncation-parity test-java test-python test
 	@echo "==> flowtrace-dashboard tests"
 	@cd flowtrace-dashboard && node test/test-analyzer.js
 	@echo "==> flowtrace-cli tests"
-	@cd flowtrace-cli && for t in test/test-cli.js test/test-cli-java.js test/test-cli-python.js test/test-cli-node.js test/test-detect.js test/test-cli-autodetect.js test/test-analyze.js test/test-run-passthrough.js; do node $$t || exit 1; done
+	@cd flowtrace-cli && for t in test/test-cli.js test/test-cli-java.js test/test-cli-python.js test/test-cli-node.js test/test-detect.js test/test-cli-autodetect.js test/test-analyze.js test/test-run-passthrough.js test/test-gitignore.js; do node $$t || exit 1; done
 
 # Java capture module
 build-java:

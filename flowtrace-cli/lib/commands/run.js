@@ -7,6 +7,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawnSync, spawn } = require('child_process');
+const { ensureGitignore } = require('../gitignore');
 const chalk = require('chalk');
 const { detectLang, detectPackagePrefix } = require('../detect');
 
@@ -36,23 +37,8 @@ function detectGroupIdFromPom(cwd) {
   return m ? m[1].trim() : null;
 }
 
-/**
- * Auto-add .flowtrace/ to .gitignore if inside a git repo.
- * Idempotent.
- */
-function ensureGitignore(cwd) {
-  const gitDir = path.join(cwd, '.git');
-  if (!fs.existsSync(gitDir)) return;
-  const giPath = path.join(cwd, '.gitignore');
-  const entry = '.flowtrace/';
-  if (fs.existsSync(giPath)) {
-    const content = fs.readFileSync(giPath, 'utf-8');
-    if (content.split('\n').some(l => l.trim() === entry)) return;
-    fs.appendFileSync(giPath, `\n${entry}\n`);
-  } else {
-    fs.writeFileSync(giPath, `${entry}\n`);
-  }
-}
+// ensureGitignore lives in ../gitignore.js — see that file for why the old
+// cwd/.git check silently skipped every subdirectory of a repository.
 
 // ---------- injection strategies ----------
 
@@ -82,12 +68,23 @@ function buildJavaInjection({ otelAgent, flExt, prefix, outPath, strategy, userA
   const [first, ...rest] = userArgs;
 
   // Explicit strategy overrides
-  if (strategy === 'mvn') {
-    const existing = env.MAVEN_OPTS || '';
-    env.MAVEN_OPTS = (existing + ' ' + jvmFlags.join(' ')).trim();
-    return { cmd: first, args: rest, env };
-  }
-  if (strategy === 'gradle') {
+  // Maven and Gradle both go through JAVA_TOOL_OPTIONS, not MAVEN_OPTS.
+  //
+  // MAVEN_OPTS configures the MAVEN JVM only. The ways a Java application is
+  // actually started under Maven fork a separate JVM — `spring-boot:run` forks by
+  // default, surefire forks by default, `exec:exec` forks — and a forked JVM does
+  // not inherit the parent's -D flags. Measured directly: a child JVM spawned from
+  // a parent started with -Dflowtrace.probe=SI reads that property as null, while
+  // the same property supplied via JAVA_TOOL_OPTIONS is visible in the child.
+  //
+  // So the mvn path silently instrumented Maven itself and never the application:
+  // the run appeared to succeed and produced an empty trace. Only `exec:java`,
+  // which runs in-process, ever worked.
+  //
+  // JAVA_TOOL_OPTIONS is inherited by every JVM the build starts, which is the
+  // point. The extra JVMs cost agent startup but emit nothing, because
+  // flowtrace.package-prefix scopes instrumentation to the user's own classes.
+  if (strategy === 'mvn' || strategy === 'gradle') {
     const existing = env.JAVA_TOOL_OPTIONS || '';
     env.JAVA_TOOL_OPTIONS = (existing + ' ' + jvmFlags.join(' ')).trim();
     return { cmd: first, args: rest, env };
@@ -101,8 +98,10 @@ function buildJavaInjection({ otelAgent, flExt, prefix, outPath, strategy, userA
     return { cmd: first, args: [...jvmFlags, ...rest], env };
   }
   if (bin === 'mvn' || bin === 'mvnw') {
-    const existing = env.MAVEN_OPTS || '';
-    env.MAVEN_OPTS = (existing + ' ' + jvmFlags.join(' ')).trim();
+    // Same reason as the explicit --inject mvn path above: MAVEN_OPTS does not
+    // reach a forked application JVM.
+    const existing = env.JAVA_TOOL_OPTIONS || '';
+    env.JAVA_TOOL_OPTIONS = (existing + ' ' + jvmFlags.join(' ')).trim();
     return { cmd: first, args: rest, env };
   }
   if (bin === 'gradle' || bin === 'gradlew') {

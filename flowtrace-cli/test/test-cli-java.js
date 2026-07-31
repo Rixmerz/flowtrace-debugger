@@ -56,23 +56,53 @@ test('java -jar: flags spliced into argv (auto strategy)', () => {
   assert.ok(!env.JAVA_TOOL_OPTIONS || !env.JAVA_TOOL_OPTIONS.includes('-javaagent'), 'no JAVA_TOOL_OPTIONS for direct java');
 });
 
-test('mvn command: flags go into MAVEN_OPTS (auto strategy)', () => {
+test('mvn command: flags go into JAVA_TOOL_OPTIONS, which forked JVMs inherit', () => {
+  // These used to assert MAVEN_OPTS, which configures the MAVEN JVM only. Every
+  // realistic way of starting a Java app under Maven forks a separate JVM —
+  // spring-boot:run forks by default, surefire forks by default, exec:exec forks
+  // — and a forked JVM does not inherit the parent's -D flags. Measured: a child
+  // JVM spawned from a parent started with -Dflowtrace.probe=SI reads it as null,
+  // while the same property via JAVA_TOOL_OPTIONS is visible in the child. So the
+  // old behaviour instrumented Maven and never the application, and reported
+  // success with an empty trace.
   const { cmd, args, env } = _buildJavaInjection({
     ...baseOpts({ userArgs: ['mvn', 'spring-boot:run'] }),
   });
   assert.equal(cmd, 'mvn');
   assert.deepEqual(args, ['spring-boot:run']);
-  assert.ok(env.MAVEN_OPTS.includes(`-javaagent:${FAKE_OTEL}`), 'MAVEN_OPTS has -javaagent');
-  assert.ok(env.MAVEN_OPTS.includes(`-Dotel.javaagent.extensions=${FAKE_EXT}`), 'MAVEN_OPTS has extensions');
-  assert.ok(env.MAVEN_OPTS.includes(`-Dflowtrace.package-prefix=${PREFIX}`), 'MAVEN_OPTS has prefix');
-  assert.ok(env.MAVEN_OPTS.includes(`-Dflowtrace.output=${OUTPATH}`), 'MAVEN_OPTS has output');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-javaagent:${FAKE_OTEL}`), 'missing -javaagent');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-Dotel.javaagent.extensions=${FAKE_EXT}`), 'missing extensions');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-Dflowtrace.package-prefix=${PREFIX}`), 'missing prefix');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-Dflowtrace.output=${OUTPATH}`), 'missing output');
+  // Regression guard: MAVEN_OPTS alone is not enough and must not be relied on.
+  assert.ok(
+    !(env.MAVEN_OPTS || '').includes('-javaagent'),
+    'flags were put in MAVEN_OPTS, which a forked application JVM never sees'
+  );
 });
 
-test('mvn strategy explicit: flags go into MAVEN_OPTS regardless of binary name', () => {
-  const { cmd, args, env } = _buildJavaInjection({
+test('mvn strategy explicit: JAVA_TOOL_OPTIONS regardless of binary name', () => {
+  const { env } = _buildJavaInjection({
     ...baseOpts({ strategy: 'mvn', userArgs: ['./mvnw', 'spring-boot:run'] }),
   });
-  assert.ok(env.MAVEN_OPTS.includes('-javaagent:'), 'MAVEN_OPTS set for explicit mvn strategy');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes('-javaagent:'), 'not set for explicit mvn strategy');
+});
+
+test('an existing JAVA_TOOL_OPTIONS is preserved, not replaced', () => {
+  // Users legitimately set this for proxies or memory settings; clobbering it
+  // would change how their build runs.
+  const original = process.env.JAVA_TOOL_OPTIONS;
+  try {
+    process.env.JAVA_TOOL_OPTIONS = '-Duser.timezone=UTC';
+    const { env } = _buildJavaInjection({
+      ...baseOpts({ strategy: 'mvn', userArgs: ['mvn', 'test'] }),
+    });
+    assert.ok(env.JAVA_TOOL_OPTIONS.includes('-Duser.timezone=UTC'), 'existing value lost');
+    assert.ok(env.JAVA_TOOL_OPTIONS.includes('-javaagent:'), 'our flags missing');
+  } finally {
+    if (original === undefined) delete process.env.JAVA_TOOL_OPTIONS;
+    else process.env.JAVA_TOOL_OPTIONS = original;
+  }
 });
 
 test('gradle command: flags go into JAVA_TOOL_OPTIONS (auto strategy)', () => {
