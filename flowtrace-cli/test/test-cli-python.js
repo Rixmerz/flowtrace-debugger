@@ -96,12 +96,26 @@ test('detectPythonPrefix returns null when no config found', () => {
 // ---------------------------------------------------------------------------
 // 3. subprocess argv is passed unchanged (no splicing)
 // ---------------------------------------------------------------------------
-test('buildPythonEnv does not alter user command args', () => {
+test('buildPythonEnv sets the three flowtrace vars and leaves argv alone', () => {
   // Verify that env composition doesn't touch argv — the caller passes restArgs
-  // directly to spawn(). We verify env keys only relate to flowtrace, not argv.
+  // directly to spawn().
+  //
+  // Asserted as "these keys are set correctly", NOT as an exact key set.
+  // buildPythonEnv spreads process.env, so any FLOWTRACE_* variable already in
+  // the developer's shell became a failure: this test failed locally for anyone
+  // with, say, FLOWTRACE_AGENT exported from an unrelated project, while passing
+  // in CI's clean environment. An inherited unrelated variable is not a defect,
+  // and asserting its absence tested the machine rather than the code.
   const env = _buildPythonEnv({ prefix: 'pkg', outPath: '/tmp/x.jsonl', stubDir: '/s' });
-  const envKeys = Object.keys(env).filter(k => k.startsWith('FLOWTRACE'));
-  assert.deepStrictEqual(envKeys.sort(), ['FLOWTRACE_ENABLE', 'FLOWTRACE_OUTPUT', 'FLOWTRACE_PACKAGE_PREFIX'].sort());
+
+  assert.strictEqual(env.FLOWTRACE_ENABLE, '1');
+  assert.strictEqual(env.FLOWTRACE_PACKAGE_PREFIX, 'pkg');
+  assert.strictEqual(env.FLOWTRACE_OUTPUT, '/tmp/x.jsonl');
+
+  // The contract this test is really about: no argv-shaped keys are introduced.
+  for (const key of ['FLOWTRACE_ARGS', 'FLOWTRACE_CMD', 'FLOWTRACE_ARGV']) {
+    assert.ok(!(key in env), `buildPythonEnv must not introduce ${key}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

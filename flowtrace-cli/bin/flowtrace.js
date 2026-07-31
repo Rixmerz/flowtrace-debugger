@@ -31,6 +31,11 @@ program
 
 program
   .command('run')
+  // The variadic argument is REQUIRED for `flowtrace run -- <cmd>` to work at
+  // all. Without it commander enforces "Expected 0 arguments" and rejected the
+  // command line shown five times in this very help text — the tool's primary
+  // documented usage failed for every language.
+  .argument('[cmd...]', 'Comando a ejecutar instrumentado (tras --)')
   .description('Ejecuta la app con instrumentación FlowTrace y emite JSONL v2')
   .addHelpText('after', `
 Opciones:
@@ -56,9 +61,11 @@ Ejemplos:
   .option('--inject <strategy>', 'Estrategia de inyección JVM: mvn|gradle|java (default: auto)')
   .option('-o, --out <path>', 'Ruta de salida JSONL (default: .flowtrace/<ISO>.jsonl)')
   .allowUnknownOption(true)
-  .action(async (options, cmd) => {
+  .action(async (cmdArgs, options, cmd) => {
     try {
-      await require('../lib/commands/run')(options, cmd.args || []);
+      // cmdArgs comes from the declared variadic argument; cmd.args is kept as a
+      // fallback so either commander path yields the user's command.
+      await require('../lib/commands/run')(options, cmdArgs.length ? cmdArgs : (cmd.args || []));
     } catch (err) {
       console.error(chalk.red('Error:'), err.message);
       process.exit(1);

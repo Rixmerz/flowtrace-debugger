@@ -194,17 +194,50 @@ async function runCommand(options = {}, restArgs = []) {
   return { lang, outPath, args: restArgs };
 }
 
+/**
+ * Read <version> from the extension's pom, so jar paths cannot drift out of sync
+ * with the project version the way a hardcoded "2.0.0-SNAPSHOT" did.
+ * @param {string} extDir
+ * @returns {string}
+ */
+function detectExtensionVersion(extDir) {
+  try {
+    const pom = fs.readFileSync(path.join(extDir, 'pom.xml'), 'utf8');
+    const m = pom.match(/<version>([^<]+)<\/version>/);
+    if (m) return m[1].trim();
+  } catch {
+    /* fall through */
+  }
+  return '2.0.0';
+}
+
 async function runJava({ options, restArgs, cwd, outPath }) {
   const root = repoRoot();
 
   // 1. Resolve jar paths
-  const otelAgent = path.join(root, 'flowtrace-cli', 'vendor', 'java', 'opentelemetry-javaagent.jar');
-  const flExt = path.join(root, 'capture', 'java', 'flowtrace-otel-extension', 'target',
-    'flowtrace-otel-extension-2.0.0-SNAPSHOT.jar');
+  const extDir = path.join(root, 'capture', 'java', 'flowtrace-otel-extension');
+
+  // Version read from the pom, not hardcoded. This said "2.0.0-SNAPSHOT", which
+  // has not existed since the 2.0.0 release — so `flowtrace run --lang java`,
+  // the documented entry point, could never find the extension. The same stale
+  // glob appeared in the integration test, the benchmark harness and the
+  // truncation parity script; deriving it means a version bump cannot repeat it.
+  const extVersion = detectExtensionVersion(extDir);
+  const flExt = path.join(extDir, 'target', `flowtrace-otel-extension-${extVersion}.jar`);
+
+  // vendor/java/ is fetched separately and holds only a README in a fresh
+  // checkout. Maven already downloads the same agent into target/dependency/ as
+  // part of `make build-java`, so prefer whichever exists rather than failing on
+  // a step the user has no reason to have run.
+  const vendored = path.join(root, 'flowtrace-cli', 'vendor', 'java', 'opentelemetry-javaagent.jar');
+  const fromMaven = path.join(extDir, 'target', 'dependency', 'opentelemetry-javaagent.jar');
+  const otelAgent = fs.existsSync(vendored) ? vendored : fromMaven;
 
   if (!fs.existsSync(otelAgent)) {
-    console.error(chalk.red('Error:'), `No se encontró el agente OTel: ${otelAgent}`);
-    console.log(chalk.gray('Ejecuta: make build   (o: make fetch-deps) en flowtrace-cli/'));
+    console.error(chalk.red('Error:'), 'No se encontró el agente OTel de OpenTelemetry.');
+    console.log(chalk.gray(`  buscado en: ${vendored}`));
+    console.log(chalk.gray(`  y en:       ${fromMaven}`));
+    console.log(chalk.gray('Ejecuta: make build-java   (en la raíz del repo)  o  make fetch-deps (en flowtrace-cli/)'));
     process.exit(1);
   }
   if (!fs.existsSync(flExt)) {
@@ -252,6 +285,7 @@ async function runJava({ options, restArgs, cwd, outPath }) {
 
   return new Promise((resolve) => {
     child.on('close', (code) => {
+      reportCapture(outPath, 'java', prefix);
       process.exit(code ?? 0);
       resolve();
     });
@@ -341,6 +375,23 @@ async function runPython({ options, restArgs, cwd, outPath }) {
     process.exit(1);
   }
 
+  // Python's prefix is a comma-separated list of MODULE names, not a path, and
+  // the auto-detected value comes from the project name — which for a
+  // single-script project matches no module at all, so the run produced an empty
+  // trace while appearing to succeed. Add the script's own module name, since
+  // `python app.py` makes app the module under trace. Both are kept: a package
+  // project still wants its package prefix.
+  const scriptArg = restArgs.find((a) => a.endsWith('.py'));
+  if (scriptArg) {
+    const scriptModule = path.basename(scriptArg, '.py');
+    const known = prefix.split(',').map((x) => x.trim()).filter(Boolean);
+    if (!known.includes(scriptModule)) {
+      known.push(scriptModule);
+      prefix = known.join(',');
+      console.log(chalk.gray(`  prefix (+script): ${prefix}`));
+    }
+  }
+
   // 5. Build env and spawn.
   const env = buildPythonEnv({ prefix, outPath, stubDir: localStub });
   const [cmd, ...args] = restArgs;
@@ -355,6 +406,7 @@ async function runPython({ options, restArgs, cwd, outPath }) {
 
   return new Promise((resolve) => {
     child.on('close', (code) => {
+      reportCapture(outPath, 'python', prefix);
       process.exit(code ?? 0);
       resolve();
     });
@@ -427,10 +479,58 @@ async function runNode({ options, restArgs, cwd, outPath }) {
 
   return new Promise((resolve) => {
     child.on('close', (code) => {
+      reportCapture(outPath, 'node', prefix);
       process.exit(code ?? 0);
       resolve();
     });
   });
+}
+
+
+/**
+ * Report, after the traced process exits, whether anything was actually captured.
+ *
+ * Every failure mode in this tool that is not a crash looks identical from the
+ * outside: the program runs, prints its own output, exits 0 — and the trace is
+ * empty. It happened for real in all three languages: a Python prefix derived
+ * from the project name instead of the module name matched nothing, a Java run
+ * silently lacked the agent, a Node run had its own source in scope. In each case
+ * the user is told the run "succeeded".
+ *
+ * So the count is checked and an empty result is called out with the specific
+ * thing to look at, per language. This is the single most useful diagnostic in the
+ * CLI: it converts an invisible failure into an actionable one regardless of cause.
+ *
+ * @param {string} outPath
+ * @param {'java'|'python'|'node'|'ts'} lang
+ * @param {string} prefix
+ */
+function reportCapture(outPath, lang, prefix) {
+  let events = 0;
+  try {
+    if (fs.existsSync(outPath)) {
+      events = fs.readFileSync(outPath, 'utf8').split('\n').filter((l) => l.trim()).length;
+    }
+  } catch {
+    /* unreadable output is reported as zero below */
+  }
+
+  if (events > 0) {
+    console.log(chalk.green(`  capturado : ${events} eventos -> ${outPath}`));
+    return;
+  }
+
+  console.error(chalk.yellow('\nAdvertencia:'), 'el programa se ejecutó pero NO se capturó ningún evento.');
+  console.error(chalk.gray(`  salida esperada: ${outPath}`));
+  if (lang === 'python') {
+    console.error(chalk.gray(`  El prefijo de Python es una lista de MÓDULOS separados por coma, no una ruta.`));
+    console.error(chalk.gray(`  Actual: "${prefix}". Para un script suelto suele ser el nombre del archivo sin .py.`));
+    console.error(chalk.gray(`  Prueba: flowtrace run --lang python --package-prefix <modulo> -- python app.py`));
+  } else if (lang === 'java') {
+    console.error(chalk.gray(`  Verifica que --package-prefix ("${prefix}") coincida con el paquete de tus clases.`));
+  } else {
+    console.error(chalk.gray(`  Verifica que el código esté bajo el prefijo ("${prefix}") y fuera de node_modules.`));
+  }
 }
 
 // Export internals for testing
@@ -440,5 +540,7 @@ runCommand._detectGroupIdFromPom = detectGroupIdFromPom;
 runCommand._ensureGitignore = ensureGitignore;
 runCommand._detectPythonPrefix = detectPythonPrefix;
 runCommand._buildPythonEnv = buildPythonEnv;
+runCommand._reportCapture = reportCapture;
+runCommand._detectExtensionVersion = detectExtensionVersion;
 
 module.exports = runCommand;
