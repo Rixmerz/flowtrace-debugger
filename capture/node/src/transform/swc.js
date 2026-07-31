@@ -168,7 +168,8 @@ function methodName(node) {
  */
 function buildInstrumentedBody(originalBody, mod, cls, method, visibility, paramNames, isAsync, isArrow, lang) {
   const modLit    = t.stringLiteral(mod);
-  const clsLit    = cls ? t.stringLiteral(cls) : t.nullLiteral();
+  // '' not null: the schema types `class` as string. See instrument.js.
+  const clsLit    = t.stringLiteral(cls ?? '');
   const methodLit = t.stringLiteral(method);
   const visLit    = t.stringLiteral(visibility);
   const paramsArr = t.arrayExpression(paramNames.map(n => t.stringLiteral(n)));

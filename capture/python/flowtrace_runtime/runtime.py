@@ -176,7 +176,14 @@ def _ft_exit_error(ctx: dict, exc: BaseException) -> None:
         "method": ctx["method"],
         "visibility": ctx["visibility"],
         "args": ctx["args"],
-        "result": {"error": error_info},
+        # The schema has a dedicated top-level `error` field, and `result` is
+        # required separately. This used to emit result={"error": ...} and no
+        # `error` field at all: schema-valid by luck, but every consumer that
+        # looks for errors looks at `error` — the MCP server's trace.find_error
+        # walks that field, so it could never find a Python failure. Java and
+        # Node both use the top-level field.
+        "result": {},
+        "error": error_info,
         "duration_ns": duration_ns,
         "depth": ctx["depth"],
     })

@@ -168,6 +168,13 @@ public class FlowtraceAdvice {
                         thrown.getMessage(),
                         stack
                 ));
+                // `result` is REQUIRED on every exit event by the schema, error
+                // exits included. Setting only `error` left it absent, so every
+                // Java error event was schema-invalid — and tracing failures is
+                // the whole point of this tool, so that is the worst possible
+                // path to break. An empty map is the same shape a void return
+                // produces: there is no value to report.
+                event.setResult(new LinkedHashMap<>());
             } else {
                 if (result != null) {
                     Map<String, Object> resultMap = new LinkedHashMap<>();

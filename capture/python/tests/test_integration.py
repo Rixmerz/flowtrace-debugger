@@ -56,23 +56,49 @@ def test_integration_calculator():
             pytest.fail(f"calculator.py failed:\nstdout: {result.stdout}\nstderr: {result.stderr}")
 
         lines = Path(out_path).read_text(encoding="utf-8").strip().splitlines()
-        assert len(lines) == 8, f"Expected 8 JSONL lines, got {len(lines)}. stderr: {result.stderr}"
-
+        # Asserted by shape, not by a hardcoded count. The count broke the moment
+        # the golden fixture grew a plain function and an error path — coverage it
+        # was missing, and whose absence hid two schema violations for a whole
+        # release. A magic number makes legitimate fixture growth look like a
+        # regression, so pair every enter with its exit instead.
         events = [json.loads(line) for line in lines]
-
-        # All events share same trace_id.
-        trace_ids = {e["trace_id"] for e in events}
-        assert len(trace_ids) == 1, "Expected single trace_id"
-
-        # Enter/exit counts.
         enters = [e for e in events if e["event"] == "enter"]
         exits = [e for e in events if e["event"] == "exit"]
-        assert len(enters) == 4
-        assert len(exits) == 4
+        assert enters, f"no enter events. stderr: {result.stderr}"
+        assert len(enters) == len(exits), (
+            f"unpaired events: {len(enters)} enters vs {len(exits)} exits"
+        )
+        exited = {e["span_id"] for e in exits}
+        for enter in enters:
+            assert enter["span_id"] in exited, (
+                f"span {enter['span_id']} ({enter['method']}) entered but never exited"
+            )
+        for method in ("run", "add", "_validate"):
+            assert any(e["method"] == method for e in enters), f"expected {method} in trace"
 
-        # Call tree: run -> add -> _validate x2.
-        enter_methods = [e["method"] for e in enters]
-        assert enter_methods == ["run", "add", "_validate", "_validate"]
+        # The run() call tree must share one trace_id. Asserting it for the whole
+        # FILE only held while the fixture had a single entry point: describe() and
+        # must_fail() are separate top-level calls with no enclosing span, so each
+        # correctly starts its own trace.
+        tree_methods = {"run", "add", "_validate"}
+        tree_trace_ids = {e["trace_id"] for e in events if e["method"] in tree_methods}
+        assert len(tree_trace_ids) == 1, (
+            f"run/add/_validate should share one trace_id, got {len(tree_trace_ids)}"
+        )
+
+        # ...and a separate top-level call must not be folded into it.
+        describe_ev = next((e for e in enters if e["method"] == "describe"), None)
+        assert describe_ev is not None, "plain function describe() was not traced"
+        assert describe_ev["trace_id"] not in tree_trace_ids, (
+            "a separate top-level call should start its own trace"
+        )
+
+        # Call tree: run -> add -> _validate x2. Asserted as the leading prefix
+        # rather than the exact list, so the fixture can grow the plain-function
+        # and error-path coverage it was missing without this reading as a
+        # regression.
+        tree_enters = [e["method"] for e in enters if e["method"] in tree_methods]
+        assert tree_enters == ["run", "add", "_validate", "_validate"], tree_enters
 
         # Visibility.
         validate_events = [e for e in events if e["method"] == "_validate"]
@@ -88,9 +114,18 @@ def test_integration_calculator():
         assert add_enter["depth"] == 1
         assert all(e["depth"] == 2 for e in validate_enters)
 
-        # Class field.
+        # Class field. Methods report their class; plain functions report "" — an
+        # empty string, never None, because the schema types `class` as string.
+        # This used to require "Calculator" on EVERY event, which only held while
+        # the fixture contained nothing but methods, and is exactly why Node's
+        # class:null violation went unnoticed for a release.
         for ev in events:
-            assert ev["class"] == "Calculator", f"Expected class=Calculator, got {ev['class']}"
+            assert isinstance(ev["class"], str), f"class must be a str, got {ev['class']!r}"
+        for ev in events:
+            if ev["method"] in tree_methods:
+                assert ev["class"] == "Calculator", f"Expected Calculator, got {ev['class']}"
+            else:
+                assert ev["class"] == "", f"plain function should report '', got {ev['class']!r}"
 
         # Source file unchanged (zero modification check).
         assert _original_sha256() == original_hash, "calculator.py was modified!"

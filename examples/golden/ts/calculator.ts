@@ -20,6 +20,16 @@ export class Calculator {
   }
 }
 
+// Plain function: exercises class:"" (no enclosing class).
+export function describe(label: string): string {
+  return `calc:${label}`;
+}
+
+// Error path: exercises the exit event's `error` + `result` shape.
+export function mustFail(): void {
+  throw new TypeError('golden failure');
+}
+
 // Executed on import rather than behind `require.main === module`. That guard is
 // a CommonJS idiom, and a .ts file is loaded as ESM, where `require` does not
 // exist — so merely evaluating `require.main` threw a ReferenceError and this
@@ -28,3 +38,11 @@ export class Calculator {
 // actually executes.
 // eslint-disable-next-line no-console
 console.log(new Calculator().run());
+// eslint-disable-next-line no-console
+console.log(describe('golden'));
+try {
+  mustFail();
+} catch {
+  // Swallowed on purpose: the fixture must exit 0 so the harness can compare its
+  // output, while still producing an error exit event to validate.
+}

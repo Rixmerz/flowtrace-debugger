@@ -146,7 +146,13 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args, l
     thread: THREAD_NAME,
     lang,
     module: module_,
-    class: cls,
+    // Coerced to '' rather than passed through. The schema types `class` as
+    // string with no null permitted, so a plain (non-class) function emitting
+    // class:null made EVERY one of its events schema-invalid — which is most
+    // JavaScript. Python already emits '' here. The coercion lives in the
+    // runtime and not only in the transform because transformed output is cached
+    // on disk: users have cached modules that still pass null.
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
@@ -171,11 +177,21 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args, l
 export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, args, result) {
   const duration_ns = Number(process.hrtime.bigint() - ctx.start);
   let serializedResult;
-  try {
-    const v = JSON.parse(JSON.stringify(result));
-    serializedResult = v === undefined || v === null ? {} : { value: v };
-  } catch {
-    serializedResult = { value: String(result) };
+  // undefined/null are checked BEFORE the JSON round-trip, not after. The
+  // original order could never work: JSON.stringify(undefined) returns undefined,
+  // JSON.parse of that throws, and the catch reported { value: "undefined" } —
+  // the literal string. So every void function claimed to return the text
+  // "undefined" instead of nothing, while Java and Python both emit {}.
+  if (result === undefined || result === null) {
+    serializedResult = {};
+  } else {
+    try {
+      serializedResult = { value: JSON.parse(JSON.stringify(result)) };
+    } catch {
+      // Unserializable (circular, BigInt, function): report its string form
+      // rather than dropping the event.
+      serializedResult = { value: String(result) };
+    }
   }
 
   emit({
@@ -187,7 +203,7 @@ export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, arg
     thread: THREAD_NAME,
     lang: ctx.lang ?? 'node',
     module: module_,
-    class: cls,
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
@@ -221,10 +237,15 @@ export function __ft_exit_error(ctx, module_, cls, method, visibility, paramName
     thread: THREAD_NAME,
     lang: ctx.lang ?? 'node',
     module: module_,
-    class: cls,
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
+    // `result` is REQUIRED on every exit event, error exits included. Omitting
+    // it made every error event schema-invalid — and tracing failures is the
+    // whole point of this tool, so that is the worst possible path to break.
+    // {} is the same shape a void return produces: there is no value to report.
+    result: {},
     error: err && typeof err === 'object' ? {
       type: err.name ?? 'Error',
       msg: err.message ?? String(err),

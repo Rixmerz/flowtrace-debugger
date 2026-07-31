@@ -33,7 +33,7 @@ function spawnWithBootstrap(scriptPath, outPath) {
   );
 }
 
-test('CJS integration: calculator.js emits 8 JSONL events', () => {
+test('CJS integration: calculator.js emits a complete, paired trace', () => {
   const outDir  = join(tmpdir(), `ft-cjs-test-${process.pid}`);
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, 'trace.jsonl');
@@ -62,8 +62,32 @@ test('CJS integration: calculator.js emits 8 JSONL events', () => {
       .filter(l => l.trim())
       .map(l => JSON.parse(l));
 
-    // Golden expects 8 events: run(enter) add(enter) #validate x2(enter+exit) #validate x2(enter+exit) add(exit) run(exit)
-    assert.equal(lines.length, 8, `Expected 8 events, got ${lines.length}`);
+    // Asserted by shape, not by a hardcoded count. The count broke the moment the
+    // golden fixture grew a plain function and an error path — coverage the
+    // fixture was missing, and whose absence hid two schema violations for a
+    // whole release. A magic number makes legitimate fixture growth look like a
+    // regression, so pair every enter with its exit instead.
+    const enters = lines.filter((e) => e.event === 'enter');
+    const exits = lines.filter((e) => e.event === 'exit');
+    assert.ok(enters.length > 0, 'no enter events emitted');
+    assert.equal(
+      enters.length,
+      exits.length,
+      `unpaired events: ${enters.length} enters vs ${exits.length} exits`
+    );
+    for (const enter of enters) {
+      assert.ok(
+        exits.some((x) => x.span_id === enter.span_id),
+        `span ${enter.span_id} (${enter.method}) entered but never exited`
+      );
+    }
+    // The call tree the fixture exists to demonstrate must still be there.
+    for (const method of ['run', 'add', '#validate']) {
+      assert.ok(
+        enters.some((e) => e.method === method),
+        `expected ${method} in the trace`
+      );
+    }
 
     // All events should have required fields.
     for (const ev of lines) {
@@ -72,11 +96,13 @@ test('CJS integration: calculator.js emits 8 JSONL events', () => {
       assert.ok(ev.span_id, 'event.span_id required');
       assert.ok(['enter', 'exit'].includes(ev.event), `event.event must be enter|exit, got ${ev.event}`);
       assert.equal(ev.lang, 'node', 'event.lang should be node');
-      assert.equal(ev.class, 'Calculator', 'event.class should be Calculator');
+      // `class` is '' for plain functions, not null: the schema types it as
+      // string. It used to be asserted equal to 'Calculator' for EVERY event,
+      // which only held while the fixture contained nothing but methods.
+      assert.equal(typeof ev.class, 'string', 'event.class must be a string');
     }
 
     // Check call structure: first enter should be run(), depth 0.
-    const enters = lines.filter(e => e.event === 'enter');
     assert.equal(enters[0].method, 'run', 'first enter should be run()');
     assert.equal(enters[0].depth, 0, 'run() should be at depth 0');
 
@@ -84,9 +110,28 @@ test('CJS integration: calculator.js emits 8 JSONL events', () => {
     assert.equal(validateEnters.length, 2, 'should have 2 #validate enter events');
     assert.equal(validateEnters[0].visibility, 'private', '#validate should be private');
 
-    // All events share same trace_id.
-    const traceIds = new Set(lines.map(e => e.trace_id));
-    assert.equal(traceIds.size, 1, 'all events should share one trace_id');
+    // The run() call tree must share one trace_id. Asserting it for the whole
+    // FILE only held while the fixture had a single entry point: describe() and
+    // mustFail() are separate top-level calls with no enclosing span, so each
+    // correctly starts its own trace.
+    const treeMethods = new Set(['run', 'add', '#validate']);
+    const treeTraceIds = new Set(
+      lines.filter(e => treeMethods.has(e.method)).map(e => e.trace_id)
+    );
+    assert.equal(
+      treeTraceIds.size,
+      1,
+      `run/add/#validate should share one trace_id, got ${[...treeTraceIds].length}`
+    );
+
+    // ...and the separate top-level calls must NOT be folded into it.
+    const describeEv = enters.find(e => e.method === 'describe');
+    assert.ok(describeEv, 'plain function describe() was not traced');
+    assert.notEqual(
+      describeEv.trace_id,
+      [...treeTraceIds][0],
+      'a separate top-level call should start its own trace'
+    );
 
   } finally {
     if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });

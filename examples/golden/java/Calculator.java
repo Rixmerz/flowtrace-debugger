@@ -23,7 +23,24 @@ public class Calculator {
         }
     }
 
+    /** Plain static method: still a class in Java, but exercises the error shape below. */
+    static String describe(String label) {
+        return "calc:" + label;
+    }
+
+    /** Error path: exercises the exit event's `error` + required `result` field. */
+    static void mustFail() {
+        throw new IllegalStateException("golden failure");
+    }
+
     public static void main(String[] args) {
         System.out.println(new Calculator().run());
+        System.out.println(describe("golden"));
+        try {
+            mustFail();
+        } catch (IllegalStateException e) {
+            // Swallowed on purpose: the fixture must exit 0 so the harness can
+            // compare its output, while still producing an error exit event.
+        }
     }
 }
