@@ -84,7 +84,7 @@ export function install() {
           runtimePath: RUNTIME_PATH,
         });
         code = result.code;
-        cachePut(key, code, result.map);
+        if (result.cacheable !== false) cachePut(key, code, result.map);
       }
       transformed = code;
     } catch (e) {

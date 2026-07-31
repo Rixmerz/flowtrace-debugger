@@ -7,6 +7,8 @@
  * this file can be require()'d from CJS-transformed code as well.
  */
 
+import { createRequire } from 'node:module';
+
 import { getCurrent, runInSpan, storage } from './context.js';
 import { emit } from './emitter.js';
 import { newSpanId, newTraceId } from './ids.js';
@@ -15,6 +17,30 @@ import { rootSeed } from './propagation.js';
 // High-resolution timestamp baseline established once at module load.
 const BASELINE_MS = Date.now();
 const BASELINE_HR = process.hrtime.bigint();
+
+/**
+ * Thread label for emitted events.
+ *
+ * This used to be the literal string 'main' in all three emit sites, which was
+ * actively wrong rather than merely imprecise: bootstrap.mjs deliberately
+ * propagates instrumentation into worker_threads via NODE_OPTIONS, so worker
+ * events were emitted claiming to be on the main thread and a multi-threaded
+ * trace could not be untangled at all. It was also the only layer not reporting
+ * a real thread — Python uses threading.current_thread().name and Java uses the
+ * JVM thread name.
+ *
+ * Resolved once per process: a worker's threadId never changes, and this is on
+ * the hot path for every event. worker_threads is a builtin, so requiring it
+ * costs nothing; threadId is 0 on the main thread.
+ */
+const THREAD_NAME = (() => {
+  try {
+    const { threadId } = createRequire(import.meta.url)('node:worker_threads');
+    return threadId === 0 ? 'main' : `worker-${threadId}`;
+  } catch {
+    return 'main';
+  }
+})();
 
 /**
  * Current wall-clock time as a fractional Unix seconds value with
@@ -117,7 +143,7 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args, l
     span_id,
     parent_id,
     event: 'enter',
-    thread: 'main',
+    thread: THREAD_NAME,
     lang,
     module: module_,
     class: cls,
@@ -158,7 +184,7 @@ export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, arg
     span_id: ctx.span_id,
     parent_id: ctx.parent_id,
     event: 'exit',
-    thread: 'main',
+    thread: THREAD_NAME,
     lang: ctx.lang ?? 'node',
     module: module_,
     class: cls,
@@ -192,7 +218,7 @@ export function __ft_exit_error(ctx, module_, cls, method, visibility, paramName
     span_id: ctx.span_id,
     parent_id: ctx.parent_id,
     event: 'exit',
-    thread: 'main',
+    thread: THREAD_NAME,
     lang: ctx.lang ?? 'node',
     module: module_,
     class: cls,

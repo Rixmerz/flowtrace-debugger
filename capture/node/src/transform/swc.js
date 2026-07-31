@@ -129,7 +129,30 @@ function methodName(node) {
  *   return __ft_result;
  *
  * For async functions, __ft_run wraps an async IIFE (preserving await).
- * For generator functions we skip instrumentation (MVP).
+ *
+ * Generator functions are NOT instrumented. This is a deliberate limitation, not
+ * an oversight, and it is reported on stderr on every run rather than passed over
+ * in silence — a file with skipped generators is deliberately left uncached so the
+ * diagnostic is not lost to a cache hit.
+ *
+ * The obstacle is that this strategy wraps the original body in an inner ARROW
+ * function, and an arrow cannot contain `yield`. The three ways out each cost
+ * something real:
+ *
+ *   1. Use an inner `function*` instead. It rebinds `this` (fixable with .bind)
+ *      but also rebinds `arguments`, so any generator body referencing
+ *      `arguments` would silently receive the wrong values.
+ *   2. Rewrite the body in place, with no inner function — which is what the
+ *      Python layer does, and why generators work for free there. That is an
+ *      architectural change to this transform, not a local fix.
+ *   3. Delegate with `yield* genFn()` and skip the per-resumption context. A
+ *      generator suspends at every yield and AsyncLocalStorage context does not
+ *      survive suspension, so nested calls made after the first yield would
+ *      attach to whatever span the *consumer* happened to be in — wrong
+ *      parent_id, reported confidently.
+ *
+ * Option 2 is the correct one. Until it is done, skipping and saying so beats
+ * emitting a subtly wrong tree.
  *
  * @param {import('@babel/types').BlockStatement} originalBody
  * @param {string} mod
@@ -358,6 +381,12 @@ export function transform(source, opts = {}) {
   // the injected __ft_enter call and carried on the span ctx from there.
   const lang = isTs ? 'ts' : 'node';
 
+  // Names of generator functions we declined to instrument, reported once per
+  // file after the traverse. Silently producing no events for a whole class of
+  // function is the failure mode this repo has been full of: the user cannot
+  // tell "not called" from "not instrumented".
+  const skippedGenerators = [];
+
   // Detect module type for the runtime import.
   let moduleType = opts.moduleType;
   if (!moduleType) {
@@ -380,12 +409,11 @@ export function transform(source, opts = {}) {
     ClassMethod(path) {
       // Skip constructors.
       if (path.node.kind === 'constructor') return;
-      // Skip generators (MVP).
-      if (path.node.generator) return;
       // Skip already-wrapped nodes to prevent infinite recursion.
       if (path.node._flowtraceWrapped) return;
 
       const name  = methodName(path.node);
+      if (path.node.generator) { skippedGenerators.push(name); return; }
       const vis   = methodVisibility(path.node);
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
@@ -398,10 +426,10 @@ export function transform(source, opts = {}) {
     },
 
     ClassPrivateMethod(path) {
-      if (path.node.generator) return;
       if (path.node._flowtraceWrapped) return;
 
       const name   = `#${path.node.key.id.name}`;
+      if (path.node.generator) { skippedGenerators.push(name); return; }
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
@@ -413,12 +441,12 @@ export function transform(source, opts = {}) {
     },
 
     FunctionDeclaration(path) {
-      if (path.node.generator) return;
       // Skip if it's a method (parent is class) — handled above.
       if (path.parent && (t.isClassBody(path.parent) || t.isObjectExpression(path.parent))) return;
       if (path.node._flowtraceWrapped) return;
 
       const name   = path.node.id ? path.node.id.name : '<anonymous>';
+      if (path.node.generator) { skippedGenerators.push(name); return; }
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
@@ -430,7 +458,6 @@ export function transform(source, opts = {}) {
     },
 
     FunctionExpression(path) {
-      if (path.node.generator) return;
       if (path.node._flowtraceWrapped) return;
 
       // Skip object method shorthand (handled separately if needed).
@@ -439,6 +466,7 @@ export function transform(source, opts = {}) {
           ? path.parent.id.name
           : '<anonymous>'
       );
+      if (path.node.generator) { skippedGenerators.push(name); return; }
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
@@ -450,7 +478,8 @@ export function transform(source, opts = {}) {
     },
 
     ArrowFunctionExpression(path) {
-      if (path.node.generator) return;
+      // No generator guard here: arrow functions cannot be generators, so the
+      // check that used to sit here was dead code implying otherwise.
       if (path.node._flowtraceWrapped) return;
 
       // Expand concise arrow body to block.
@@ -473,6 +502,18 @@ export function transform(source, opts = {}) {
     },
   });
 
+  // Report the generators we declined to instrument. Once per file rather than
+  // per function, so a generator-heavy module produces one line instead of
+  // dozens — but never zero lines, because "no events" and "not instrumented"
+  // are indistinguishable to the person reading the trace.
+  if (skippedGenerators.length > 0) {
+    process.stderr.write(
+      `[flowtrace] ${filename}: not instrumenting ${skippedGenerators.length} ` +
+      `generator function(s) (${skippedGenerators.join(', ')}) — generators are ` +
+      `not supported by the Node transform yet; they will be absent from the trace\n`
+    );
+  }
+
   // Step 4: Prepend runtime import.
   const importNode = moduleType === 'esm'
     ? buildEsmImport(runtimePath)
@@ -488,7 +529,18 @@ export function transform(source, opts = {}) {
       retainLines: false,
       compact: false,
     }, jsSource);
-    return { code: result.code, map: result.map };
+    // cacheable:false when we emitted a diagnostic. The transform cache is
+    // keyed on source content, so a cached hit skips this function entirely and
+    // the generator warning would appear only on the very first run — meaning
+    // the user asking "why is my generator missing from the trace" would never
+    // see the answer. Re-transforming costs something, but only for files that
+    // actually contain generators, which are exactly the files that need the
+    // warning every time.
+    return {
+      code: result.code,
+      map: result.map,
+      cacheable: skippedGenerators.length === 0,
+    };
   } catch (e) {
     process.stderr.write(`[flowtrace] babel generate failed for ${filename}: ${e.message}\n`);
     return { code: source, map: null };

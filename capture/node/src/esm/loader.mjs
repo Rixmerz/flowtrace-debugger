@@ -89,7 +89,7 @@ async function loadTypeScript(url) {
         runtimePath: RUNTIME_SPECIFIER,
       });
       code = out.code;
-      cache.cachePut(key, code, out.map);
+      if (out.cacheable !== false) cache.cachePut(key, code, out.map);
     }
 
     return { format, source: code, shortCircuit: true };
@@ -151,7 +151,7 @@ export async function load(url, context, nextLoad) {
         runtimePath: RUNTIME_SPECIFIER,
       });
       code = out.code;
-      cache.cachePut(key, code, out.map);
+      if (out.cacheable !== false) cache.cachePut(key, code, out.map);
     }
 
     return { format, source: code, shortCircuit: true };
