@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -183,6 +184,39 @@ class FlowtraceEmitterTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+    // Locale independence — regression guard
+    // -------------------------------------------------------------------------
+
+    @Test
+    void tsUsesPeriodDecimalSeparatorUnderCommaLocale() throws Exception {
+        Locale original = Locale.getDefault();
+        try {
+            // es-CL, de-DE, fr-FR and most of Europe / Latin America format
+            // decimals with a comma. The JVM default locale is read from OS
+            // settings, NOT from LANG, so a US-locale shell does not protect
+            // against this and CI on ubuntu-latest never reproduces it.
+            Locale.setDefault(Locale.forLanguageTag("es-CL"));
+
+            FlowtraceEmitter emitter = FlowtraceEmitter.getInstance();
+            emitter.emit(buildEnter("aabbccddeeff00112233445566778899", "0011223344556677", null));
+            emitter.close();
+
+            String line = Files.readAllLines(outFile).get(0);
+
+            // A comma separator yields `"ts":1785481163,844` — not merely
+            // wrong-looking, but invalid JSON, which makes EVERY event
+            // unparseable. Consumers then report an empty trace rather than an
+            // error, so the failure is completely silent.
+            assertDoesNotThrow(() -> mapper.readTree(line),
+                    "line must be valid JSON under a comma-decimal locale: " + line);
+            JsonNode node = mapper.readTree(line);
+            assertTrue(node.get("ts").isNumber(), "ts must serialize as a JSON number");
+        } finally {
+            Locale.setDefault(original);
+        }
+    }
 
     private TraceEvent buildEnter(String traceId, String spanId, String parentId) {
         TraceEvent e = new TraceEvent();

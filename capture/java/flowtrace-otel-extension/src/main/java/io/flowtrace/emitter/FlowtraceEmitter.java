@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -124,7 +125,17 @@ public final class FlowtraceEmitter {
 
     private static void appendDouble(StringBuilder sb, String key, double val) {
         // Use plain decimal format (no scientific notation) to match schema expectations.
-        sb.append('"').append(escapeJson(key)).append("\":").append(String.format("%.3f", val));
+        //
+        // Locale.ROOT is load-bearing, not defensive. String.format without an
+        // explicit locale uses the JVM default, which on a machine configured
+        // for most of Europe or Latin America emits a comma as the decimal
+        // separator: `"ts":1785481163,844`. That is not merely ugly — it is
+        // invalid JSON, so EVERY event becomes unparseable and consumers report
+        // an empty trace rather than an error. The JVM default locale comes from
+        // OS settings, not LANG, so a US-locale shell does not protect against
+        // it and CI on ubuntu-latest never reproduces it.
+        sb.append('"').append(escapeJson(key)).append("\":")
+          .append(String.format(Locale.ROOT, "%.3f", val));
     }
 
     @SuppressWarnings("unchecked")
@@ -198,7 +209,7 @@ public final class FlowtraceEmitter {
                 case '\t': sb.append("\\t");  break;
                 default:
                     if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
+                        sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
                     } else {
                         sb.append(c);
                     }
