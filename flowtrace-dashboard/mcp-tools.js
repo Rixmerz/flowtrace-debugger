@@ -80,9 +80,11 @@ async function openInDashboard(filePath) {
       dashboardURL,
       summary: {
         totalCalls: results.performance.summary.totalCalls,
-        avgDuration: results.performance.summary.avgDuration,
+        // v2 names. These read avgDuration / totalExceptions, which the analyzer
+        // stopped emitting, so every MCP consumer received undefined.
+        avg_ns: results.performance.summary.avg_ns,
         totalMethods: results.performance.summary.totalMethods,
-        totalExceptions: results.performance.summary.totalExceptions
+        totalErrors: results.performance.summary.totalErrors
       },
       slowMethods: results.performance.slowMethods.slice(0, 5),
       bottlenecks: results.performance.bottlenecks.slice(0, 5),

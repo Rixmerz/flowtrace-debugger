@@ -67,12 +67,12 @@ class TableRenderer {
           <div class="class-name">${this.escapeHtml(className)}</div>
         </td>
         <td class="number">${method.callCount.toLocaleString()}</td>
-        <td class="number">${this.formatDuration(method.avgDuration)}</td>
-        <td class="number">${this.formatDuration(method.p95)}</td>
-        <td class="number">${this.formatDuration(method.p99)}</td>
+        <td class="number">${this.formatNs(method.avg_ns)}</td>
+        <td class="number">${this.formatNs(method.p95_ns)}</td>
+        <td class="number">${this.formatNs(method.p99_ns)}</td>
         <td class="number">
-          <span class="badge ${this.getBadgeClass(method.totalTime)}">
-            ${this.formatDuration(method.totalTime)}
+          <span class="badge ${this.getBadgeClass((method.total_ns || 0) / 1e6)}">
+            ${this.formatNs(method.total_ns)}
           </span>
         </td>
       `;
@@ -99,10 +99,10 @@ class TableRenderer {
           <div class="class-name">${this.escapeHtml(className)}</div>
         </td>
         <td class="number">${bottleneck.callCount.toLocaleString()}</td>
-        <td class="number">${this.formatDuration(bottleneck.avgDuration)}</td>
+        <td class="number">${this.formatNs(bottleneck.avg_ns)}</td>
         <td class="number">
-          <span class="badge ${this.getBadgeClass(bottleneck.totalTime)}">
-            ${this.formatDuration(bottleneck.totalTime)}
+          <span class="badge ${this.getBadgeClass((bottleneck.total_ns || 0) / 1e6)}">
+            ${this.formatNs(bottleneck.total_ns)}
           </span>
         </td>
         <td class="number">
@@ -129,7 +129,15 @@ class TableRenderer {
 
     errors.forEach(error => {
       const row = document.createElement('tr');
-      const errorRate = (error.exceptions / error.callCount) * 100;
+      // v2 field names: the analyzer's errorHotspots carry errors / totalCalls /
+      // errorRate. Reading exceptions / callCount yielded NaN% and rendered
+      // "undefined" in both number columns — so the errors table, which is the
+      // first place you look when tracing a failure, showed nothing usable.
+      const totalCalls = error.totalCalls ?? 0;
+      const errorCount = error.errors ?? 0;
+      const errorRate = typeof error.errorRate === 'number'
+        ? error.errorRate
+        : (totalCalls > 0 ? (errorCount / totalCalls) * 100 : 0);
       const className = this.formatClassName(error.class || error.className);
 
       row.innerHTML = `
@@ -137,9 +145,9 @@ class TableRenderer {
           <div class="method-name">${this.escapeHtml(error.method)}</div>
           <div class="class-name">${this.escapeHtml(className)}</div>
         </td>
-        <td class="number">${error.callCount.toLocaleString()}</td>
+        <td class="number">${totalCalls.toLocaleString()}</td>
         <td class="number" style="color: var(--error-color);">
-          <strong>${error.exceptions}</strong>
+          <strong>${errorCount}</strong>
         </td>
         <td class="number">
           <span class="badge badge-slow">${errorRate.toFixed(2)}%</span>

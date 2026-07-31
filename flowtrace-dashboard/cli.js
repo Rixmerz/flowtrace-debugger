@@ -8,6 +8,22 @@
 const tools = require('./mcp-tools');
 const path = require('path');
 
+/**
+ * Format a nanosecond duration as milliseconds.
+ *
+ * The analyzer emits v2 field names (avg_ns, total_ns) matching the schema's
+ * duration_ns, while this file still read the v1 names (avgDuration,
+ * totalExceptions). Those no longer exist, so every `.toFixed(2)` was called on
+ * undefined and `dashboard-cli analyze` crashed outright with
+ * "Cannot read properties of undefined (reading 'toFixed')" on any real v2 trace.
+ *
+ * @param {number} ns
+ * @returns {string} milliseconds to 2dp, or an em dash when absent
+ */
+function ms(ns) {
+  return typeof ns === 'number' && Number.isFinite(ns) ? (ns / 1e6).toFixed(2) : '—';
+}
+
 const command = process.argv[2];
 const filePath = process.argv[3];
 
@@ -56,18 +72,18 @@ async function main() {
           console.log('\n' + result.message);
           console.log('\n📊 Summary:');
           console.log(`   Total Calls: ${result.summary.totalCalls.toLocaleString()}`);
-          console.log(`   Avg Duration: ${result.summary.avgDuration.toFixed(2)}ms`);
+          console.log(`   Avg Duration: ${ms(result.summary.avg_ns)}ms`);
           console.log(`   Total Methods: ${result.summary.totalMethods}`);
-          console.log(`   Exceptions: ${result.summary.totalExceptions}`);
+          console.log(`   Exceptions: ${result.summary.totalErrors ?? 0}`);
 
           console.log('\n🐌 Top 5 Slow Methods:');
           result.slowMethods.forEach((method, i) => {
-            console.log(`   ${i + 1}. ${method.method} - ${method.avgDuration.toFixed(2)}ms avg`);
+            console.log(`   ${i + 1}. ${method.method} - ${ms(method.avg_ns)}ms avg`);
           });
 
           console.log('\n🔴 Top 5 Bottlenecks:');
           result.bottlenecks.forEach((bottleneck, i) => {
-            console.log(`   ${i + 1}. ${bottleneck.method} - Impact: ${bottleneck.impactScore.toFixed(0)}`);
+            console.log(`   ${i + 1}. ${bottleneck.method} - Impact: ${Math.round(bottleneck.impactScore ?? 0)}`);
           });
 
         } else {
@@ -88,10 +104,10 @@ async function main() {
           console.log('\n📊 Performance Summary:');
           const summary = analysis.performance.summary;
           console.log(`   Total Calls: ${summary.totalCalls.toLocaleString()}`);
-          console.log(`   Average Duration: ${summary.avgDuration.toFixed(2)}ms`);
+          console.log(`   Average Duration: ${ms(summary.avg_ns)}ms`);
           console.log(`   Total Methods: ${summary.totalMethods}`);
-          console.log(`   Total Exceptions: ${summary.totalExceptions}`);
-          console.log(`   Total Time: ${summary.totalTime.toFixed(2)}ms`);
+          console.log(`   Total Exceptions: ${summary.totalErrors ?? 0}`);
+          console.log(`   Total Time: ${ms(summary.total_ns)}ms`);
         } else {
           console.error(`❌ Error: ${analysis.error}`);
           process.exit(1);
@@ -111,10 +127,10 @@ async function main() {
         slowMethods.forEach((method, i) => {
           console.log(`${i + 1}. ${method.method}`);
           console.log(`   Calls: ${method.callCount.toLocaleString()}`);
-          console.log(`   Avg: ${method.avgDuration.toFixed(2)}ms`);
-          console.log(`   P95: ${method.p95.toFixed(2)}ms`);
-          console.log(`   P99: ${method.p99.toFixed(2)}ms`);
-          console.log(`   Total: ${method.totalTime.toFixed(2)}ms\n`);
+          console.log(`   Avg: ${ms(method.avg_ns)}ms`);
+          console.log(`   P95: ${ms(method.p95_ns)}ms`);
+          console.log(`   P99: ${ms(method.p99_ns)}ms`);
+          console.log(`   Total: ${ms(method.total_ns)}ms\n`);
         });
         break;
 
@@ -131,9 +147,9 @@ async function main() {
         bottlenecks.forEach((bottleneck, i) => {
           console.log(`${i + 1}. ${bottleneck.method}`);
           console.log(`   Call Count: ${bottleneck.callCount.toLocaleString()}`);
-          console.log(`   Avg Duration: ${bottleneck.avgDuration.toFixed(2)}ms`);
-          console.log(`   Total Time: ${bottleneck.totalTime.toFixed(2)}ms`);
-          console.log(`   Impact Score: ${bottleneck.impactScore.toFixed(0)}\n`);
+          console.log(`   Avg Duration: ${ms(bottleneck.avg_ns)}ms`);
+          console.log(`   Total Time: ${ms(bottleneck.total_ns)}ms`);
+          console.log(`   Impact Score: ${Math.round(bottleneck.impactScore ?? 0)}\n`);
         });
         break;
 
@@ -150,10 +166,15 @@ async function main() {
         } else {
           console.log(`\n❌ Error Hotspots (${errors.length} methods):\n`);
           errors.forEach((error, i) => {
-            const errorRate = (error.exceptionCount / error.callCount) * 100;
+            // v2 names: errorHotspots carry errors / totalCalls / errorRate.
+            const totalCalls = error.totalCalls ?? 0;
+            const errorCount = error.errors ?? 0;
+            const errorRate = typeof error.errorRate === 'number'
+              ? error.errorRate
+              : (totalCalls > 0 ? (errorCount / totalCalls) * 100 : 0);
             console.log(`${i + 1}. ${error.method}`);
-            console.log(`   Total Calls: ${error.callCount.toLocaleString()}`);
-            console.log(`   Exceptions: ${error.exceptionCount}`);
+            console.log(`   Total Calls: ${totalCalls.toLocaleString()}`);
+            console.log(`   Exceptions: ${errorCount}`);
             console.log(`   Error Rate: ${errorRate.toFixed(2)}%\n`);
           });
         }

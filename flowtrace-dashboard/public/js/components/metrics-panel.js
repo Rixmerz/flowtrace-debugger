@@ -20,15 +20,17 @@ class MetricsPanel {
     this.totalCallsEl.textContent = this.formatNumber(summary.totalCalls);
 
     // Average duration
-    this.avgDurationEl.textContent = this.formatDuration(summary.avgDuration);
+    this.avgDurationEl.textContent = this.formatNs(summary.avg_ns);
 
     // Total methods
     this.totalMethodsEl.textContent = this.formatNumber(summary.totalMethods);
 
     // Error rate
-    const errorRate = summary.totalCalls > 0
-      ? (summary.totalExceptions / summary.totalCalls) * 100
-      : 0;
+    // The analyzer already computes errorRate; recomputing it from a field that
+    // no longer exists (totalExceptions) produced NaN%.
+    const errorRate = typeof summary.errorRate === 'number'
+      ? summary.errorRate
+      : (summary.totalCalls > 0 ? ((summary.totalErrors || 0) / summary.totalCalls) * 100 : 0);
     this.errorRateEl.textContent = `${errorRate.toFixed(2)}%`;
   }
 
@@ -46,6 +48,24 @@ class MetricsPanel {
    * @param {number} ms
    * @returns {string}
    */
+
+  /**
+   * Format a nanosecond duration.
+   *
+   * The analyzer emits v2 field names — avg_ns, total_ns, p95_ns — matching the
+   * schema's duration_ns. This layer was still reading the v1 names
+   * (avgDuration, totalExceptions), which no longer exist: every duration
+   * rendered from `undefined`, and the dashboard CLI crashed outright with
+   * "Cannot read properties of undefined (reading 'toFixed')".
+   *
+   * Nanoseconds are converted here rather than at each call site, so adding a
+   * field cannot reintroduce a missing division.
+   */
+  formatNs(ns) {
+    if (typeof ns !== 'number' || !Number.isFinite(ns)) return '—';
+    return this.formatDuration(ns / 1e6);
+  }
+
   formatDuration(ms) {
     if (ms < 1) {
       return `${(ms * 1000).toFixed(2)}μs`;
