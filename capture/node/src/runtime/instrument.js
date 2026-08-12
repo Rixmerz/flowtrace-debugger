@@ -109,7 +109,10 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args) {
     thread: 'main',
     lang: 'node',
     module: module_,
-    class: cls,
+    // Plain (non-method) functions arrive as null, but the v2 schema types
+    // `class` as a required string — emitting null produced events that failed
+    // schema validation. Python's capture already uses "" for the same case.
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
@@ -150,7 +153,10 @@ export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, arg
     thread: 'main',
     lang: 'node',
     module: module_,
-    class: cls,
+    // Plain (non-method) functions arrive as null, but the v2 schema types
+    // `class` as a required string — emitting null produced events that failed
+    // schema validation. Python's capture already uses "" for the same case.
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
@@ -184,7 +190,10 @@ export function __ft_exit_error(ctx, module_, cls, method, visibility, paramName
     thread: 'main',
     lang: 'node',
     module: module_,
-    class: cls,
+    // Plain (non-method) functions arrive as null, but the v2 schema types
+    // `class` as a required string — emitting null produced events that failed
+    // schema validation. Python's capture already uses "" for the same case.
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),

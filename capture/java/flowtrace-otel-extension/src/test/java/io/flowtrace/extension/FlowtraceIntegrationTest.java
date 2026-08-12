@@ -55,15 +55,14 @@ class FlowtraceIntegrationTest {
 
         File otelAgentJar = new File(projectBase,
                 "target/dependency/opentelemetry-javaagent.jar");
-        assumeTrue(otelAgentJar.exists(),
+        requireArtifact(otelAgentJar.exists(),
                 "OTel agent jar not present at " + otelAgentJar.getAbsolutePath()
-                        + " — run 'mvn process-test-resources' with network access first. "
-                        + "Skipping integration test.");
+                        + " — run 'mvn process-test-resources' with network access first.");
 
-        File extensionJar = new File(projectBase,
-                "target/flowtrace-otel-extension-2.0.0-SNAPSHOT.jar");
-        assumeTrue(extensionJar.exists(),
-                "Extension jar not built — run 'mvn package' first. Skipping integration test.");
+        File extensionJar = findExtensionJar(projectBase);
+        requireArtifact(extensionJar != null,
+                "Extension jar not built under " + new File(projectBase, "target")
+                        + " — run 'mvn package' first.");
 
         // Calculator is compiled to target/test-classes during test-compile phase.
         File testClasses = new File(projectBase, "target/test-classes");
@@ -204,6 +203,39 @@ class FlowtraceIntegrationTest {
     }
 
     // ---- helpers ----
+
+    /**
+     * Locate the shaded extension jar without hardcoding a version.
+     *
+     * <p>The previous form looked for a literal
+     * {@code flowtrace-otel-extension-2.0.0-SNAPSHOT.jar}. When the pom moved to
+     * the {@code 2.0.0} release the file became
+     * {@code flowtrace-otel-extension-2.0.0.jar}, the lookup missed, and the whole
+     * integration test skipped itself silently on every run.
+     */
+    private static File findExtensionJar(File projectBase) {
+        File[] candidates = new File(projectBase, "target").listFiles((dir, name) ->
+                name.startsWith("flowtrace-otel-extension-")
+                        && name.endsWith(".jar")
+                        // shade leaves the pre-shading jar behind as original-*.jar
+                        && !name.startsWith("original-"));
+        return (candidates == null || candidates.length == 0) ? null : candidates[0];
+    }
+
+    /**
+     * Skip when a build artifact is genuinely unavailable (offline sandbox), but
+     * hard-fail when {@code -Dflowtrace.it.required=true} is set.
+     *
+     * <p>CI sets that flag: a self-skipping integration test that nobody notices
+     * is worse than no test, because it reports green.
+     */
+    private static void requireArtifact(boolean present, String message) {
+        if (Boolean.getBoolean("flowtrace.it.required")) {
+            assertTrue(present, message + " (flowtrace.it.required=true)");
+        } else {
+            assumeTrue(present, message + " Skipping integration test.");
+        }
+    }
 
     private static void assertFieldPresent(JsonNode node, String field) {
         assertNotNull(node.get(field), "Missing required field '" + field + "' in: " + node);
