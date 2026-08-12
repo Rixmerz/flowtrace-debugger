@@ -14,9 +14,14 @@
   <description>JSONL v2 emitter skeleton for FlowTrace OTel Java capture agent</description>
 
   <properties>
+    <!-- The bytecode target is the FLOOR of what this agent can instrument,
+         not the JDK we develop on. An agent compiled to 21 cannot be loaded
+         into a Java 17 or 11 application — and the older the app, the more it
+         needs tracing. So the target stays low deliberately and the CI matrix
+         goes wide instead: see the `java-tests` job, which runs the suite on
+         17, 21 and 25. -->
     <java.version>11</java.version>
-    <maven.compiler.source>11</maven.compiler.source>
-    <maven.compiler.target>11</maven.compiler.target>
+    <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <otel.version>1.61.0</otel.version>
     <otel.javaagent.version>2.27.0-alpha</otel.javaagent.version>
@@ -86,8 +91,14 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.13.0</version>
         <configuration>
-          <source>11</source>
-          <target>11</target>
+          <!-- `release`, not source/target. With source/target, javac still
+               links against the JDK running the build, so code calling an API
+               added after 11 (Stream.toList, String.formatted, ...) compiles
+               clean and then throws NoSuchMethodError inside a customer's
+               Java 11 JVM. `release` compiles against the Java 11 API
+               signatures, which makes the compatibility claim enforced rather
+               than merely stated. -->
+          <release>${java.version}</release>
         </configuration>
       </plugin>
 
