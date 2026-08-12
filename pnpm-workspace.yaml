@@ -1,0 +1,16 @@
+# FlowTrace v2 workspace.
+#
+# Every JS/TS subproject that ships as part of the product lives here and
+# resolves through a single root pnpm-lock.yaml. Before this file existed,
+# flowtrace-cli and mcp-server each carried BOTH a package-lock.json and a
+# pnpm-lock.yaml — two managers resolving the same tree, drifting silently.
+#
+# examples/ is deliberately excluded: each demo is meant to be copied out and
+# run standalone against a published FlowTrace, so it keeps its own dependency
+# graph rather than resolving through the repo's hoisted store.
+packages:
+  - capture/node
+  - flowtrace-cli
+  - flowtrace-dashboard
+  - mcp-server
+  - scripts
