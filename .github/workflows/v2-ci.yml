@@ -12,7 +12,6 @@ on:
     branches: [main, v2/main]
 
 env:
-  PNPM_VERSION: '9'
   NODE_VERSION: '20'
 
 jobs:
@@ -24,9 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose — pnpm/action-setup reads the pinned
+      # version from the root package.json "packageManager" field, and
+      # specifying both is a hard error (ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
 
       - uses: actions/setup-node@v4
         with:
@@ -106,9 +106,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose — pnpm/action-setup reads the pinned
+      # version from the root package.json "packageManager" field, and
+      # specifying both is a hard error (ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
 
       - uses: actions/setup-node@v4
         with:
@@ -136,9 +137,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose — pnpm/action-setup reads the pinned
+      # version from the root package.json "packageManager" field, and
+      # specifying both is a hard error (ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
 
       - uses: actions/setup-node@v4
         with:
