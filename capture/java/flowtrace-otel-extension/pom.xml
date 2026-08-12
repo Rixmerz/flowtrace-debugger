@@ -25,8 +25,16 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <otel.version>1.61.0</otel.version>
     <otel.javaagent.version>2.27.0-alpha</otel.javaagent.version>
-    <!-- Standalone fat-jar version (not alpha) for the -javaagent flag -->
-    <otel.javaagent.fatjar.version>2.11.0</otel.javaagent.fatjar.version>
+    <!-- Standalone fat-jar (not alpha) for the -javaagent flag. This is the
+         agent the integration test actually runs, so it decides which JDKs
+         FlowTrace can instrument at all: the agent rewrites bytecode, and one
+         that predates a JDK does not recognize its class file version.
+
+         It must also be >= otel.javaagent.version above. It sat at 2.11.0
+         against a 2.27.0-alpha extension API — the unsafe direction, since the
+         extension compiles against methods the running agent may not have.
+         Newer agent than compile-time API is the supported upgrade path. -->
+    <otel.javaagent.fatjar.version>2.30.0</otel.javaagent.fatjar.version>
     <bytebuddy.version>1.15.10</bytebuddy.version>
     <jackson.version>2.18.0</jackson.version>
     <junit.version>5.11.0</junit.version>

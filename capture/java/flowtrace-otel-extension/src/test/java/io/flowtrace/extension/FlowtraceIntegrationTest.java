@@ -80,7 +80,14 @@ class FlowtraceIntegrationTest {
         cmd.add("-Dotel.traces.exporter=none");
         cmd.add("-Dotel.metrics.exporter=none");
         cmd.add("-Dotel.logs.exporter=none");
-        cmd.add("-Dotel.javaagent.logging=none");
+        // Agent logging stays ON. It was set to `none`, which silenced the one
+        // component able to explain a silent no-op: when the agent cannot
+        // instrument (an unsupported class file version, a bad extension), it
+        // says so on stderr and then exits 0 having done nothing. With logging
+        // off, that surfaced only as "flowtrace.jsonl was not created" — a
+        // symptom indistinguishable from a dozen unrelated causes.
+        // stderr is captured to a file and printed only on failure, so a
+        // passing run stays quiet.
         cmd.add("-Dflowtrace.package-prefix=com.example.golden");
         cmd.add("-Dflowtrace.output=" + outputJsonl.toAbsolutePath());
         cmd.add("-cp");
@@ -90,24 +97,35 @@ class FlowtraceIntegrationTest {
         cmd.add("io.flowtrace.runner.CalcRunner");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(false);
+        // Redirect to a file rather than reading the pipe after waitFor(). With
+        // agent logging enabled the child can outrun the ~64 KB pipe buffer and
+        // block on write while we block on waitFor — a deadlock that would show
+        // up as the 60 s timeout rather than as anything diagnosable.
+        File stderrFile = tempDir.resolve("child-stderr.log").toFile();
+        pb.redirectError(stderrFile);
         pb.environment().put("OTEL_TRACES_EXPORTER", "none");
         pb.environment().put("OTEL_METRICS_EXPORTER", "none");
         pb.environment().put("OTEL_LOGS_EXPORTER", "none");
 
         Process process = pb.start();
         boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        assertTrue(finished, "Child JVM did not finish within 60 s");
+        if (!finished) {
+            process.destroyForcibly();
+        }
+        assertTrue(finished, "Child JVM did not finish within 60 s." + diagnostics(stderrFile));
 
-        // Capture stderr for diagnostics on failure.
-        String stderr = new String(process.getErrorStream().readAllBytes());
         int exitCode = process.exitValue();
         assertEquals(0, exitCode,
-                "Child JVM exited with code " + exitCode + ". stderr:\n" + stderr);
+                "Child JVM exited with code " + exitCode + "." + diagnostics(stderrFile));
 
         // --- parse and validate JSONL ---
+        // The agent can leave the JVM perfectly healthy (exit 0) while having
+        // instrumented nothing, so this assertion carries the child's stderr:
+        // it is the branch where the reason lives.
         assertTrue(outputJsonl.toFile().exists(),
-                "flowtrace.jsonl was not created at " + outputJsonl);
+                "flowtrace.jsonl was not created at " + outputJsonl
+                        + ". The child JVM ran and exited cleanly, so the agent "
+                        + "loaded but instrumented nothing." + diagnostics(stderrFile));
 
         List<String> lines = Files.readAllLines(outputJsonl);
         // Filter blank lines.
@@ -235,6 +253,38 @@ class FlowtraceIntegrationTest {
         } else {
             assumeTrue(present, message + " Skipping integration test.");
         }
+    }
+
+    /**
+     * Renders the child JVM's stderr for a failure message, including the JDK
+     * this ran on.
+     *
+     * <p>The JDK matters enough to always print: this test spawns a child on
+     * whichever JVM runs the build, and the agent's ability to instrument
+     * depends on that version. A failure that reads "instrumented nothing" is
+     * ambiguous until you know it happened on, say, 25 and not on 17.
+     */
+    private static String diagnostics(File stderrFile) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n  JDK: ").append(System.getProperty("java.version"))
+          .append(" (").append(System.getProperty("java.vendor")).append(")");
+        sb.append("\n  child stderr");
+        if (!stderrFile.exists()) {
+            sb.append(": <no file produced>");
+            return sb.toString();
+        }
+        String content;
+        try {
+            content = new String(Files.readAllBytes(stderrFile.toPath())).trim();
+        } catch (IOException e) {
+            return sb.append(": <unreadable: ").append(e.getMessage()).append(">").toString();
+        }
+        if (content.isEmpty()) {
+            sb.append(": <empty>");
+        } else {
+            sb.append(":\n").append(content);
+        }
+        return sb.toString();
     }
 
     private static void assertFieldPresent(JsonNode node, String field) {
