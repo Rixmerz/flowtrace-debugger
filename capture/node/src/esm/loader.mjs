@@ -27,7 +27,18 @@ async function getCache() {
   return _cache;
 }
 
-const RUNTIME_SPECIFIER = '@flowtrace/capture-node/runtime/instrument';
+// Absolute file URL to the runtime helpers, mirroring what the CJS hook does.
+// A bare specifier ('@flowtrace/capture-node/runtime/instrument') only resolves
+// when the traced app happens to have the package in its own node_modules —
+// which a traced app generally does not. Using the absolute URL makes the
+// injected import resolvable from anywhere on disk.
+const RUNTIME_SPECIFIER = new URL('../runtime/instrument.js', import.meta.url).href;
+
+/** Node's native type-stripping formats -> the plain format swc output maps to. */
+const TS_FORMATS = {
+  'module-typescript': 'module',
+  'commonjs-typescript': 'commonjs',
+};
 
 /**
  * Returns true if the URL should be instrumented.
@@ -55,7 +66,12 @@ export async function load(url, context, nextLoad) {
 
   if (!shouldInstrument(url)) return result;
 
-  const format = result.format;
+  // Node >= 22.18 strips TypeScript natively and reports the source format as
+  // 'module-typescript' / 'commonjs-typescript'. Rejecting those made the whole
+  // TS capture path a silent no-op on modern Node: zero events, zero errors.
+  // swc already strips the types for us, so the emitted code is plain JS and we
+  // hand Node back the corresponding non-TS format.
+  const format = TS_FORMATS[result.format] ?? result.format;
   if (format !== 'module' && format !== 'commonjs') return result;
 
   let source = result.source;
@@ -74,7 +90,11 @@ export async function load(url, context, nextLoad) {
     const cache = await getCache();
     const transformFn = await getTransform();
 
-    const key = cache.cacheKey(source);
+    const key = cache.cacheKey(source, {
+      filename,
+      moduleType: 'esm',
+      runtimePath: RUNTIME_SPECIFIER,
+    });
     let code = cache.cacheGet(key);
     if (!code) {
       const out = transformFn(source, {

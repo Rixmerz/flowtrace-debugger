@@ -30,12 +30,25 @@ function ensureCacheDir() {
 }
 
 /**
- * Build a cache key (sha256 hex) from source + version fingerprints.
+ * Build a cache key (sha256 hex) from source + version fingerprints + every
+ * transform input that ends up baked into the emitted code.
+ *
+ * Keying on source alone is not enough, because the transform output also
+ * depends on:
+ *   - `moduleType`: ESM emits an `import`, CJS emits a `require()`. Sharing a
+ *     key across both can serve a `require()` into an ESM graph.
+ *   - `runtimePath`: the resolved specifier is written into the injected import.
+ *   - `filename`:  the `module` field of every event is derived from it, so two
+ *     identical files at different paths must not share an entry.
  *
  * @param {string} source
+ * @param {object} [opts]
+ * @param {string} [opts.filename]
+ * @param {string} [opts.moduleType]
+ * @param {string} [opts.runtimePath]
  * @returns {string}
  */
-export function cacheKey(source) {
+export function cacheKey(source, opts = {}) {
   return createHash('sha256')
     .update(source)
     .update('\x00')
@@ -44,6 +57,12 @@ export function cacheKey(source) {
     .update(NODE_VERSION)
     .update('\x00')
     .update(BABEL_VERSION)
+    .update('\x00')
+    .update(opts.filename ?? '')
+    .update('\x00')
+    .update(opts.moduleType ?? '')
+    .update('\x00')
+    .update(opts.runtimePath ?? '')
     .digest('hex');
 }
 

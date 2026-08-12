@@ -60,7 +60,11 @@ export function install() {
 
     let transformed;
     try {
-      const key = cacheKey(content);
+      const key = cacheKey(content, {
+        filename,
+        moduleType: 'cjs',
+        runtimePath: RUNTIME_PATH,
+      });
       let code = cacheGet(key);
       if (!code) {
         const result = transform(content, {

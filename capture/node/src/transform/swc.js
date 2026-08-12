@@ -307,7 +307,11 @@ export function transform(source, opts = {}) {
           },
           target: 'es2022',
         },
-        module: { type: 'commonjs' },
+        // Only downlevel modules on the CJS path. Hardcoding 'commonjs' here
+        // rewrote ESM TypeScript into `exports.*` assignments, which then blew
+        // up with "exports is not defined in ES module scope". Omitting the
+        // option leaves the original import/export syntax untouched.
+        ...(opts.moduleType === 'esm' ? {} : { module: { type: 'commonjs' } }),
         sourceMaps: false,
       });
       jsSource = stripped.code;
