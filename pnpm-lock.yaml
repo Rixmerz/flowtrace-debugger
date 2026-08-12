@@ -26,6 +26,12 @@ importers:
         specifier: ^1.7.0
         version: 1.15.47
 
+  examples/golden/express:
+    dependencies:
+      express:
+        specifier: ^4.21.2
+        version: 4.22.2
+
   flowtrace-cli:
     dependencies:
       chalk:

@@ -170,7 +170,7 @@ jobs:
       - name: Every fixture must be tracked by git
         run: |
           missing=0
-          for dir in java node ts python truncation/java truncation/node truncation/python; do
+          for dir in java node ts python express truncation/java truncation/node truncation/python; do
             f="examples/golden/$dir/expected.jsonl"
             if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
               echo "::error file=$f::$f is not tracked by git (check .gitignore)"

@@ -5,8 +5,8 @@
  */
 
 import { fileURLToPath } from 'node:url';
-import { extname, dirname, join, parse as parsePath } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+import { extname } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 // Dynamic import of transform and cache so the loader module itself is lean.
 // These are loaded lazily on first instrumented file.
@@ -51,32 +51,25 @@ function isTypeScript(path) {
 }
 
 /**
- * Decide module format for a TypeScript file that Node itself refused to load.
+ * Module format for a TypeScript file that Node itself refused to load
+ * (Node < 22.18, no native type stripping, ERR_UNKNOWN_FILE_EXTENSION).
  *
- * Node < 22.18 has no native type stripping and throws ERR_UNKNOWN_FILE_EXTENSION
- * for `.ts` before any format is assigned, so we have to apply Node's own rule
- * ourselves: explicit .mts/.cts win, otherwise the nearest package.json "type".
+ * Always 'module', deliberately — this is NOT Node's nearest-package.json rule.
+ *
+ * Applying that rule first looked more correct, but a repo whose root
+ * package.json has no "type" resolves to 'commonjs', and translating our
+ * rewritten file as CJS *inside the ESM pipeline* then fails with
+ * ERR_VM_MODULE_LINK_FAILURE ("request for './context.js' is not in cache"):
+ * the injected `require()` points at runtime/instrument.js, which is ESM, and
+ * its own imports are not in the ESM graph at that point. Emitting ESM keeps
+ * the injected import and the helper on the same module system.
+ *
+ * Known limitation: a .ts/.cts file written in CommonJS syntax (module.exports)
+ * is not supported on Node < 22.18. It was already broken before this — just
+ * with a different error — and Node >= 22.18 handles it natively.
  */
-function inferFormat(path) {
-  const ext = extname(path);
-  if (ext === '.mts') return 'module';
-  if (ext === '.cts') return 'commonjs';
-
-  let dir = dirname(path);
-  const { root } = parsePath(path);
-  while (true) {
-    const pkgPath = join(dir, 'package.json');
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-        return pkg.type === 'module' ? 'module' : 'commonjs';
-      } catch {
-        return 'commonjs';
-      }
-    }
-    if (dir === root) return 'commonjs';
-    dir = dirname(dir);
-  }
+function fallbackFormat() {
+  return 'module';
 }
 
 /**
@@ -123,7 +116,7 @@ export async function load(url, context, nextLoad) {
 
   if (result === null) {
     // TypeScript fallback path: we own reading and typing the module.
-    format = inferFormat(fileURLToPath(url));
+    format = fallbackFormat();
     source = readFileSync(fileURLToPath(url), 'utf8');
   } else {
     // Node >= 22.18 strips TypeScript natively and reports the source format as

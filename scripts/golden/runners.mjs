@@ -40,7 +40,7 @@ function extensionJar() {
 
 // ── runner builders ──────────────────────────────────────────────
 
-function nodeRunner({ id, script, maxArgLength }) {
+function nodeRunner({ id, script, maxArgLength, prefix = '', requiresDeps = false }) {
   const dir = join(GOLDEN_ROOT, id);
   return {
     id,
@@ -48,6 +48,9 @@ function nodeRunner({ id, script, maxArgLength }) {
     available() {
       if (!existsSync(join(dir, script))) return { ok: false, reason: `${script} missing` };
       if (!existsSync(NODE_BOOTSTRAP)) return { ok: false, reason: 'capture/node bootstrap missing' };
+      if (requiresDeps && !existsSync(join(dir, 'node_modules'))) {
+        return { ok: false, reason: 'dependencies not installed — run `pnpm install` at the repo root' };
+      }
       return { ok: true };
     },
     run(outPath) {
@@ -58,7 +61,7 @@ function nodeRunner({ id, script, maxArgLength }) {
         env: {
           ...process.env,
           FLOWTRACE_OUTPUT: outPath,
-          FLOWTRACE_PACKAGE_PREFIX: '',
+          FLOWTRACE_PACKAGE_PREFIX: prefix,
           ...(maxArgLength ? { FLOWTRACE_MAX_ARG_LENGTH: String(maxArgLength) } : {}),
           NODE_OPTIONS: '',
         },
@@ -194,6 +197,15 @@ export const FIXTURES = [
   pythonRunner({ id: 'python', script: 'calculator.py', prefix: 'calculator' }),
   nodeRunner({ id: 'node', script: 'calculator.js' }),
   nodeRunner({ id: 'ts', script: 'calculator.ts' }),
+  // Express: user code inside a real framework request cycle. The prefix scopes
+  // instrumentation to app.js so neither the harness nor Express's own
+  // internals enter the trace, keeping the event sequence deterministic.
+  nodeRunner({
+    id: 'express',
+    script: 'run.js',
+    prefix: 'app.js',
+    requiresDeps: true,
+  }),
   javaGolden,
   pythonRunner({
     id: 'truncation/python',

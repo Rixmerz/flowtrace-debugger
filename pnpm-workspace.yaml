@@ -5,12 +5,16 @@
 # flowtrace-cli and mcp-server each carried BOTH a package-lock.json and a
 # pnpm-lock.yaml — two managers resolving the same tree, drifting silently.
 #
-# examples/ is deliberately excluded: each demo is meant to be copied out and
-# run standalone against a published FlowTrace, so it keeps its own dependency
-# graph rather than resolving through the repo's hoisted store.
+# The examples/ demos are deliberately excluded: each is meant to be copied out
+# and run standalone against a published FlowTrace, so it keeps its own
+# dependency graph rather than resolving through the repo's hoisted store.
+# examples/golden/* is the exception — those are test fixtures, not demos, and
+# the ones with real dependencies (express) must resolve like any other package
+# in the repo so CI can install them from the single root lockfile.
 packages:
   - capture/node
   - flowtrace-cli
   - flowtrace-dashboard
   - mcp-server
   - scripts
+  - examples/golden/express

@@ -83,36 +83,35 @@ test('recovers when nextLoad throws ERR_UNKNOWN_FILE_EXTENSION (Node < 22.18)', 
   }
 });
 
-test('CommonJS format emits require() with a filesystem path, not a file:// URL', async () => {
-  const { dir, file, url } = scratchTs({ pkgType: 'commonjs' });
+test('a nextLoad-reported commonjs format emits require() with a filesystem path', async () => {
+  // Node >= 22.18 path: the format comes from nextLoad, not from us. require()
+  // cannot resolve a file:// URL, so only `import` may use the URL form.
+  const { dir, file, url } = scratchTs();
   try {
     await withPrefix(file, async () => {
-      const nextLoad = async () => {
-        const err = new Error('Unknown file extension ".ts"');
-        err.code = 'ERR_UNKNOWN_FILE_EXTENSION';
-        throw err;
-      };
+      const nextLoad = async () => ({ format: 'commonjs-typescript', source: TS_SOURCE });
       const result = await load(url, {}, nextLoad);
 
-      assert.equal(result.format, 'commonjs');
-      // require() cannot resolve a file:// URL — this is the whole point.
-      assert.doesNotMatch(result.source, /require\(["']file:\/\//);
+      assert.equal(result.format, 'commonjs', 'commonjs-typescript must map to commonjs');
       assert.match(result.source, /require\(/, 'CJS output must use require');
+      assert.doesNotMatch(
+        result.source,
+        /require\(["']file:\/\//,
+        'require() cannot resolve a file:// URL'
+      );
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('.mts is module and .cts is commonjs regardless of package.json', async () => {
+test('the TypeScript fallback always emits ESM, even under type=commonjs', async () => {
+  // Deliberate: on the fallback path the injected import must stay on the same
+  // module system as runtime/instrument.js, which is ESM. Emitting commonjs
+  // here fails with ERR_VM_MODULE_LINK_FAILURE inside Node's ESM pipeline.
   const dir = mkdtempSync(join(tmpdir(), 'ft-loader-ext-'));
   try {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'commonjs' }), 'utf8');
-
-    const mtsFile = join(dir, 'a.mts');
-    writeFileSync(mtsFile, TS_SOURCE, 'utf8');
-    const ctsFile = join(dir, 'b.cts');
-    writeFileSync(ctsFile, TS_SOURCE, 'utf8');
 
     const throwing = async () => {
       const err = new Error('Unknown file extension');
@@ -120,13 +119,16 @@ test('.mts is module and .cts is commonjs regardless of package.json', async () 
       throw err;
     };
 
-    await withPrefix(dir, async () => {
-      const mts = await load(pathToFileURL(mtsFile).href, {}, throwing);
-      assert.equal(mts.format, 'module', '.mts must override package.json type');
+    for (const name of ['a.ts', 'b.mts', 'c.cts']) {
+      const filePath = join(dir, name);
+      writeFileSync(filePath, TS_SOURCE, 'utf8');
 
-      const cts = await load(pathToFileURL(ctsFile).href, {}, throwing);
-      assert.equal(cts.format, 'commonjs', '.cts must be commonjs');
-    });
+      await withPrefix(dir, async () => {
+        const result = await load(pathToFileURL(filePath).href, {}, throwing);
+        assert.equal(result.format, 'module', `${name} must fall back to module`);
+        assert.match(result.source, /^import /m, `${name} must use an ESM import`);
+      });
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
