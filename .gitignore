@@ -12,7 +12,6 @@ buildNumber.properties
 
 # Java
 *.class
-*.log
 *.jar
 *.war
 *.nar
@@ -22,10 +21,37 @@ buildNumber.properties
 *.rar
 hs_err_pid*
 
-# FlowTrace logs
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.venv/
+venv/
+build/
+dist/
+!mcp-server/dist/server.bundle.js
+
+# Node
+node_modules/
+
+# Build output (except bundled MCP server)
+mcp-server/dist/
+
+# Logs
+*.log
+
+# FlowTrace runtime output.
+# NOTE: scoped deliberately — a blanket `*.jsonl` also swallowed
+# examples/golden/**/expected.jsonl, which is why the golden fixtures
+# could never be committed and `make validate-schema` validated nothing.
 flowtrace.jsonl
 flowtrace-*.jsonl
-*.jsonl
+**/flowtrace.jsonl
+**/flowtrace-*.jsonl
 
 # IDE
 .idea/
@@ -34,7 +60,6 @@ flowtrace-*.jsonl
 *.swp
 *.swo
 *~
-.DS_Store
 
 # Eclipse
 .classpath
@@ -47,28 +72,6 @@ nbbuild/
 nbdist/
 .nb-gradle/
 
-# Build output (except bundled MCP server)
-mcp-server/dist/
-!mcp-server/dist/server.bundle.js
-
-# Node modules
-node_modules/
-flowtrace-cli/node_modules/
-
-# Build artifacts
-*.jar
-target/
-
-# Logs
-*.log
-flowtrace.jsonl
-
 # OS files
 .DS_Store
 Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
