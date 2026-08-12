@@ -82,13 +82,7 @@ ESTRATEGIAS POR TIPO DE BUG:
 
 ### Para debug [path]:
 
-Activa el workflow graph para debugging estructurado:
-
-```
-graph_activate("debug-graph")
-```
-
-El workflow guia paso a paso:
+Sigue estas fases en orden, sin saltar ninguna:
 1. Entender el problema (read-only + tests)
 2. Reproducir el bug ejecutando tests
 3. Clasificar tipo de bug y seleccionar estrategia
@@ -147,17 +141,14 @@ Detecta test framework y ejecuta tests:
 
 ## Acceso a FlowTrace
 
-FlowTrace NO es un MCP directo del agente. Se accede a traves del proxy `execute_mcp_tool` del jig:
+FlowTrace se instala como plugin de Claude Code (ver `plugin/`), que trae su
+MCP server incluido. Las tools quedan disponibles directamente:
 
-```
-execute_mcp_tool(
-  mcp_name="flowtrace",
-  tool_name="flowtrace_detect",
-  arguments={"projectPath": "/path/to/project"}
-)
-```
+- `log.open` / `log.search` / `log.aggregate` / `log.schema`
+- `trace.tree` / `trace.find_error` / `trace.private_calls` / `trace.diff`
 
-Los nombres de tools usan underscores: `flowtrace_detect`, `flowtrace_init`, `log_open`, `log_search`, `dashboard_bottlenecks`, etc.
+Sin el plugin instalado, `flowtrace.jsonl` es JSONL plano: se lee con Read,
+Grep y `./analyze-logs.sh`.
 
 ## Notas
 

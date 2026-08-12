@@ -127,7 +127,16 @@ Express server in `server/server.js` exposing `/api/*` to the static `public/` U
 
 ## Pre-existing context to honor
 
-- `.claude/rules/` (loaded automatically) contains: `autonomous-strategy.md`, `commit-discipline.md`, `jig-methodology.md`, `quality-feedback.md`, `security-awareness.md`, plus per-language rules (`java.md`, `python.md`, `go.md`, `rust.md`, `typescript.md`, `jsbackend.md`).
-- `.claude/agents/` contains 14 deployed agents (orchestrator, debugger, reviewer, tester, fixer, backend, frontend, architect, codebase-analyst, mcp, mcp-developer, git-snapshots, product-analyzer, workflow-executor) with all language pattern skills injected.
-- `.mcp.json` points exclusively to jig — discover other MCPs via `proxy_tools_search`.
+- `.claude/rules/` (loaded automatically) contains: `autonomous-strategy.md`, `commit-discipline.md`, `security-awareness.md`, plus per-language rules (`java.md`, `python.md`, `go.md`, `rust.md`, `typescript.md`, `jsbackend.md`, `qa.md`).
+- `.claude/skills/` holds the language pattern skills plus `debug`, `testing` and `validation`.
+- `.claude/commands/` has `status` (repo health check).
+- `plugin/` is the distributable Claude Code plugin — manifest, skill, subagent and the bundled MCP server. `.claude-plugin/marketplace.json` at the root makes this repo installable as a marketplace.
 - `CONTRIBUTING.md`, `ROADMAP.md`, `IMPLEMENTATION_COMPLETE.md`, `FLOWTRACE_TOOLS_ADDED.md`, `BROWSER_AGENT_README.md`, `ACTIVATION_GUIDE.md`, `QUICK_START.md`, `TRUNCATION_SYSTEM.md` — read these for deeper context on subsystems before large changes.
+
+**No jig.** This repo was previously scaffolded by jig (an orchestrator project,
+now obsolete) which installed a hook pipeline, 14 subagents, workflow graphs and
+an MCP entry. All of it has been removed. Every hook was invoked through a
+hardcoded interpreter path (`/home/rixmerz/.local/share/uv/tools/jig-mcp/bin/python3`)
+that exists on no other machine, so the pipeline failed on every tool call for
+every other contributor. Do not reintroduce jig, DCC (`cube_*`), graph workflows
+(`graph_*`) or `execute_mcp_tool` proxying.

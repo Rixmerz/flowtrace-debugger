@@ -2,7 +2,11 @@
 
 > Always apply these security checks when writing or reviewing code.
 
-Rules for proactive security during development. jig delegates security analysis to the configured code-analysis provider via `get_provider()` — when this rule mentions "ask the provider", call the corresponding Protocol method (e.g. `get_security_findings`, `get_blast_radius`). Specific tool names are an implementation detail of whichever backend is installed.
+Rules for proactive security during development. Where this rule says "ask the
+provider", use whatever security analysis is actually wired up in the session
+(a scanner, a security-review skill, or your own reading of the code). There is
+no built-in provider in this repo — absence of findings is not evidence of
+safety, so lean on the manual checks below.
 
 ## Before modifying high-risk files
 

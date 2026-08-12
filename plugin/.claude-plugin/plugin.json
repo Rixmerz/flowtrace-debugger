@@ -1,0 +1,23 @@
+{
+  "name": "flowtrace",
+  "description": "Trace what your code actually did. Instruments Java, Python, Node and TypeScript without touching the source, then reads the resulting flowtrace.jsonl to answer where a call came from, what it returned, and where the time went.",
+  "version": "2.0.0",
+  "author": {
+    "name": "Juan Pablo Diaz",
+    "email": "jpablo@rixmerz.dev",
+    "url": "https://github.com/Rixmerz"
+  },
+  "homepage": "https://github.com/Rixmerz/flowtrace-debugger",
+  "repository": "https://github.com/Rixmerz/flowtrace-debugger",
+  "license": "MIT",
+  "keywords": [
+    "tracing",
+    "debugging",
+    "observability",
+    "java",
+    "python",
+    "nodejs",
+    "typescript"
+  ],
+  "mcpServers": "./.mcp.json"
+}
