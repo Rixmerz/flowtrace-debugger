@@ -29,14 +29,23 @@ subagent and commands, which the MCP server alone could not provide: an MCP
 server exposes tools, but it cannot teach a model when to reach for them or how
 to read what comes back.
 
-## Build requirement
+## No build step
 
-The bundled MCP server runs from `mcp-server/dist/server.js`, which is compiled
-output. From the repo root:
+Installing this plugin requires nothing but the copy. `.mcp.json` points at
+`mcp/server.bundle.js` — a committed, single-file esbuild bundle with every
+dependency inlined, so a bare `node` runs it with no `node_modules` present.
+
+That is a deliberate constraint, not a convenience: a plugin install copies a
+directory and never runs a build, so anything reached through `../`, left
+gitignored, or still expecting its dependencies to be resolvable is simply
+absent on the user's machine.
+
+Contributors changing `mcp-server/src` must rebuild the bundle:
 
 ```bash
-make build-mcp
+make bundle-mcp     # rebuild plugin/mcp/server.bundle.js
+make check-bundle   # verify it is current and boots in an empty directory
 ```
 
-Shipping a prebuilt bundle so end users need no build step is still open —
-`.gitignore` already reserves `mcp-server/dist/server.bundle.js` for it.
+CI runs `check-bundle` on every PR, so a stale bundle fails the build rather
+than shipping.

@@ -5,7 +5,8 @@
 
 .PHONY: build test bench validate-schema check-golden gen-golden \
         build-java test-java build-python test-python build-node test-node \
-        build-mcp test-mcp test-dashboard test-cli clean help
+        build-mcp test-mcp test-dashboard test-cli bundle-mcp check-bundle \
+        clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
@@ -14,6 +15,8 @@ help:
 	@echo "  make build-python     Install capture/python flowtrace-runtime in editable mode"
 	@echo "  make build-node       Install capture/node dependencies"
 	@echo "  make build-mcp        Install + compile mcp-server (tsc -> dist/)"
+	@echo "  make bundle-mcp       Rebuild plugin/mcp/server.bundle.js from mcp-server/src"
+	@echo "  make check-bundle     Verify the plugin bundle is current and boots standalone"
 	@echo "  make test             Full suite: schema + golden + java + python + node + mcp + dashboard + cli"
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make test-python      Run pytest for the Python capture module"
@@ -49,7 +52,7 @@ gen-golden:
 
 # Top-level test aggregator. Every subproject that has tests runs here, so
 # `make test` and CI cover the same ground.
-test: validate-schema check-golden test-java test-python test-node test-mcp test-dashboard test-cli
+test: validate-schema check-golden test-java test-python test-node test-mcp test-dashboard test-cli check-bundle
 	@echo "==> test: all suites passed"
 
 # Java capture module
@@ -93,6 +96,22 @@ build-mcp:
 test-mcp: build-mcp
 	@echo "==> test-mcp: @flowtrace/mcp-server"
 	@cd mcp-server && node test/test-trace-tools.mjs
+
+# The MCP server the *plugin* runs is a committed single-file bundle, because a
+# Claude Code plugin install copies files and never builds. Run this after
+# touching mcp-server/src, or CI's check-bundle job will fail.
+bundle-mcp:
+	@echo "==> bundle-mcp: plugin/mcp/server.bundle.js"
+	@cd mcp-server && pnpm install --silent && pnpm run bundle
+
+# Fails when the committed bundle no longer matches mcp-server/src. Without
+# this, the plugin silently ships whatever the bundle happened to contain the
+# last time someone remembered to rebuild it.
+check-bundle: bundle-mcp
+	@echo "==> check-bundle: committed bundle matches source"
+	@git diff --exit-code --stat -- plugin/mcp/server.bundle.js \
+	  || { echo "ERROR: plugin/mcp/server.bundle.js is stale. Run 'make bundle-mcp' and commit."; exit 1; }
+	@node scripts/check-plugin.mjs
 
 test-dashboard:
 	@echo "==> test-dashboard: flowtrace-dashboard"

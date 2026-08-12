@@ -33,12 +33,13 @@ __pycache__/
 venv/
 build/
 dist/
-!mcp-server/dist/server.bundle.js
 
 # Node
 node_modules/
 
-# Build output (except bundled MCP server)
+# Build output. The MCP server the plugin actually runs is NOT here: it is a
+# committed esbuild bundle at plugin/mcp/server.bundle.js, because a plugin
+# install has no build step. See mcp-server/scripts/bundle.mjs.
 mcp-server/dist/
 
 # Logs

@@ -6,6 +6,7 @@
     "test": "npm run build && node test/test-trace-tools.mjs",
     "dev": "ts-node src/server.ts",
     "build": "tsc -p .",
+    "bundle": "node scripts/bundle.mjs",
     "start": "node dist/server.js"
   },
   "keywords": [
@@ -34,6 +35,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.9.2",
+    "esbuild": "0.24.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }

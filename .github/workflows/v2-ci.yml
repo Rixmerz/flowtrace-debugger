@@ -179,6 +179,32 @@ jobs:
           done
           exit $missing
 
+  # The plugin is the product for anyone who installs it from the marketplace,
+  # and none of the jobs above touch it: every one of them runs from a checkout
+  # with node_modules installed, which is the one environment where a broken
+  # plugin still appears to work. This job rebuilds the bundle, proves it did
+  # not drift from mcp-server/src, and boots it in an empty directory.
+  plugin:
+    name: Plugin is installable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      # Rebuilds plugin/mcp/server.bundle.js and fails if the committed copy is
+      # stale, then validates manifests, paths and a standalone boot.
+      - name: Bundle is current and the plugin boots standalone
+        run: make check-bundle
+
   bench:
     name: Benchmark harness (informational)
     runs-on: ubuntu-latest
