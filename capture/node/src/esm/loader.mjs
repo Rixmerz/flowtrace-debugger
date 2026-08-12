@@ -5,7 +5,8 @@
  */
 
 import { fileURLToPath } from 'node:url';
-import { extname } from 'node:path';
+import { extname, dirname, join, parse as parsePath } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
 
 // Dynamic import of transform and cache so the loader module itself is lean.
 // These are loaded lazily on first instrumented file.
@@ -34,11 +35,49 @@ async function getCache() {
 // injected import resolvable from anywhere on disk.
 const RUNTIME_SPECIFIER = new URL('../runtime/instrument.js', import.meta.url).href;
 
+/** Same module as a filesystem path, for the require() form. */
+const RUNTIME_PATH = fileURLToPath(RUNTIME_SPECIFIER);
+
 /** Node's native type-stripping formats -> the plain format swc output maps to. */
 const TS_FORMATS = {
   'module-typescript': 'module',
   'commonjs-typescript': 'commonjs',
 };
+
+const TS_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'];
+
+function isTypeScript(path) {
+  return TS_EXTENSIONS.includes(extname(path));
+}
+
+/**
+ * Decide module format for a TypeScript file that Node itself refused to load.
+ *
+ * Node < 22.18 has no native type stripping and throws ERR_UNKNOWN_FILE_EXTENSION
+ * for `.ts` before any format is assigned, so we have to apply Node's own rule
+ * ourselves: explicit .mts/.cts win, otherwise the nearest package.json "type".
+ */
+function inferFormat(path) {
+  const ext = extname(path);
+  if (ext === '.mts') return 'module';
+  if (ext === '.cts') return 'commonjs';
+
+  let dir = dirname(path);
+  const { root } = parsePath(path);
+  while (true) {
+    const pkgPath = join(dir, 'package.json');
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+        return pkg.type === 'module' ? 'module' : 'commonjs';
+      } catch {
+        return 'commonjs';
+      }
+    }
+    if (dir === root) return 'commonjs';
+    dir = dirname(dir);
+  }
+}
 
 /**
  * Returns true if the URL should be instrumented.
@@ -62,46 +101,70 @@ function shouldInstrument(url) {
  * ESM loader load hook.
  */
 export async function load(url, context, nextLoad) {
-  const result = await nextLoad(url, context);
+  const instrumenting = shouldInstrument(url);
 
-  if (!shouldInstrument(url)) return result;
-
-  // Node >= 22.18 strips TypeScript natively and reports the source format as
-  // 'module-typescript' / 'commonjs-typescript'. Rejecting those made the whole
-  // TS capture path a silent no-op on modern Node: zero events, zero errors.
-  // swc already strips the types for us, so the emitted code is plain JS and we
-  // hand Node back the corresponding non-TS format.
-  const format = TS_FORMATS[result.format] ?? result.format;
-  if (format !== 'module' && format !== 'commonjs') return result;
-
-  let source = result.source;
-  if (source == null) return result; // CJS files may have no source in the loader hook
-  if (typeof source === 'string') {
-    // already a string — nothing to do
-  } else if (Buffer.isBuffer(source)) {
-    source = source.toString('utf8');
-  } else {
-    // ArrayBuffer or ArrayBufferView (Uint8Array, etc.)
-    source = new TextDecoder().decode(source);
+  let result = null;
+  try {
+    result = await nextLoad(url, context);
+  } catch (e) {
+    // Node < 22.18 has no native type stripping and rejects .ts outright with
+    // ERR_UNKNOWN_FILE_EXTENSION — before assigning any format, so there is
+    // nothing for us to rewrite unless we take over loading the file. Without
+    // this branch the TypeScript capture is dead on the whole Node 20 line.
+    const canRecover =
+      e?.code === 'ERR_UNKNOWN_FILE_EXTENSION' && instrumenting && isTypeScript(fileURLToPath(url));
+    if (!canRecover) throw e;
   }
+
+  if (!instrumenting) return result;
+
+  let format;
+  let source;
+
+  if (result === null) {
+    // TypeScript fallback path: we own reading and typing the module.
+    format = inferFormat(fileURLToPath(url));
+    source = readFileSync(fileURLToPath(url), 'utf8');
+  } else {
+    // Node >= 22.18 strips TypeScript natively and reports the source format as
+    // 'module-typescript' / 'commonjs-typescript'. Rejecting those made the whole
+    // TS capture path a silent no-op on modern Node: zero events, zero errors.
+    // swc already strips the types for us, so the emitted code is plain JS and we
+    // hand Node back the corresponding non-TS format.
+    format = TS_FORMATS[result.format] ?? result.format;
+    if (format !== 'module' && format !== 'commonjs') return result;
+
+    source = result.source;
+    if (source == null) return result; // CJS files may have no source in the loader hook
+    if (typeof source === 'string') {
+      // already a string — nothing to do
+    } else if (Buffer.isBuffer(source)) {
+      source = source.toString('utf8');
+    } else {
+      // ArrayBuffer or ArrayBufferView (Uint8Array, etc.)
+      source = new TextDecoder().decode(source);
+    }
+  }
+
+  // Derive the transform's module type from the format actually being emitted.
+  // Hardcoding 'esm' here injected an `import` statement into files Node was
+  // about to evaluate as CommonJS.
+  const moduleType = format === 'commonjs' ? 'cjs' : 'esm';
+
+  // The CJS branch of the transform emits `require(runtimePath)`, which cannot
+  // take a file:// URL — it needs a filesystem path. Only the ESM branch's
+  // `import` accepts the URL form.
+  const runtimePath = moduleType === 'cjs' ? RUNTIME_PATH : RUNTIME_SPECIFIER;
 
   try {
     const filename = fileURLToPath(url);
     const cache = await getCache();
     const transformFn = await getTransform();
 
-    const key = cache.cacheKey(source, {
-      filename,
-      moduleType: 'esm',
-      runtimePath: RUNTIME_SPECIFIER,
-    });
+    const key = cache.cacheKey(source, { filename, moduleType, runtimePath });
     let code = cache.cacheGet(key);
     if (!code) {
-      const out = transformFn(source, {
-        filename,
-        moduleType: 'esm',
-        runtimePath: RUNTIME_SPECIFIER,
-      });
+      const out = transformFn(source, { filename, moduleType, runtimePath });
       code = out.code;
       cache.cachePut(key, code, out.map);
     }
@@ -109,6 +172,10 @@ export async function load(url, context, nextLoad) {
     return { format, source: code, shortCircuit: true };
   } catch (e) {
     process.stderr.write(`[flowtrace] ESM transform error for ${url}: ${e.message}\n`);
+    // On the TypeScript fallback path there is no upstream result to fall back
+    // to — Node already refused the file, so returning null would surface as a
+    // confusing loader error instead of the real cause.
+    if (result === null) throw e;
     return result;
   }
 }
