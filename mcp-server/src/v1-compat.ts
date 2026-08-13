@@ -16,6 +16,7 @@ export function isLikelyV2(obj: unknown): boolean {
   if (typeof o.trace_id !== "string") return false;
   if (typeof o.span_id !== "string") return false;
   if (typeof o.ts !== "number") return false;
-  if (o.event !== "enter" && o.event !== "exit" && o.event !== "error") return false;
+  // enter | exit only — schema v2 has no event="error" variant.
+  if (o.event !== "enter" && o.event !== "exit") return false;
   return true;
 }

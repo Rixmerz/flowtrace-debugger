@@ -58,6 +58,29 @@ function scrubIdentityHashes(value) {
 }
 
 /**
+ * Canonicalizes an error object for the golden diff.
+ *
+ * `type` and `msg` are preserved verbatim — the fixture chooses the exception,
+ * so both are deterministic and are exactly what these fixtures exist to
+ * assert. `stack` is not: frames carry absolute paths, line numbers and
+ * runtime-internal entries that differ per machine and per Python/Node/JDK
+ * version. Committing them would produce a fixture that fails for reasons
+ * having nothing to do with the trace contract.
+ *
+ * The array is collapsed rather than deleted, so the empty/non-empty
+ * distinction survives: an agent that stopped capturing stacks altogether
+ * still breaks the diff.
+ */
+function normalizeError(error) {
+  if (error === null || typeof error !== 'object') return error;
+  const out = scrubIdentityHashes({ ...error });
+  if (Array.isArray(out.stack)) {
+    out.stack = out.stack.length > 0 ? ['<scrubbed>'] : [];
+  }
+  return out;
+}
+
+/**
  * @param {object[]} events - Parsed JSONL events, in emission order.
  * @returns {object[]} Normalized events.
  */
@@ -84,6 +107,7 @@ export function normalizeEvents(events) {
     if ('duration_ns' in out) out.duration_ns = CANONICAL_DURATION_NS;
     if ('args' in out) out.args = scrubIdentityHashes(out.args);
     if ('result' in out) out.result = scrubIdentityHashes(out.result);
+    if ('error' in out) out.error = normalizeError(out.error);
 
     // Re-key in canonical order; drop nothing, but append any unexpected key
     // at the end rather than silently losing it.

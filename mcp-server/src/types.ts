@@ -48,13 +48,12 @@ export interface ExitEvent extends BaseEvent {
   error?: ErrorInfo;          // exit-with-error variant
 }
 
-export interface ErrorEvent extends BaseEvent {
-  event: "error";
-  error: ErrorInfo;
-  duration_ns?: number;
-}
-
-export type TraceEvent = EnterEvent | ExitEvent | ErrorEvent;
+// There is no ErrorEvent. schema/flowtrace-v2.json declares `oneOf: [enter,
+// exit]` with additionalProperties:false, so an event="error" line is invalid
+// and no capture layer emits one. A failed call is an exit whose `error` is
+// set. This union used to carry a third variant, which made the tools branch
+// on a case that could never occur.
+export type TraceEvent = EnterEvent | ExitEvent;
 
 // V1 (legacy) event shape — kept only so the compat shim can recognise it.
 // New code MUST NOT consume v1 fields directly.

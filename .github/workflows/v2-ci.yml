@@ -177,10 +177,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The fixture list comes from scripts/golden/runners.mjs rather than being
+      # repeated here. It used to be a hardcoded bash array, which meant adding
+      # a fixture to the registry silently left it unguarded by this job — the
+      # exact drift the job exists to prevent.
       - name: Every fixture must be tracked by git
         run: |
           missing=0
-          for dir in java node ts python express truncation/java truncation/node truncation/python; do
+          for dir in $(node -e "import('./scripts/golden/runners.mjs').then(m => console.log(m.FIXTURE_IDS.join(' ')))"); do
             f="examples/golden/$dir/expected.jsonl"
             if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
               echo "::error file=$f::$f is not tracked by git (check .gitignore)"

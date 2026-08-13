@@ -150,6 +150,11 @@ public class FlowtraceAdvice {
                         thrown.getMessage(),
                         stack
                 ));
+                // `result` is required on every exit event by schema v2, and
+                // TraceEvent omits nulls — so leaving it unset here emitted
+                // events that failed our own schema. A throwing call produced
+                // no value, and {} is already how a void return is encoded.
+                event.setResult(new LinkedHashMap<>());
             } else {
                 if (result != null) {
                     Map<String, Object> resultMap = new LinkedHashMap<>();

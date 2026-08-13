@@ -160,37 +160,43 @@ const javaGolden = {
   },
 };
 
-const javaTruncation = {
-  id: 'truncation/java',
-  dir: join(GOLDEN_ROOT, 'truncation', 'java'),
-  available() {
-    const base = javaArtifactsAvailable();
-    if (!base.ok) return base;
-    if (!existsSync(join(this.dir, 'LongArgFixture.java'))) {
-      return { ok: false, reason: 'LongArgFixture.java missing' };
-    }
-    return { ok: true };
-  },
-  run(outPath) {
-    // The truncation fixture is a bare .java source with no build of its own;
-    // compile it to a scratch dir first.
-    const classesDir = mkdtempSync(join(tmpdir(), 'ft-trunc-java-'));
-    const javac = spawnSync('javac', ['-d', classesDir, join(this.dir, 'LongArgFixture.java')], {
-      encoding: 'utf8',
-      timeout: TIMEOUT_MS,
-    });
-    if (javac.status !== 0) {
-      return { status: javac.status, stdout: javac.stdout, stderr: `javac failed:\n${javac.stderr}` };
-    }
-    return javaSpawn({
-      classpath: classesDir,
-      mainClass: 'LongArgFixture',
-      prefix: 'LongArgFixture',
-      outPath,
-      maxArgLength: 64,
-    });
-  },
-};
+/**
+ * A fixture that is a single bare .java source with no build of its own: it is
+ * compiled to a scratch directory, then run under the agent. The main class and
+ * the instrumentation prefix are both the source's base name, since these live
+ * in the default package.
+ */
+function javaSourceRunner({ id, source, maxArgLength }) {
+  const dir = join(GOLDEN_ROOT, ...id.split('/'));
+  const mainClass = source.replace(/\.java$/, '');
+  return {
+    id,
+    dir,
+    available() {
+      const base = javaArtifactsAvailable();
+      if (!base.ok) return base;
+      if (!existsSync(join(dir, source))) return { ok: false, reason: `${source} missing` };
+      return { ok: true };
+    },
+    run(outPath) {
+      const classesDir = mkdtempSync(join(tmpdir(), 'ft-golden-java-'));
+      const javac = spawnSync('javac', ['-d', classesDir, join(dir, source)], {
+        encoding: 'utf8',
+        timeout: TIMEOUT_MS,
+      });
+      if (javac.status !== 0) {
+        return { status: javac.status, stdout: javac.stdout, stderr: `javac failed:\n${javac.stderr}` };
+      }
+      return javaSpawn({
+        classpath: classesDir,
+        mainClass,
+        prefix: mainClass,
+        outPath,
+        maxArgLength,
+      });
+    },
+  };
+}
 
 /** Every golden fixture that must have a committed expected.jsonl. */
 export const FIXTURES = [
@@ -214,7 +220,14 @@ export const FIXTURES = [
     maxArgLength: 64,
   }),
   nodeRunner({ id: 'truncation/node', script: 'longArgFixture.js', maxArgLength: 64 }),
-  javaTruncation,
+  javaSourceRunner({ id: 'truncation/java', source: 'LongArgFixture.java', maxArgLength: 64 }),
+  // Error path. Until these existed no fixture in any language exercised a
+  // failing call, so the `error` field went unverified everywhere — which is
+  // how Java and Node came to emit exit events missing the required `result`,
+  // and Python came to hide the error inside `result` where no consumer looked.
+  pythonRunner({ id: 'error/python', script: 'error_fixture.py', prefix: 'error_fixture' }),
+  nodeRunner({ id: 'error/node', script: 'errorFixture.js' }),
+  javaSourceRunner({ id: 'error/java', source: 'ErrorFixture.java' }),
 ];
 
 export const FIXTURE_IDS = FIXTURES.map((f) => f.id);

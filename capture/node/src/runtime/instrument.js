@@ -197,6 +197,11 @@ export function __ft_exit_error(ctx, module_, cls, method, visibility, paramName
     method,
     visibility,
     args: serializeArgs(paramNames, args),
+    // `result` is required on every exit event by schema v2. Emitting only
+    // `error` produced events that failed our own schema — invisibly, since no
+    // golden fixture exercised a throwing call. A call that threw produced no
+    // value, and {} is already how a void/undefined return is encoded.
+    result: {},
     error: err && typeof err === 'object' ? {
       type: err.name ?? 'Error',
       msg: err.message ?? String(err),

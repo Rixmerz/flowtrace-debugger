@@ -49,7 +49,11 @@ test('trace.find_error returns null when no error in golden', () => {
   assert.equal(r, null);
 });
 
-test('trace.find_error walks parents to root from a crafted error', () => {
+test('trace.find_error walks parents to root from a failing exit', () => {
+  // This used to build its error as `event: 'error'`, a variant schema v2 does
+  // not define and no capture layer emits. The test passed against data that
+  // could never occur while the real shape — an `exit` carrying `error` — went
+  // untested, and Python's divergent output went unnoticed for the same reason.
   const trace_id = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   const e = (over) => ({
     ts: 0, trace_id, thread: 'main', lang: 'node', method: 'm', ...over,
@@ -58,14 +62,51 @@ test('trace.find_error walks parents to root from a crafted error', () => {
     e({ ts: 1, span_id: 's1', parent_id: null, event: 'enter', method: 'root', class: 'A' }),
     e({ ts: 2, span_id: 's2', parent_id: 's1', event: 'enter', method: 'mid',  class: 'A' }),
     e({ ts: 3, span_id: 's3', parent_id: 's2', event: 'enter', method: 'leaf', class: 'A' }),
-    e({ ts: 4, span_id: 's3', parent_id: 's2', event: 'error', method: 'leaf', class: 'A',
-        error: { type: 'RuntimeError', msg: 'boom' } }),
+    e({ ts: 4, span_id: 's3', parent_id: 's2', event: 'exit', method: 'leaf', class: 'A',
+        result: {}, error: { type: 'RuntimeError', msg: 'boom', stack: [] } }),
   ];
   const r = traceFindError(events);
   assert.ok(r);
   assert.equal(r.error.type, 'RuntimeError');
   assert.deepEqual(r.path.map((p) => p.method), ['root', 'mid', 'leaf']);
 });
+
+// Against the real captured output of all three languages, not a hand-written
+// approximation of it. The Python case is the one that matters most: its old
+// shape (`result: {error}`, no top-level `error`) was schema-VALID, so no
+// amount of schema validation could catch it — find_error simply returned null
+// on a trace full of exceptions. Only asserting on real capture output does.
+for (const lang of ['python', 'node', 'java']) {
+  test(`trace.find_error finds the error in the ${lang} golden error fixture`, () => {
+    const events = loadJsonlSync(
+      path.join(REPO_ROOT, `examples/golden/error/${lang}/expected.jsonl`)
+    );
+    const r = traceFindError(events);
+    assert.ok(r, `find_error returned null for ${lang} — the error is invisible to consumers`);
+    assert.match(r.error.msg, /inner refused 7/);
+    assert.ok(r.error.type.length > 0, 'error carries a type');
+    // inner() threw and outer() did not catch, so the path reaches both.
+    assert.deepEqual(r.path.slice(-2).map((p) => p.method), ['outer', 'inner']);
+  });
+
+  test(`${lang} error fixture reports the error on every frame it propagated through`, () => {
+    const events = loadJsonlSync(
+      path.join(REPO_ROOT, `examples/golden/error/${lang}/expected.jsonl`)
+    );
+    const failed = events.filter((e) => e.event === 'exit' && e.error);
+    assert.deepEqual(
+      failed.map((e) => e.method).sort(),
+      ['inner', 'outer'],
+      'an unhandled throw must mark every frame it unwound through, not just its origin'
+    );
+    // schema v2 requires `result` on every exit; Java and Node both used to
+    // omit it precisely on this branch.
+    for (const e of failed) {
+      assert.deepEqual(e.result, {}, `${e.method}: a throwing call carries an empty result`);
+      assert.ok(Array.isArray(e.error.stack) && e.error.stack.length > 0, 'stack captured');
+    }
+  });
+}
 
 // -- trace.private_calls --
 test('trace.private_calls counts private methods in java golden', () => {

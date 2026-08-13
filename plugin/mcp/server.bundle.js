@@ -21170,7 +21170,7 @@ function isLikelyV2(obj) {
   if (typeof o.trace_id !== "string") return false;
   if (typeof o.span_id !== "string") return false;
   if (typeof o.ts !== "number") return false;
-  if (o.event !== "enter" && o.event !== "exit" && o.event !== "error") return false;
+  if (o.event !== "enter" && o.event !== "exit") return false;
   return true;
 }
 
@@ -21223,22 +21223,16 @@ function isEnter(e) {
 function isExit(e) {
   return e.event === "exit";
 }
-function isError(e) {
-  return e.event === "error";
-}
 function traceTree(events, traceId) {
   const scoped = events.filter((e) => e.trace_id === traceId);
   const enters = scoped.filter(isEnter).sort((a, b) => a.ts - b.ts);
   const exitBySpan = /* @__PURE__ */ new Map();
-  const errorBySpan = /* @__PURE__ */ new Map();
   for (const e of scoped) {
     if (isExit(e)) exitBySpan.set(e.span_id, e);
-    else if (isError(e)) errorBySpan.set(e.span_id, e);
   }
   const nodeBySpan = /* @__PURE__ */ new Map();
   for (const e of enters) {
     const exit = exitBySpan.get(e.span_id);
-    const err = errorBySpan.get(e.span_id) ?? (exit?.error ? null : null);
     const node = {
       span_id: e.span_id,
       trace_id: e.trace_id,
@@ -21250,7 +21244,7 @@ function traceTree(events, traceId) {
       visibility: e.visibility,
       depth: e.depth ?? 0,
       duration_ns: exit?.duration_ns ?? null,
-      error: exit?.error ? { type: exit.error.type, msg: exit.error.msg } : err ? { type: err.error.type, msg: err.error.msg } : null,
+      error: exit?.error ? { type: exit.error.type, msg: exit.error.msg } : null,
       children: []
     };
     nodeBySpan.set(e.span_id, node);
@@ -21269,10 +21263,6 @@ function traceFindError(events) {
   const sorted = [...events].sort((a, b) => a.ts - b.ts);
   let target = null;
   for (const e of sorted) {
-    if (isError(e)) {
-      target = { event: e, err: e.error };
-      break;
-    }
     if (isExit(e) && e.error) {
       target = { event: e, err: e.error };
       break;
