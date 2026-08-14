@@ -15,6 +15,12 @@ TypeScript** (CJS hook + ESM loader + SWC transform), **Python** (import hook +
 AST transform). These three are the whole product — Go, Rust and .NET were v1
 experiments and have been removed.
 
+`capture/browser/` is a fourth, deliberately narrower layer: with no
+`AsyncLocalStorage` in a browser there is no ambient async context, so it does
+not instrument every function. It records HTTP, navigation and errors, and
+ships them to the dashboard collector (`POST /api/trace`) rather than to a
+file.
+
 ## Repository layout (pnpm workspace for the JS parts)
 
 | Path | Role | Build system |
@@ -22,6 +28,7 @@ experiments and have been removed.
 | `capture/java/flowtrace-otel-extension/` | OTel javaagent extension: ByteBuddy advice + JSONL emitter | Maven (bytecode target 11) |
 | `capture/node/` | CJS `Module._load` hook, ESM loader, SWC transform, runtime | pnpm |
 | `capture/python/` | `sitecustomize` bootstrap, import hook, AST transformer, runtime | setuptools |
+| `capture/browser/` | Browser capture (HTTP / router / errors) + Angular bindings | pnpm |
 | `schema/flowtrace-v2.json` | **The contract.** JSON Schema for every emitted event | — |
 | `examples/golden/` | Golden fixtures: real capture output, committed and diffed in CI | — |
 | `scripts/` | Golden runners/normalizer, schema validation, plugin checks | pnpm |
@@ -38,11 +45,12 @@ install script. `make test` is the source of truth.
 
 ```bash
 make build            # build-java + build-python + build-node + build-mcp
-make test             # schema + golden + java + python + node + mcp + dashboard + cli + plugin bundle
+make test             # schema + golden + java + python + node + browser + mcp + dashboard + cli + plugin bundle
 
 make test-java        # JUnit 5 (capture/java)
 make test-python      # pytest (capture/python)
 make test-node        # node:test (capture/node)
+make test-browser     # capture/browser + collector e2e
 make test-mcp         # MCP server tests
 make validate-schema  # every expected.jsonl against schema/flowtrace-v2.json
 make check-golden     # re-run every capture and diff against its committed fixture
@@ -133,6 +141,11 @@ perf complaint, check prefix wiring first.
   the ESM loader; `src/transform/swc.js` rewrites matched functions to call the
   `__ft_enter` / `__ft_exit` / `__ft_exit_error` helpers. Context propagation is
   `AsyncLocalStorage`.
+- **Browser** — no module rewriting and no ambient context. `api.js` holds all
+  the logic as plain functions; `angular.js` is wiring only, so the part that
+  needs a framework to test is the part least likely to be wrong. Browser work
+  maps onto the existing schema fields (`module` = http|router|error) rather
+  than extending the schema.
 - **Python** — `stub/sitecustomize.py` bootstraps, `finder.py` / `loader.py`
   install an import hook, `transformer.py` rewrites the AST to call the same
   helper trio. Context propagation is `contextvars`. Note the deliberate

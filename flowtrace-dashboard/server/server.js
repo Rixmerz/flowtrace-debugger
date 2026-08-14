@@ -51,18 +51,27 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log('');
-  console.log('═══════════════════════════════════════════════════════');
-  console.log('  FlowTrace Performance Dashboard');
-  console.log('═══════════════════════════════════════════════════════');
-  console.log('');
-  console.log(`  Server running at: http://localhost:${PORT}`);
-  console.log('');
-  console.log('  Upload a flowtrace.jsonl file to start analyzing');
-  console.log('═══════════════════════════════════════════════════════');
-  console.log('');
-});
+// Start the server only when this file is the entry point. Importing it used
+// to bind port 8765 as a side effect, so any test that wanted the app object
+// also got a listening socket it never asked for — one that keeps the process
+// alive and collides with a dashboard already running.
+if (require.main === module) startServer();
+
+function startServer() {
+  return app.listen(PORT, () => {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('  FlowTrace Performance Dashboard');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('');
+    console.log(`  Server running at: http://localhost:${PORT}`);
+    console.log(`  Collector endpoint: POST http://localhost:${PORT}/api/trace`);
+    console.log('');
+    console.log('  Upload a flowtrace.jsonl file to start analyzing');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('');
+  });
+}
 
 module.exports = app;
+module.exports.startServer = startServer;

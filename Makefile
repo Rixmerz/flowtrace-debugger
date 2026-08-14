@@ -5,7 +5,7 @@
 
 .PHONY: build test bench validate-schema check-golden gen-golden \
         build-java test-java build-python test-python build-node test-node \
-        build-mcp test-mcp test-dashboard test-cli bundle-mcp check-bundle \
+        build-mcp test-mcp test-browser test-dashboard test-cli bundle-mcp check-bundle \
         clean help
 
 help:
@@ -21,6 +21,7 @@ help:
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make test-python      Run pytest for the Python capture module"
 	@echo "  make test-node        Run node:test suite for the Node capture module"
+	@echo "  make test-browser     Run the browser capture suite (incl. collector e2e)"
 	@echo "  make test-mcp         Build and test the MCP server"
 	@echo "  make test-dashboard   Run the dashboard analyzer tests"
 	@echo "  make test-cli         Run the flowtrace-cli test files"
@@ -52,7 +53,7 @@ gen-golden:
 
 # Top-level test aggregator. Every subproject that has tests runs here, so
 # `make test` and CI cover the same ground.
-test: validate-schema check-golden test-java test-python test-node test-mcp test-dashboard test-cli check-bundle
+test: validate-schema check-golden test-java test-python test-node test-browser test-mcp test-dashboard test-cli check-bundle
 	@echo "==> test: all suites passed"
 
 # Java capture module
@@ -85,6 +86,13 @@ build-node:
 test-node:
 	@echo "==> test-node: @flowtrace/capture-node"
 	@cd capture/node && node --test test/*.mjs
+
+# Browser capture. Its e2e test boots the dashboard collector, so this depends
+# on the dashboard's dependencies being installed.
+test-browser:
+	@echo "==> test-browser: @flowtrace/capture-browser"
+	@pnpm --filter @flowtrace/capture-browser --filter flowtrace-dashboard install --silent
+	@cd capture/browser && node --test test/*.mjs
 
 # MCP server. `npm test` there already runs the build, but the aggregator
 # used to invoke the test file directly and so ran it against a dist/ that

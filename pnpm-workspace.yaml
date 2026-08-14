@@ -13,6 +13,7 @@
 # in the repo so CI can install them from the single root lockfile.
 packages:
   - capture/node
+  - capture/browser
   - flowtrace-cli
   - flowtrace-dashboard
   - mcp-server

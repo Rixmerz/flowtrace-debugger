@@ -139,6 +139,29 @@ jobs:
         env:
           FLOWTRACE_GOLDEN_STRICT: '1'
 
+  # The browser capture layer plus its end-to-end test, which boots the real
+  # dashboard collector and asserts that browser spans land on disk as valid
+  # v2 JSONL. Neither half proves that on its own.
+  browser-tests:
+    name: Browser capture + collector e2e
+    runs-on: ubuntu-latest
+    needs: golden
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Browser capture suite
+        run: make test-browser
+
   # mcp-server and dashboard had no CI job at all. Both were red.
   consumers:
     name: MCP server + dashboard + CLI
