@@ -6,9 +6,10 @@
  * This file:
  *   1. Installs the CJS hook (Module.prototype._compile patch).
  *   2. Registers the ESM loader via module.register().
- *   3. Mutates NODE_OPTIONS so that worker_threads and child_process
+ *   3. Installs outgoing traceparent propagation (fetch / http).
+ *   4. Mutates NODE_OPTIONS so that worker_threads and child_process
  *      spawned via Node inherit the same --import flag (idempotent).
- *   4. Sets FLOWTRACE_INITED=1.
+ *   5. Sets FLOWTRACE_INITED=1.
  */
 
 import { register } from 'node:module';
@@ -25,7 +26,15 @@ install();
 const loaderUrl = new URL('./esm/loader.mjs', import.meta.url).href;
 register(loaderUrl, import.meta.url);
 
-// ── 3. Worker propagation ────────────────────────────────────
+// ── 3. Outgoing trace context ────────────────────────────────
+// Attaches `traceparent` to outbound fetch / http requests while a span is
+// active, so a call made by code we do not own still joins the trace on the
+// far side. Never overwrites a caller-set header; opt out with
+// FLOWTRACE_PROPAGATE=0.
+import { installOutgoingPropagation } from './runtime/propagate.js';
+installOutgoingPropagation();
+
+// ── 4. Worker propagation ────────────────────────────────────
 const bootstrapAbsPath = fileURLToPath(import.meta.url);
 const bootstrapFlag    = `--import file://${bootstrapAbsPath}`;
 
@@ -36,5 +45,5 @@ if (!existing.includes(bootstrapFlag)) {
     : `${bootstrapFlag} --enable-source-maps`;
 }
 
-// ── 4. Init marker ───────────────────────────────────────────
+// ── 5. Init marker ───────────────────────────────────────────
 process.env.FLOWTRACE_INITED = '1';
