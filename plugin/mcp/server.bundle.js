@@ -21216,6 +21216,51 @@ async function loadJsonl(path) {
   return { rows, fields, schemaVersion, malformed };
 }
 
+// src/filter.ts
+function contains(value, needle) {
+  if (typeof value !== "string") return false;
+  return value.toLowerCase().includes(needle.toLowerCase());
+}
+function makeMatcher(where) {
+  if (!where || Object.keys(where).length === 0) return () => true;
+  return (e) => {
+    const rec = e;
+    if (where.event !== void 0 && e.event !== where.event) return false;
+    for (const key of ["trace_id", "span_id", "parent_id"]) {
+      const want = where[key];
+      if (want !== void 0 && rec[key] !== want) return false;
+    }
+    for (const key of ["method", "class", "module", "lang", "visibility", "thread"]) {
+      const want = where[key];
+      if (want !== void 0 && !contains(rec[key], want)) return false;
+    }
+    if (where.has_error !== void 0) {
+      const hasError = e.event === "exit" && e.error != null;
+      if (hasError !== where.has_error) return false;
+    }
+    if (where.min_duration_ns !== void 0 || where.max_duration_ns !== void 0) {
+      if (e.event !== "exit") return false;
+      const d = e.duration_ns;
+      if (typeof d !== "number") return false;
+      if (where.min_duration_ns !== void 0 && d < where.min_duration_ns) return false;
+      if (where.max_duration_ns !== void 0 && d > where.max_duration_ns) return false;
+    }
+    if (where.min_depth !== void 0 || where.max_depth !== void 0) {
+      const depth = typeof rec.depth === "number" ? rec.depth : null;
+      if (depth === null) return false;
+      if (where.min_depth !== void 0 && depth < where.min_depth) return false;
+      if (where.max_depth !== void 0 && depth > where.max_depth) return false;
+    }
+    return true;
+  };
+}
+function applyFilters(rows, where, freeText) {
+  const match = makeMatcher(where);
+  return rows.filter(
+    (r) => match(r) && (!freeText || JSON.stringify(r).includes(freeText))
+  );
+}
+
 // src/trace-tools.ts
 function isEnter(e) {
   return e.event === "enter";
@@ -21348,12 +21393,38 @@ function traceDiff(a, b) {
 // src/server.ts
 var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.0.0" });
 var sessions = /* @__PURE__ */ new Map();
+var evicted = /* @__PURE__ */ new Set();
+var MAX_SESSIONS = (() => {
+  const raw = Number(process.env.FLOWTRACE_MCP_MAX_SESSIONS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
+})();
 function genId() {
   return Math.random().toString(36).slice(2);
 }
+function evictOverCap() {
+  const dropped = [];
+  while (sessions.size > MAX_SESSIONS) {
+    const oldest = sessions.keys().next().value;
+    if (oldest === void 0) break;
+    sessions.delete(oldest);
+    evicted.add(oldest);
+    dropped.push(oldest);
+  }
+  return dropped;
+}
 function getSession(id) {
   const s = sessions.get(id);
-  if (!s) throw new Error(`Invalid sessionId: ${id}`);
+  if (!s) {
+    if (evicted.has(id)) {
+      throw new Error(
+        `Session ${id} was evicted: at most ${MAX_SESSIONS} logs are kept open (raise FLOWTRACE_MCP_MAX_SESSIONS). Re-open the log with log.open.`
+      );
+    }
+    throw new Error(`Invalid sessionId: ${id}`);
+  }
+  s.lastUsed = Date.now();
+  sessions.delete(id);
+  sessions.set(id, s);
   return s;
 }
 function v2OnlyEvents(s) {
@@ -21370,8 +21441,35 @@ mcp.tool(
     if (!import_node_fs2.default.existsSync(path)) throw new Error(`File not found: ${path}`);
     const { rows, fields, schemaVersion, malformed } = await loadJsonl(path);
     const id = genId();
-    sessions.set(id, { id, path, rows, fields, schemaVersion, malformed });
-    return ok({ sessionId: id, count: rows.length, schemaVersion, malformed });
+    sessions.set(id, {
+      id,
+      path,
+      rows,
+      fields,
+      schemaVersion,
+      malformed,
+      lastUsed: Date.now()
+    });
+    const dropped = evictOverCap();
+    return ok({
+      sessionId: id,
+      count: rows.length,
+      schemaVersion,
+      malformed,
+      // Reported rather than silent: a caller holding an older id needs to know
+      // it just became unusable.
+      ...dropped.length ? { evictedSessions: dropped } : {}
+    });
+  }
+);
+mcp.tool(
+  "log.close",
+  "Release a session and free the memory holding its events",
+  { sessionId: external_exports.string().describe("Session id from log.open") },
+  async ({ sessionId }) => {
+    const existed = sessions.delete(sessionId);
+    evicted.delete(sessionId);
+    return ok({ closed: existed, openSessions: sessions.size });
   }
 );
 mcp.tool(
@@ -21387,26 +21485,53 @@ mcp.tool(
     });
   }
 );
+var whereSchema = external_exports.object({
+  event: external_exports.enum(["enter", "exit"]).optional().describe("Event variant"),
+  method: external_exports.string().optional().describe("Substring, case-insensitive"),
+  class: external_exports.string().optional().describe("Substring, case-insensitive"),
+  module: external_exports.string().optional().describe("Substring, case-insensitive"),
+  lang: external_exports.string().optional().describe("Substring, case-insensitive"),
+  visibility: external_exports.string().optional().describe("public | private | internal | unknown"),
+  thread: external_exports.string().optional().describe("Substring, case-insensitive"),
+  trace_id: external_exports.string().optional().describe("Exact match"),
+  span_id: external_exports.string().optional().describe("Exact match"),
+  parent_id: external_exports.string().optional().describe("Exact match"),
+  has_error: external_exports.boolean().optional().describe("true = only failing exits"),
+  min_duration_ns: external_exports.number().optional().describe("Implies exit events only"),
+  max_duration_ns: external_exports.number().optional().describe("Implies exit events only"),
+  min_depth: external_exports.number().int().optional(),
+  max_depth: external_exports.number().int().optional()
+}).describe("Field-level predicates, ANDed together");
 mcp.tool(
   "log.search",
-  "Filter v2 events by substring and return selected fields",
+  "Filter v2 events by field (preferred) or free-text substring, with paging",
   {
     sessionId: external_exports.string().describe("Session id from log.open"),
-    filter: external_exports.string().optional().describe("Case-sensitive substring matched against the JSON form of each row"),
+    where: whereSchema.optional().describe("Field-level filters \u2014 prefer these over `filter`"),
+    filter: external_exports.string().optional().describe("Case-sensitive substring matched against the whole serialized row. Broad: matches method, class, module and argument values alike. Prefer `where`."),
     fields: external_exports.array(external_exports.string()).optional().describe("Subset of fields to return"),
-    limit: external_exports.number().int().positive().optional().describe("Max rows (default 200)")
+    limit: external_exports.number().int().positive().optional().describe("Max rows (default 200)"),
+    offset: external_exports.number().int().nonnegative().optional().describe("Rows to skip, for paging through a large match set")
   },
-  async ({ sessionId, filter, fields, limit = 200 }) => {
+  async ({ sessionId, where, filter, fields, limit = 200, offset = 0 }) => {
     const s = getSession(sessionId);
-    let rows = s.rows.filter((r) => !filter || JSON.stringify(r).includes(filter));
+    const matched = applyFilters(s.rows, where, filter);
+    const page = matched.slice(offset, offset + limit);
+    let rows = page;
     if (fields?.length) {
-      rows = rows.map((r) => {
+      rows = page.map((r) => {
         const o = {};
         for (const f of fields) o[f] = r[f];
         return o;
       });
     }
-    return ok(rows.slice(0, limit));
+    return ok({
+      total: matched.length,
+      offset,
+      returned: rows.length,
+      truncated: offset + rows.length < matched.length,
+      rows
+    });
   }
 );
 mcp.tool(
@@ -21419,11 +21544,12 @@ mcp.tool(
       op: external_exports.enum(["count", "sum", "avg", "max", "min"]).describe("Aggregation operator"),
       field: external_exports.string().optional().describe("Numeric field for sum/avg/max/min")
     }),
+    where: whereSchema.optional().describe("Field-level filters applied before aggregation"),
     filter: external_exports.string().optional().describe("Optional substring filter applied before aggregation")
   },
-  async ({ sessionId, groupBy, metric, filter }) => {
+  async ({ sessionId, groupBy, metric, where, filter }) => {
     const s = getSession(sessionId);
-    const rows = s.rows.filter((r) => !filter || JSON.stringify(r).includes(filter));
+    const rows = applyFilters(s.rows, where, filter);
     const grouped = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const rec = r;

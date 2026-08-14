@@ -93,9 +93,11 @@ build-mcp:
 	@echo "==> build-mcp: @flowtrace/mcp-server"
 	@cd mcp-server && pnpm install --silent && pnpm run build
 
+# Glob rather than a hardcoded list, so a new test file is picked up instead of
+# being silently left out.
 test-mcp: build-mcp
 	@echo "==> test-mcp: @flowtrace/mcp-server"
-	@cd mcp-server && node test/test-trace-tools.mjs
+	@cd mcp-server && for t in test/*.mjs; do echo "  -- $$t"; node $$t || exit 1; done
 
 # The MCP server the *plugin* runs is a committed single-file bundle, because a
 # Claude Code plugin install copies files and never builds. Run this after

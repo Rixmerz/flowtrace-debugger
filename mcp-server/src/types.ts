@@ -77,6 +77,29 @@ export interface OpenSession {
   fields: Record<string, number>;
   schemaVersion: "v2" | "v1";
   malformed: number;          // count of dropped lines
+  /** Epoch ms of the last tool call that touched this session. Drives LRU
+   *  eviction: a trace can be hundreds of MB in memory and the server is a
+   *  long-lived stdio process, so sessions cannot be held forever. */
+  lastUsed: number;
+}
+
+/** Field-level predicates for log.search / log.aggregate. */
+export interface Where {
+  event?: "enter" | "exit";
+  method?: string;
+  class?: string;
+  module?: string;
+  lang?: string;
+  visibility?: string;
+  thread?: string;
+  trace_id?: string;
+  span_id?: string;
+  parent_id?: string;
+  has_error?: boolean;
+  min_duration_ns?: number;
+  max_duration_ns?: number;
+  min_depth?: number;
+  max_depth?: number;
 }
 
 export interface ServerConfig {
