@@ -4,134 +4,193 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FlowTrace Debugger — a multi-language runtime instrumentation toolkit. Each language ships its own agent that emits a unified JSONL trace format (`flowtrace.jsonl`) consumable by a CLI installer, a performance dashboard, and an MCP server. Logs are designed to be analyzed by AI tools.
+FlowTrace Debugger — a runtime instrumentation toolkit. Each supported runtime
+ships a capture layer that emits a unified JSONL trace (`flowtrace.jsonl`,
+schema v2) consumable by a CLI, a dashboard, and an MCP server. The traces are
+designed to be read by AI tools: the point is to give an agent evidence of what
+the program actually did, rather than have it infer behaviour from source.
 
-Supported runtimes: Java (JVM agent, ByteBuddy), JavaScript/TypeScript (Node `Module._load` hook + decorators), Python (sys.setprofile / decorators), Go (AST source-rewrite), Rust (`#[derive]` macro), .NET/C# (Source Generator + `[Trace]` attribute).
+Supported runtimes: **Java** (OpenTelemetry javaagent extension), **Node /
+TypeScript** (CJS hook + ESM loader + SWC transform), **Python** (import hook +
+AST transform). These three are the whole product — Go, Rust and .NET were v1
+experiments and have been removed.
 
-## Repository layout (workspaces, no monorepo tool)
-
-Subprojects each have their own build; there is no root package manager. Always `cd` into the subproject before running its commands.
+## Repository layout (pnpm workspace for the JS parts)
 
 | Path | Role | Build system |
 |------|------|--------------|
-| `flowtrace-agent/` | Java premain agent (ByteBuddy bytecode rewrite) | Maven (`pom.xml`, Java 11) |
-| `flowtrace-agent-js/` | Node CommonJS + ESM loader, TS decorators | npm (`build.js`, custom) |
-| `agents/python/` | Python agent + `flowctl-py` CLI | setuptools (`pyproject.toml`, Py ≥3.8) |
-| `agents/go/` | Go AST instrumenter + `flowctl` CLI | Go modules (1.24) |
-| `agents/rust/` | `flowtrace-agent` crate + `flowtrace-derive` proc-macro + `flowctl-rs` | Cargo workspace |
-| `agents/dotnet/` | `Flowtrace.Agent` + Source Generator + `flowctl-dotnet` | `dotnet` SDK |
-| `flowtrace-cli/` | Cross-language installer (`flowtrace` binary) | npm (Node, commander+inquirer) |
-| `flowtrace-dashboard/` | Express server + static HTML/JS perf UI | npm |
-| `mcp-server/` | MCP server exposing log analysis tools | npm + TypeScript (`tsc`) |
-| `flowtrace-example/` | Java sample app for end-to-end testing | Maven |
-| `examples/` | Per-framework demos (React, Next.js, Angular, Vue, ESM, CJS) | per-example npm |
+| `capture/java/flowtrace-otel-extension/` | OTel javaagent extension: ByteBuddy advice + JSONL emitter | Maven (bytecode target 11) |
+| `capture/node/` | CJS `Module._load` hook, ESM loader, SWC transform, runtime | pnpm |
+| `capture/python/` | `sitecustomize` bootstrap, import hook, AST transformer, runtime | setuptools |
+| `schema/flowtrace-v2.json` | **The contract.** JSON Schema for every emitted event | — |
+| `examples/golden/` | Golden fixtures: real capture output, committed and diffed in CI | — |
+| `scripts/` | Golden runners/normalizer, schema validation, plugin checks | pnpm |
+| `flowtrace-cli/` | Cross-language installer (`flowtrace` binary) | pnpm |
+| `flowtrace-dashboard/` | Express server + static perf UI | pnpm |
+| `mcp-server/` | MCP server exposing `log.*` and `trace.*` tools | pnpm + tsc |
+| `plugin/` | The distributable Claude Code plugin (see below) | — |
 | `docs/` | English (`docs/en`) + Spanish (`docs/es`) docs |
 
 ## Build / test commands
 
-Top-level orchestration:
+Everything is driven from the root `Makefile` — there is no per-subproject
+install script. `make test` is the source of truth.
 
 ```bash
-./install-all.sh            # Build Java agent, JS agent, CLI; offer MCP IDE wiring
-./install.sh                # Java agent only (mvn package)
-./install-flowtrace-cli.sh  # CLI only
-./test-exclusions.sh        # Exclusions regression
-./analyze-logs.sh <file>    # Helper to summarize a flowtrace.jsonl
-./run-node-flowtrace.sh     # Run a Node app with the agent preloaded
+make build            # build-java + build-python + build-node + build-mcp
+make test             # schema + golden + java + python + node + mcp + dashboard + cli + plugin bundle
+
+make test-java        # JUnit 5 (capture/java)
+make test-python      # pytest (capture/python)
+make test-node        # node:test (capture/node)
+make test-mcp         # MCP server tests
+make validate-schema  # every expected.jsonl against schema/flowtrace-v2.json
+make check-golden     # re-run every capture and diff against its committed fixture
+make gen-golden       # regenerate the fixtures (review the diff!)
+make bundle-mcp       # rebuild plugin/mcp/server.bundle.js after touching mcp-server/src
+make check-bundle     # verify that bundle is current and boots standalone
 ```
 
-Per-subproject:
+Single tests:
 
 ```bash
-# Java agent
-cd flowtrace-agent && mvn package           # produces target/flowtrace-agent-*.jar
-mvn test -Dtest=FullyQualifiedClass#method  # single test
-
-# JS agent
-cd flowtrace-agent-js && npm run build && node test/run-tests.js
-
-# Python agent
-cd agents/python && pip install -e .[async,django,flask,fastapi]
-python -m pytest tests/                      # full
-python -m pytest tests/test_x.py::test_y     # single
-
-# Go agent
-cd agents/go && go build ./... && go test ./...
-go test ./internal/... -run TestName         # single
-
-# Rust agent
-cd agents/rust && cargo build --workspace && cargo test --workspace
-cargo test -p flowtrace-agent test_name      # single
-
-# .NET agent
-cd agents/dotnet && dotnet build && dotnet test
-dotnet test --filter FullyQualifiedName~Name # single
-
-# CLI
-cd flowtrace-cli && node test/test-cli.js
-
-# MCP server
-cd mcp-server && npm run build && npm run dev    # dev = ts-node src/server.ts
-
-# Dashboard
-cd flowtrace-dashboard && npm start              # express server on default port
+cd capture/java/flowtrace-otel-extension && mvn test -Dtest=FlowtraceEmitterTest#method
+cd capture/python && python -m pytest tests/test_x.py::test_y
+cd capture/node && node --test test/test-traceparent.mjs
 ```
 
 ## Architecture
 
-### Trace event contract (load-bearing across all agents)
+### Trace event contract (load-bearing across all capture layers)
 
-Every agent emits one JSON object per line to `flowtrace.jsonl` with this shape:
+`schema/flowtrace-v2.json` is authoritative — read it before changing anything
+that emits. Two event variants, `enter` and `exit`, with
+`additionalProperties: false`:
 
 ```json
-{"timestamp":<ms>,"event":"ENTER|EXIT","thread":"<name>","class":"<Class>","method":"<m>","args":"<json string>","result":"<json string>","durationMicros":<n>,"durationMillis":<n>}
+{"ts":<epoch seconds, float>,"trace_id":"<32 hex>","span_id":"<16 hex>","parent_id":"<16 hex>|null",
+ "event":"enter|exit","thread":"<name>","lang":"java|node|python|ts","module":"<m>","class":"<C>",
+ "method":"<m>","visibility":"public|private|internal|unknown","args":{...},"depth":<n>}
 ```
 
-ENTER and EXIT are paired; EXIT carries `result` + duration. Field names are stable — downstream tools (`mcp-server`, `flowtrace-dashboard`, `analyze-logs.sh`) parse this exact schema. **Do not rename fields** without coordinated changes across all agents and consumers.
+`exit` additionally carries `result` (**required**, `{}` when there is no
+value), `duration_ns`, and an optional `error` of `{type, msg, stack}`.
 
-### Filtering: package-prefix is mandatory in practice
+Two rules that have each already been broken once:
 
-Without a prefix, agents instrument frameworks and stdlib → logs explode. Each agent honors a "package prefix" (Java property, env var, or config file) to scope instrumentation to user code. The CLI auto-detects the prefix on `flowtrace init --yes`. When fixing perf or "log too large" bugs, check prefix wiring first.
+- **A failed call is an `exit` with `error` set.** There is no `event: "error"`
+  variant; the schema rejects it. `result` is still required on that branch —
+  emit `{}`.
+- **Do not rename fields** without changing every capture layer, the schema,
+  the golden fixtures and every consumer (`mcp-server`, `flowtrace-dashboard`)
+  in the same commit.
 
-### Truncation system
+The ids are W3C Trace Context compatible, so a trace survives a process hop:
+`traceparent` is parsed on the way in and rendered on the way out.
 
-`TRUNCATION_SYSTEM.md` documents shared rules for truncating `args`/`result` payloads. Each agent has a `max-arg-length` knob (`0` = no truncation). Tests in `examples/run-truncation-tests.sh` validate parity across runtimes.
+### Golden fixtures are the regression net
 
-### Per-language instrumentation strategy (don't conflate)
+`examples/golden/<id>/expected.jsonl` is **real capture output**, normalized
+and committed. `make check-golden` re-runs each fixture and diffs. The registry
+is `scripts/golden/runners.mjs` — add a fixture there and CI picks it up
+automatically.
 
-- **Java**: premain `Instrumentation` API + ByteBuddy `AgentBuilder` rewrites class bytes at load time. Entry: `FlowTraceAgent.premain` → `FlowTraceAdvice` weaves ENTER/EXIT around matched methods.
-- **Node**: monkey-patches `Module._load` (CJS) and provides an `--experimental-loader` (ESM) at `src/esm-loader.mjs`. Decorators in `src/decorators.js` for opt-in TS use; require `experimentalDecorators` + `emitDecoratorMetadata` in `tsconfig`.
-- **Python**: hybrid — explicit `@trace` decorator and a `sys.setprofile` fallback for global tracing. CLI in `flowctl-py/main.py`.
-- **Go**: no runtime hooks — `flowctl instrument` rewrites source AST under `internal/instrumenter/` to inject `defer flowtrace.Trace(...)()` calls. Run before `go build`.
-- **Rust**: `#[derive(FlowTrace)]` proc-macro in `flowtrace-derive` crate; the runtime crate in `flowtrace-agent` provides loggers and optional middleware (actix, axum) gated by Cargo features.
-- **.NET**: Source Generator (`Flowtrace.Agent.SourceGenerator`) emits trace wrappers at compile time for methods marked `[Trace]`; ASP.NET Core + EF Core integrations live in subfolders of `Flowtrace.Agent`.
+`scripts/golden/normalize.mjs` replaces what is genuinely non-deterministic:
+trace/span ids (renumbered in first-appearance order, so tree *shape* is still
+asserted), `ts`, `duration_ns`, Java identity hashes, and error stack frames.
+Anything else is compared verbatim.
+
+A consequence worth remembering: because every `trace_id` is rewritten to one
+constant, **a golden fixture cannot assert cross-process correlation**. That
+property lives in `capture/node/test/test-cross-process.mjs`, which spawns two
+real processes.
+
+### Filtering: package prefix is mandatory in practice
+
+Without a prefix each capture layer instruments frameworks and stdlib and the
+trace explodes. Every layer honours a package/module prefix
+(`-Dflowtrace.package-prefix`, `FLOWTRACE_PACKAGE_PREFIX`), and the CLI
+auto-detects one on `flowtrace init`. When investigating "the log is huge" or a
+perf complaint, check prefix wiring first.
+
+### Truncation
+
+`TRUNCATION_SYSTEM.md` documents the shared rules for truncating `args` /
+`result`. Each layer takes a `max-arg-length` knob (`0` = no truncation), and
+`examples/golden/truncation/{java,node,python}` pin parity across runtimes.
+
+### Per-runtime capture strategy (don't conflate them)
+
+- **Java** — an *OpenTelemetry javaagent extension*, not a standalone premain
+  agent. `FlowtraceInstrumentationModule` / `FlowtraceTypeInstrumentation`
+  select methods; `FlowtraceAdvice` weaves enter/exit and derives ids from
+  `Span.fromContext(Context.current())`, which is why incoming `traceparent`
+  works with no code of ours. The OTel agent version therefore decides which
+  JDKs can be instrumented — its bundled ByteBuddy must know the class file
+  version. Bytecode target stays at 11 deliberately: it is the floor of what
+  can be instrumented, not the JDK we build on. CI runs 17, 21 and 25.
+- **Node** — `src/cjs/hook.js` patches `Module._load`; `src/esm/loader.mjs` is
+  the ESM loader; `src/transform/swc.js` rewrites matched functions to call the
+  `__ft_enter` / `__ft_exit` / `__ft_exit_error` helpers. Context propagation is
+  `AsyncLocalStorage`.
+- **Python** — `stub/sitecustomize.py` bootstraps, `finder.py` / `loader.py`
+  install an import hook, `transformer.py` rewrites the AST to call the same
+  helper trio. Context propagation is `contextvars`. Note the deliberate
+  divergence from Node: `current_depth` holds the depth of the span *about to
+  start*, so `remote_context` seeds 0 where Node seeds -1.
 
 ### CLI orchestrator (`flowtrace-cli`)
 
-`flowtrace-cli/bin/flowtrace.js` is the user-facing entry point. Commands (`init`, `install`, `run`, `update`, `status`) live in `lib/commands/`. The CLI **detects project type** (Java vs Node) and writes a `.flowtrace/config.json` plus a `run-and-flowtrace.sh` script into the target project, copies the appropriate agent artifact, and updates `.gitignore`. When extending support to another language, add a detector + command file there — do not modify the agents.
+`bin/flowtrace.js` is the entry point; commands live in `lib/commands/`.
+`lib/detect.js` detects project type (`java` / `python` / `node` / `ts`) and the
+package prefix, then writes `.flowtrace/config.json` into the target project and
+updates its `.gitignore`. When adding a runtime, add a detector + command here —
+do not modify the capture layers.
 
 ### MCP server (`mcp-server/`)
 
-TypeScript MCP server using `@modelcontextprotocol/sdk`. Entry: `src/server.ts`. Sessions are in-memory `Map<sessionId, {rows, fields, path}>`; logs are loaded once per `log.open` and queried via `log.search` / `log.aggregate` / `log.schema`. Additional tools registered in `dashboard-tools.ts` and `flowtrace-tools.ts`. Output goes through stdio transport — never write to stdout outside the MCP protocol.
+TypeScript, `@modelcontextprotocol/sdk`, entry `src/server.ts`. Sessions are an
+in-memory `Map`; a log is loaded once per `log.open` and queried through
+`log.search` / `log.aggregate` / `log.schema`. `src/trace-tools.ts` implements
+`trace.tree` / `trace.find_error` / `trace.private_calls` / `trace.diff`.
+Transport is stdio — **never write to stdout** outside the MCP protocol.
 
-### Dashboard (`flowtrace-dashboard/`)
+### Plugin (`plugin/`)
 
-Express server in `server/server.js` exposing `/api/*` to the static `public/` UI. Analyzer logic in `analyzer/`. Has its own CLI entry `cli.js` and an MCP-tools shim `mcp-tools.js`.
+The distributable Claude Code plugin: skill, subagent, commands, and the MCP
+server as a committed single-file esbuild bundle at `plugin/mcp/server.bundle.js`.
+A plugin install copies a directory and runs no build, so anything the plugin
+references must be inside `CLAUDE_PLUGIN_ROOT`, tracked by git, and runnable
+with no `node_modules`. `scripts/check-plugin.mjs` enforces exactly that and
+boots the bundle in an empty directory. Run `make bundle-mcp` after touching
+`mcp-server/src`.
+
+`.claude-plugin/marketplace.json` at the root makes this repo installable as the
+**Rixmerz** marketplace.
 
 ## Project conventions
 
-- Output language for user-facing CLI text: Spanish (matches README.md). English mirror in README.en.md.
-- Log file name `flowtrace.jsonl` is the default everywhere; tools assume it but accept overrides.
-- Generated project files are placed under `.flowtrace/` in the user's repo and auto-added to `.gitignore` by the CLI.
-- All agents version-lock to `1.0.0` for the trace schema; bumping a single agent without bumping the others breaks consumers.
+- User-facing CLI text is Spanish (matches README.md); English mirror in README.en.md.
+- Code, comments and commit messages are English.
+- `flowtrace.jsonl` is the default log name everywhere; tools accept overrides.
+- Generated project files go under `.flowtrace/` in the user's repo.
+- Schema version is `2.0.0` and all capture layers lock to it together.
 
 ## Pre-existing context to honor
 
-- `.claude/rules/` (loaded automatically) contains: `autonomous-strategy.md`, `commit-discipline.md`, `security-awareness.md`, plus per-language rules (`java.md`, `python.md`, `go.md`, `rust.md`, `typescript.md`, `jsbackend.md`, `qa.md`).
-- `.claude/skills/` holds the language pattern skills plus `debug`, `testing` and `validation`.
-- `.claude/commands/` has `status` (repo health check).
-- `plugin/` is the distributable Claude Code plugin — manifest, skill, subagent and the bundled MCP server. `.claude-plugin/marketplace.json` at the root makes this repo installable as a marketplace.
-- `CONTRIBUTING.md`, `ROADMAP.md`, `IMPLEMENTATION_COMPLETE.md`, `FLOWTRACE_TOOLS_ADDED.md`, `BROWSER_AGENT_README.md`, `ACTIVATION_GUIDE.md`, `QUICK_START.md`, `TRUNCATION_SYSTEM.md` — read these for deeper context on subsystems before large changes.
+- `.claude/rules/` (loaded automatically): `autonomous-strategy.md`,
+  `commit-discipline.md`, `security-awareness.md`, plus per-language rules.
+- `.claude/skills/` holds the language pattern skills plus `debug`, `testing`,
+  `validation`. `.claude/commands/` has `status` (repo health check).
+- `CONTRIBUTING.md`, `ROADMAP.md`, `TRUNCATION_SYSTEM.md`, `docs/` — deeper
+  context before large changes.
+
+**No v1.** The v1 agents (a standalone Java premain agent, a separate JS agent,
+and Go / Rust / .NET implementations) emitted a different schema —
+`{"timestamp":<ms>,"event":"ENTER",...,"durationMicros":<n>}` — with no
+`trace_id` or `span_id`, so nothing in the v2 pipeline can read their output.
+They have been deleted along with the install scripts that drove them. Do not
+resurrect them or reintroduce v1 field names.
 
 **No jig.** This repo was previously scaffolded by jig (an orchestrator project,
 now obsolete) which installed a hook pipeline, 14 subagents, workflow graphs and

@@ -27,7 +27,8 @@ Each runtime uses its native hook point:
 | Node.js | `Module._load` monkey-patch (CJS) + `--experimental-loader` hook (ESM). Wraps each required module's exported functions. |
 | TypeScript | Same Node.js hooks; additionally, `@Trace` decorator for explicit opt-in without loader flag. |
 
-Capture agents live in `capture/<lang>/`. Legacy v1 agents are in `legacy/v1/`.
+Capture agents live in `capture/<lang>/`. The v1 agents have been deleted — see
+"Removed runtimes" in `migration-v1-v2.md`.
 
 ### L2 — Adapter
 

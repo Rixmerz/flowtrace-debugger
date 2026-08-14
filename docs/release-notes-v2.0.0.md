@@ -19,7 +19,8 @@
 - **Schema v2** is not backward-compatible with v1 logs. The MCP server includes a v1-compat shim that detects and translates on the fly, but v2-only tools return empty results for v1 logs.
 - **CLI commands trimmed**: `install`, `update`, `status` removed. Use `npm`/package manager directly.
 - **`--` separator required** before the user command in `flowtrace run`.
-- **Capture agents relocated** to `capture/<lang>/`. v1 agents are in `legacy/v1/`.
+- **Capture agents relocated** to `capture/<lang>/`. The v1 agents were kept in
+  `legacy/` at the time of this release and have since been deleted.
 
 Full field-by-field diff: [migration-v1-v2.md](migration-v1-v2.md)
 
@@ -27,7 +28,9 @@ Full field-by-field diff: [migration-v1-v2.md](migration-v1-v2.md)
 
 ## Go, Rust, .NET
 
-These runtimes are not part of the v2 capture layer. Their v1 agents remain functional in `legacy/v1/`. Migration to v2 capture is planned for Sprint 8.
+These runtimes are not part of the v2 capture layer. Their v1 agents shipped
+alongside this release in `legacy/`; they have since been deleted and no
+migration is planned. FlowTrace covers Java, Node/TypeScript and Python.
 
 ---
 
