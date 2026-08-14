@@ -53,8 +53,9 @@ When the FlowTrace plugin is installed its MCP server provides:
 | `trace.private_calls` | Just the private-method calls |
 | `trace.diff` | Compare two runs — spans only in one, duration deltas |
 
-Without the MCP server this is plain JSONL: `Read`, `Grep`, `jq`, and the
-repo's `./analyze-logs.sh` all work.
+Without the MCP server this is plain JSONL — one self-contained JSON object per
+line — so `Read`, `Grep` and `jq` are enough. For example, the slowest calls:
+`jq -s 'map(select(.event=="exit")) | sort_by(-.duration_ns) | .[:10]' flowtrace.jsonl`
 
 ## How to approach a trace
 

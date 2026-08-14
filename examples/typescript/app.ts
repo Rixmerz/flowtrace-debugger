@@ -332,13 +332,16 @@ async function main(): Promise<void> {
   }
 }
 
-// Run main
-if (require.main === module) {
-  main().catch(error => {
-    console.error('Fatal error:', error);
-    process.exit(1);
-  });
-}
+// Run main.
+//
+// This file uses `export`, so Node parses it as an ES module — where `require`
+// does not exist. The guard used to be `require.main === module`, which worked
+// only because v1 loaded the example through `--require` in CommonJS mode; under
+// the v2 ESM bootstrap it threw ReferenceError before any of the demo ran.
+main().catch(error => {
+  console.error('Fatal error:', error);
+  process.exit(1);
+});
 
 // Export for testing
 export { main };

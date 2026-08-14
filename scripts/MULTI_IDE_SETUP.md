@@ -16,11 +16,14 @@ Sistema de configuración automática del servidor MCP de FlowTrace para múltip
 
 ### Durante la Instalación
 
-El script `install-all.sh` ejecuta automáticamente el configurador después de compilar el MCP server:
+> **Nota.** Este configurador quedó huérfano: `install-all.sh`, que lo invocaba,
+> era un script v1 y fue eliminado. La forma soportada de obtener las tools del
+> MCP hoy es instalar el plugin de Claude Code (ver `plugin/README.md`), que
+> trae el server empaquetado y se registra solo. Este configurador sigue
+> existiendo para IDEs que el plugin no cubre; hay que ejecutarlo a mano.
 
 ```bash
-./install-all.sh
-# ... instalación normal ...
+python3 scripts/mcp-configurator.py
 # Aparece menú interactivo para seleccionar IDEs
 ```
 
@@ -214,7 +217,7 @@ El sistema hace merge inteligente preservando:
 - [x] Scripts de testing automatizados
 - [x] Documentación completa
 - [x] Templates de referencia
-- [x] Integración con install-all.sh
+- [ ] Integración con el instalador (el script v1 que la proveía fue eliminado)
 
 ### 🎯 Ventajas
 
@@ -234,9 +237,8 @@ El sistema hace merge inteligente preservando:
 # Verifica que el archivo existe
 ls scripts/mcp-configurator.py
 
-# Reinstala si es necesario
-cd flowtrace
-./install-all.sh
+# Recompila el MCP server si es necesario
+make build-mcp
 ```
 
 ### Error: "MCP server not found"
@@ -269,7 +271,7 @@ chmod +x scripts/mcp-configurator.py
 
 - [Configuración Manual](./ide-configs/README.md)
 - [MCP Server README](../mcp-server/README.md)
-- [MCP Tools Documentation](../mcp-server/MCP_TOOLS.md)
+- [MCP server tools](../mcp-server/README.md)
 - [FlowTrace Installation Guide](../docs/es/installation.md)
 
 ## 🤝 Contribuir
