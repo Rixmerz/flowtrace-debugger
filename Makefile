@@ -117,7 +117,7 @@ check-bundle: bundle-mcp
 
 test-dashboard:
 	@echo "==> test-dashboard: flowtrace-dashboard"
-	@cd flowtrace-dashboard && pnpm install --silent && node test/test-analyzer.js
+	@cd flowtrace-dashboard && pnpm install --silent && for t in test/*.js; do echo "  -- $$t"; node $$t || exit 1; done
 
 # Glob rather than a hardcoded file list, so a newly added test file is picked
 # up here and in CI instead of being silently left out of both.

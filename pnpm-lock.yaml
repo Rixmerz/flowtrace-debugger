@@ -58,6 +58,9 @@ importers:
 
   flowtrace-dashboard:
     dependencies:
+      ajv:
+        specifier: ^8.17.1
+        version: 8.20.0
       axios:
         specifier: ^1.13.1
         version: 1.19.0
