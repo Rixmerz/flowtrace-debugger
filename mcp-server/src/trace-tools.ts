@@ -1,4 +1,4 @@
-// FlowTrace v2 trace.* tool implementations. Pure functions over TraceEvent[]
+// FlowTrace v2 trace_* tool implementations. Pure functions over TraceEvent[]
 // so they're trivially testable.
 
 import type { TraceEvent, EnterEvent, ExitEvent } from "./types";

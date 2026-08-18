@@ -21391,7 +21391,7 @@ function traceDiff(a, b) {
 }
 
 // src/server.ts
-var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.0.0" });
+var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
 var sessions = /* @__PURE__ */ new Map();
 var evicted = /* @__PURE__ */ new Set();
 var MAX_SESSIONS = (() => {
@@ -21417,7 +21417,7 @@ function getSession(id) {
   if (!s) {
     if (evicted.has(id)) {
       throw new Error(
-        `Session ${id} was evicted: at most ${MAX_SESSIONS} logs are kept open (raise FLOWTRACE_MCP_MAX_SESSIONS). Re-open the log with log.open.`
+        `Session ${id} was evicted: at most ${MAX_SESSIONS} logs are kept open (raise FLOWTRACE_MCP_MAX_SESSIONS). Re-open the log with log_open.`
       );
     }
     throw new Error(`Invalid sessionId: ${id}`);
@@ -21434,7 +21434,7 @@ function ok(payload) {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 mcp.tool(
-  "log.open",
+  "log_open",
   "Open a v2 JSONL trace log and return a session id",
   { path: external_exports.string().describe("Absolute path to the JSONL log file") },
   async ({ path }) => {
@@ -21463,9 +21463,9 @@ mcp.tool(
   }
 );
 mcp.tool(
-  "log.close",
+  "log_close",
   "Release a session and free the memory holding its events",
-  { sessionId: external_exports.string().describe("Session id from log.open") },
+  { sessionId: external_exports.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const existed = sessions.delete(sessionId);
     evicted.delete(sessionId);
@@ -21473,9 +21473,9 @@ mcp.tool(
   }
 );
 mcp.tool(
-  "log.schema",
+  "log_schema",
   "Return discovered fields and a sample row for a v2 session",
-  { sessionId: external_exports.string().describe("Session id from log.open") },
+  { sessionId: external_exports.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const s = getSession(sessionId);
     return ok({
@@ -21503,10 +21503,10 @@ var whereSchema = external_exports.object({
   max_depth: external_exports.number().int().optional()
 }).describe("Field-level predicates, ANDed together");
 mcp.tool(
-  "log.search",
+  "log_search",
   "Filter v2 events by field (preferred) or free-text substring, with paging",
   {
-    sessionId: external_exports.string().describe("Session id from log.open"),
+    sessionId: external_exports.string().describe("Session id from log_open"),
     where: whereSchema.optional().describe("Field-level filters \u2014 prefer these over `filter`"),
     filter: external_exports.string().optional().describe("Case-sensitive substring matched against the whole serialized row. Broad: matches method, class, module and argument values alike. Prefer `where`."),
     fields: external_exports.array(external_exports.string()).optional().describe("Subset of fields to return"),
@@ -21535,10 +21535,10 @@ mcp.tool(
   }
 );
 mcp.tool(
-  "log.aggregate",
+  "log_aggregate",
   "Group v2 events by fields and aggregate (count/sum/avg/max/min)",
   {
-    sessionId: external_exports.string().describe("Session id from log.open"),
+    sessionId: external_exports.string().describe("Session id from log_open"),
     groupBy: external_exports.array(external_exports.string()).describe("Field names that form the composite group key"),
     metric: external_exports.object({
       op: external_exports.enum(["count", "sum", "avg", "max", "min"]).describe("Aggregation operator"),
@@ -21573,10 +21573,10 @@ mcp.tool(
   }
 );
 mcp.tool(
-  "trace.tree",
+  "trace_tree",
   "Build a hierarchical call tree for a given trace_id from a v2 session",
   {
-    sessionId: external_exports.string().describe("Session id from log.open"),
+    sessionId: external_exports.string().describe("Session id from log_open"),
     trace_id: external_exports.string().describe("W3C trace id (32 hex chars) to scope the tree")
   },
   async ({ sessionId, trace_id }) => {
@@ -21586,9 +21586,9 @@ mcp.tool(
   }
 );
 mcp.tool(
-  "trace.find_error",
+  "trace_find_error",
   "Find the first error event in a v2 session and return its call path to root",
-  { sessionId: external_exports.string().describe("Session id from log.open") },
+  { sessionId: external_exports.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const s = getSession(sessionId);
     const events = v2OnlyEvents(s);
@@ -21597,9 +21597,9 @@ mcp.tool(
   }
 );
 mcp.tool(
-  "trace.private_calls",
+  "trace_private_calls",
   "List private-visibility methods called in a v2 session, grouped by class.method",
-  { sessionId: external_exports.string().describe("Session id from log.open") },
+  { sessionId: external_exports.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const s = getSession(sessionId);
     const events = v2OnlyEvents(s);
@@ -21607,7 +21607,7 @@ mcp.tool(
   }
 );
 mcp.tool(
-  "trace.diff",
+  "trace_diff",
   "Compare two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas > 20%",
   {
     sessionId_a: external_exports.string().describe("Baseline session id (A)"),

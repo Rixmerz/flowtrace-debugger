@@ -14,7 +14,7 @@ reading traces, a read-only analyst subagent, and two slash commands.
 
 | Component | Name | Purpose |
 |-----------|------|---------|
-| MCP server | `flowtrace` | `log.*` and `trace.*` tools over a `flowtrace.jsonl` |
+| MCP server | `flowtrace` | `log_*` and `trace_*` tools over a `flowtrace.jsonl` |
 | Skill | `flowtrace-analysis` | How to read a v2 trace — schema, tools, reading discipline |
 | Subagent | `flowtrace-analyst` | Read-only trace investigation, returns findings not dumps |
 | Command | `/flowtrace:trace` | Run a command under instrumentation |

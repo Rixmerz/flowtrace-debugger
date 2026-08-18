@@ -32,8 +32,8 @@ This document covers breaking changes between FlowTrace schema v1 and v2, and ho
 
 The `mcp-server` includes a compatibility shim that detects v1 logs by checking whether the first event contains `"event":"ENTER"` or `"timestamp"` (integer).
 
-- On v1 log detection: the server logs a warning to stderr and translates fields on the fly for `log.open`, `log.search`, and `log.aggregate`.
-- v2-only tools (`trace.tree`, `trace.diff`, `trace.private_calls`) return an empty result set for v1 logs with an explanatory message.
+- On v1 log detection: the server logs a warning to stderr and translates fields on the fly for `log_open`, `log_search`, and `log_aggregate`.
+- v2-only tools (`trace_tree`, `trace_diff`, `trace_private_calls`) return an empty result set for v1 logs with an explanatory message.
 
 To silence the warning and opt into v1 mode explicitly, pass `--schema-v1` to `flowtrace analyze` (planned for 3 releases, not yet implemented).
 

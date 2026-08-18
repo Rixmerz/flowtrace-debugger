@@ -44,14 +44,14 @@ When the FlowTrace plugin is installed its MCP server provides:
 
 | Tool | Use it for |
 |------|-----------|
-| `log.open` | Load a trace file, returns a `sessionId` every other call needs |
-| `log.schema` | Field inventory — check this before assuming a field exists |
-| `log.search` | Filter events by field predicates |
-| `log.aggregate` | Group and count/sum — the fastest route to "where did time go" |
-| `trace.tree` | Rebuild the nested call tree for one `trace_id` |
-| `trace.find_error` | Locate a failing span and walk its parents back to the root |
-| `trace.private_calls` | Just the private-method calls |
-| `trace.diff` | Compare two runs — spans only in one, duration deltas |
+| `log_open` | Load a trace file, returns a `sessionId` every other call needs |
+| `log_schema` | Field inventory — check this before assuming a field exists |
+| `log_search` | Filter events by field predicates |
+| `log_aggregate` | Group and count/sum — the fastest route to "where did time go" |
+| `trace_tree` | Rebuild the nested call tree for one `trace_id` |
+| `trace_find_error` | Locate a failing span and walk its parents back to the root |
+| `trace_private_calls` | Just the private-method calls |
+| `trace_diff` | Compare two runs — spans only in one, duration deltas |
 
 Without the MCP server this is plain JSONL — one self-contained JSON object per
 line — so `Read`, `Grep` and `jq` are enough. For example, the slowest calls:
@@ -59,23 +59,23 @@ line — so `Read`, `Grep` and `jq` are enough. For example, the slowest calls:
 
 ## How to approach a trace
 
-**Start by scoping.** `log.open`, then find how many distinct `trace_id`s the
+**Start by scoping.** `log_open`, then find how many distinct `trace_id`s the
 file holds. Answering a question against a file containing many interleaved
 executions is the most common way to reach a confident wrong conclusion.
 
-**For a bug:** `trace.find_error` gives the failing span and its ancestry. Read
+**For a bug:** `trace_find_error` gives the failing span and its ancestry. Read
 the `args` of each ancestor going down — the point where a value first becomes
 wrong is usually several frames above where the exception surfaced.
 
-**For "why is this slow":** `log.aggregate` over `duration_ns` grouped by
+**For "why is this slow":** `log_aggregate` over `duration_ns` grouped by
 method. Then subtract child time from parent time before concluding — a method
 whose total is large may be doing nothing but waiting on one child.
 
 **For a regression:** capture a trace on the good revision and one on the bad,
-then `trace.diff`. Spans present in only one run tell you about changed control
+then `trace_diff`. Spans present in only one run tell you about changed control
 flow; large duration deltas tell you about changed cost.
 
-**For "what actually ran":** `trace.tree` on the relevant `trace_id` and read
+**For "what actually ran":** `trace_tree` on the relevant `trace_id` and read
 it top-down. This is the cheapest way to discover that the code you were
 reading was never called.
 

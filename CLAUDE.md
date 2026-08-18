@@ -34,7 +34,7 @@ file.
 | `scripts/` | Golden runners/normalizer, schema validation, plugin checks | pnpm |
 | `flowtrace-cli/` | Cross-language installer (`flowtrace` binary) | pnpm |
 | `flowtrace-dashboard/` | Express server + static perf UI | pnpm |
-| `mcp-server/` | MCP server exposing `log.*` and `trace.*` tools | pnpm + tsc |
+| `mcp-server/` | MCP server exposing `log_*` and `trace_*` tools | pnpm + tsc |
 | `plugin/` | The distributable Claude Code plugin (see below) | — |
 | `docs/` | English (`docs/en`) + Spanish (`docs/es`) docs |
 
@@ -163,9 +163,9 @@ do not modify the capture layers.
 ### MCP server (`mcp-server/`)
 
 TypeScript, `@modelcontextprotocol/sdk`, entry `src/server.ts`. Sessions are an
-in-memory `Map`; a log is loaded once per `log.open` and queried through
-`log.search` / `log.aggregate` / `log.schema`. `src/trace-tools.ts` implements
-`trace.tree` / `trace.find_error` / `trace.private_calls` / `trace.diff`.
+in-memory `Map`; a log is loaded once per `log_open` and queried through
+`log_search` / `log_aggregate` / `log_schema`. `src/trace-tools.ts` implements
+`trace_tree` / `trace_find_error` / `trace_private_calls` / `trace_diff`.
 Transport is stdio — **never write to stdout** outside the MCP protocol.
 
 ### Plugin (`plugin/`)

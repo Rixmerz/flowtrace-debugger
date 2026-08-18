@@ -6,8 +6,8 @@
     "url": "https://github.com/Rixmerz"
   },
   "metadata": {
-    "description": "Rixmerz plugin marketplace. Ships FlowTrace — multi-language runtime tracing for AI-assisted debugging.",
-    "version": "2.0.0"
+    "description": "Rixmerz plugin marketplace. Ships FlowTrace \u2014 multi-language runtime tracing for AI-assisted debugging.",
+    "version": "2.1.0"
   },
   "plugins": [
     {
@@ -15,7 +15,11 @@
       "source": "./plugin",
       "description": "Trace Java, Python, Node and TypeScript execution without modifying source, then analyze the resulting flowtrace.jsonl.",
       "category": "debugging",
-      "keywords": ["tracing", "debugging", "observability"]
+      "keywords": [
+        "tracing",
+        "debugging",
+        "observability"
+      ]
     }
   ]
 }

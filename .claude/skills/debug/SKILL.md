@@ -52,18 +52,18 @@ FLOWTRACE MCP (cuando disponible):
     flowtrace.status    — Estado del proyecto
 
   ANALISIS DE LOGS:
-    log.open            — Cargar JSONL, obtener sessionId
-    log.schema          — Descubrir campos y fila de ejemplo
-    log.search          — Filtrar filas por substring
+    log_open            — Cargar JSONL, obtener sessionId
+    log_schema          — Descubrir campos y fila de ejemplo
+    log_search          — Filtrar filas por substring
     log.timeline        — Eventos cronologicos
     log.sample          — Muestras representativas
     log.topK            — Top N valores de un campo
-    log.aggregate       — Agrupar y calcular count/sum/avg/max/min
+    log_aggregate       — Agrupar y calcular count/sum/avg/max/min
     log.flow            — Correlacionar eventos por claves compuestas
     log.errors          — Auto-detectar patrones de error
     log.export          — Exportar a CSV/JSON
     log.expand          — Recuperar datos completos de entradas truncadas
-    log.searchExpanded  — Buscar con auto-expansion
+    log_searchExpanded  — Buscar con auto-expansion
 
   DASHBOARD DE PERFORMANCE:
     dashboard.open       — Analizar archivo + URL de dashboard
@@ -104,7 +104,7 @@ Analisis enfocado en performance:
    - `dashboard.analyze` con path al jsonl -> metricas completas
    - `dashboard.bottlenecks` top 10 -> metodos con mayor impacto
    - `dashboard.errors` -> hotspots de errores
-   - `log.aggregate` por clase/metodo, metric avg durationMillis -> desglose
+   - `log_aggregate` por clase/metodo, metric avg durationMillis -> desglose
    - `log.topK` byField durationMillis, k=20 -> outliers
 3. Si FlowTrace no disponible o lenguaje no soportado:
    - Rust: `cargo bench`, `flamegraph`, `criterion`
@@ -144,8 +144,8 @@ Detecta test framework y ejecuta tests:
 FlowTrace se instala como plugin de Claude Code (ver `plugin/`), que trae su
 MCP server incluido. Las tools quedan disponibles directamente:
 
-- `log.open` / `log.search` / `log.aggregate` / `log.schema`
-- `trace.tree` / `trace.find_error` / `trace.private_calls` / `trace.diff`
+- `log_open` / `log_search` / `log_aggregate` / `log_schema`
+- `trace_tree` / `trace_find_error` / `trace_private_calls` / `trace_diff`
 
 Sin el plugin instalado, `flowtrace.jsonl` es JSONL plano: se lee con Read,
 Grep y `./analyze-logs.sh`.

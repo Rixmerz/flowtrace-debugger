@@ -78,12 +78,11 @@ class FlowtraceFinder(importlib.abc.MetaPathFinder):
             return None
 
         loader = FlowtraceSourceLoader(name, origin)
-        new_spec = importlib.machinery.ModuleSpec(
-            name=name,
-            loader=loader,
-            origin=origin,
-            is_package=spec.submodule_search_locations is not None,
-        )
-        if spec.submodule_search_locations is not None:
-            new_spec.submodule_search_locations = list(spec.submodule_search_locations)
-        return new_spec
+        # Mutate the spec PathFinder already built rather than constructing a
+        # fresh one. A bare ModuleSpec defaults to has_location=False, and
+        # CPython only assigns module.__file__ when that flag is True — so
+        # rebuilding it silently removed __file__ from every instrumented
+        # module. Anything doing Path(__file__).parent, which is the ordinary
+        # way to reach a data file next to the source, died with NameError.
+        spec.loader = loader
+        return spec

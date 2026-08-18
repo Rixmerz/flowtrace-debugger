@@ -1,5 +1,5 @@
-// End-to-end tests for session lifecycle: LRU eviction, log.close, and the
-// paging metadata on log.search.
+// End-to-end tests for session lifecycle: LRU eviction, log_close, and the
+// paging metadata on log_search.
 //
 // These drive the real server over stdio rather than unit-testing a helper,
 // because the session Map lives in server.ts and the behaviour under test is
@@ -98,43 +98,43 @@ function test(name, fn) { tests.push({ name, fn }); }
 
 test('sessions beyond the cap are evicted, oldest first', async () => {
   await withClient({ FLOWTRACE_MCP_MAX_SESSIONS: '2' }, async (c) => {
-    const a = await c.call('log.open', { path: LOG });
-    const b = await c.call('log.open', { path: ERR_LOG });
-    const third = await c.call('log.open', { path: LOG });
+    const a = await c.call('log_open', { path: LOG });
+    const b = await c.call('log_open', { path: ERR_LOG });
+    const third = await c.call('log_open', { path: LOG });
     assert.deepEqual(third.evictedSessions, [a.sessionId], 'the oldest session was dropped');
     // The survivor still works.
-    const schema = await c.call('log.schema', { sessionId: b.sessionId });
+    const schema = await c.call('log_schema', { sessionId: b.sessionId });
     assert.equal(schema.schemaVersion, 'v2');
   });
 });
 
 test('using a session refreshes it, so the untouched one is evicted instead', async () => {
   await withClient({ FLOWTRACE_MCP_MAX_SESSIONS: '2' }, async (c) => {
-    const a = await c.call('log.open', { path: LOG });
-    const b = await c.call('log.open', { path: ERR_LOG });
+    const a = await c.call('log_open', { path: LOG });
+    const b = await c.call('log_open', { path: ERR_LOG });
     // Touch A. By insertion order A is oldest; by *use* it is now newest.
-    await c.call('log.schema', { sessionId: a.sessionId });
-    const third = await c.call('log.open', { path: LOG });
+    await c.call('log_schema', { sessionId: a.sessionId });
+    const third = await c.call('log_open', { path: LOG });
     assert.deepEqual(third.evictedSessions, [b.sessionId],
       'LRU dropped the untouched session, not merely the first-opened one');
     // A survived precisely because it was used.
-    await c.call('log.schema', { sessionId: a.sessionId });
+    await c.call('log_schema', { sessionId: a.sessionId });
   });
 });
 
 test('an evicted session says so instead of just "invalid"', async () => {
   await withClient({ FLOWTRACE_MCP_MAX_SESSIONS: '1' }, async (c) => {
-    const a = await c.call('log.open', { path: LOG });
-    await c.call('log.open', { path: ERR_LOG });   // evicts a
-    const err = await c.callExpectingError('log.schema', { sessionId: a.sessionId });
+    const a = await c.call('log_open', { path: LOG });
+    await c.call('log_open', { path: ERR_LOG });   // evicts a
+    const err = await c.callExpectingError('log_schema', { sessionId: a.sessionId });
     assert.match(err, /evicted/i);
-    assert.match(err, /log\.open/, 'the error says how to recover');
+    assert.match(err, /log_open/, 'the error says how to recover');
   });
 });
 
 test('a never-issued id is reported as invalid, not as evicted', async () => {
   await withClient({}, async (c) => {
-    const err = await c.callExpectingError('log.schema', { sessionId: 'neverexisted' });
+    const err = await c.callExpectingError('log_schema', { sessionId: 'neverexisted' });
     assert.match(err, /Invalid sessionId/);
   });
 });
@@ -142,38 +142,38 @@ test('a never-issued id is reported as invalid, not as evicted', async () => {
 test('the default cap holds several sessions open at once', async () => {
   await withClient({}, async (c) => {
     const ids = [];
-    for (let i = 0; i < 5; i++) ids.push((await c.call('log.open', { path: LOG })).sessionId);
+    for (let i = 0; i < 5; i++) ids.push((await c.call('log_open', { path: LOG })).sessionId);
     // All five must still be usable under the default cap of 8.
-    for (const id of ids) await c.call('log.schema', { sessionId: id });
+    for (const id of ids) await c.call('log_schema', { sessionId: id });
   });
 });
 
-// -- log.close -------------------------------------------------------------
+// -- log_close -------------------------------------------------------------
 
-test('log.close frees a session and it stops working', async () => {
+test('log_close frees a session and it stops working', async () => {
   await withClient({}, async (c) => {
-    const a = await c.call('log.open', { path: LOG });
-    const closed = await c.call('log.close', { sessionId: a.sessionId });
+    const a = await c.call('log_open', { path: LOG });
+    const closed = await c.call('log_close', { sessionId: a.sessionId });
     assert.equal(closed.closed, true);
     assert.equal(closed.openSessions, 0);
-    const err = await c.callExpectingError('log.schema', { sessionId: a.sessionId });
+    const err = await c.callExpectingError('log_schema', { sessionId: a.sessionId });
     assert.match(err, /Invalid sessionId/);
   });
 });
 
 test('closing an unknown id reports false rather than throwing', async () => {
   await withClient({}, async (c) => {
-    const r = await c.call('log.close', { sessionId: 'nope' });
+    const r = await c.call('log_close', { sessionId: 'nope' });
     assert.equal(r.closed, false);
   });
 });
 
 // -- search paging ---------------------------------------------------------
 
-test('log.search reports the true match count, not just the page size', async () => {
+test('log_search reports the true match count, not just the page size', async () => {
   await withClient({}, async (c) => {
-    const s = await c.call('log.open', { path: LOG });
-    const r = await c.call('log.search', { sessionId: s.sessionId, limit: 2 });
+    const s = await c.call('log_open', { path: LOG });
+    const r = await c.call('log_search', { sessionId: s.sessionId, limit: 2 });
     assert.equal(r.returned, 2);
     assert.equal(r.total, s.count, 'total counts every match, not the page');
     assert.equal(r.truncated, true, 'caller is told it is seeing a fragment');
@@ -182,11 +182,11 @@ test('log.search reports the true match count, not just the page size', async ()
 
 test('paging covers the match set without overlap or gaps', async () => {
   await withClient({}, async (c) => {
-    const s = await c.call('log.open', { path: LOG });
+    const s = await c.call('log_open', { path: LOG });
     const fields = ['span_id', 'event'];
-    const p1 = await c.call('log.search', { sessionId: s.sessionId, limit: 3, offset: 0, fields });
-    const p2 = await c.call('log.search', { sessionId: s.sessionId, limit: 3, offset: 3, fields });
-    const all = await c.call('log.search', { sessionId: s.sessionId, fields });
+    const p1 = await c.call('log_search', { sessionId: s.sessionId, limit: 3, offset: 0, fields });
+    const p2 = await c.call('log_search', { sessionId: s.sessionId, limit: 3, offset: 3, fields });
+    const all = await c.call('log_search', { sessionId: s.sessionId, fields });
     assert.deepEqual([...p1.rows, ...p2.rows], all.rows.slice(0, 6));
     assert.equal(p2.offset, 3);
     assert.equal(all.truncated, false, 'a full page is not marked truncated');
@@ -195,8 +195,8 @@ test('paging covers the match set without overlap or gaps', async () => {
 
 test('an offset past the end yields no rows and does not error', async () => {
   await withClient({}, async (c) => {
-    const s = await c.call('log.open', { path: LOG });
-    const r = await c.call('log.search', { sessionId: s.sessionId, offset: 10000 });
+    const s = await c.call('log_open', { path: LOG });
+    const r = await c.call('log_search', { sessionId: s.sessionId, offset: 10000 });
     assert.equal(r.returned, 0);
     assert.equal(r.total, s.count);
     assert.equal(r.truncated, false);
@@ -205,10 +205,10 @@ test('an offset past the end yields no rows and does not error', async () => {
 
 // -- where reaches the tool ------------------------------------------------
 
-test('where filters are wired through log.search', async () => {
+test('where filters are wired through log_search', async () => {
   await withClient({}, async (c) => {
-    const s = await c.call('log.open', { path: ERR_LOG });
-    const r = await c.call('log.search', {
+    const s = await c.call('log_open', { path: ERR_LOG });
+    const r = await c.call('log_search', {
       sessionId: s.sessionId, where: { has_error: true }, fields: ['method'],
     });
     assert.deepEqual(r.rows.map((x) => x.method).sort(), ['inner', 'outer']);
@@ -216,13 +216,13 @@ test('where filters are wired through log.search', async () => {
   });
 });
 
-test('where filters are wired through log.aggregate', async () => {
+test('where filters are wired through log_aggregate', async () => {
   await withClient({}, async (c) => {
-    const s = await c.call('log.open', { path: LOG });
-    const all = await c.call('log.aggregate', {
+    const s = await c.call('log_open', { path: LOG });
+    const all = await c.call('log_aggregate', {
       sessionId: s.sessionId, groupBy: ['method'], metric: { op: 'count' },
     });
-    const entersOnly = await c.call('log.aggregate', {
+    const entersOnly = await c.call('log_aggregate', {
       sessionId: s.sessionId, groupBy: ['method'], metric: { op: 'count' },
       where: { event: 'enter' },
     });

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .emitter import Emitter
 
-__version__ = "2.0.0a1"
+__version__ = "2.1.0"
 __all__ = [
     "install",
     "uninstall",

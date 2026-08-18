@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .transformer import FlowtraceTransformer
 
-_CAPTURE_VERSION = "2.0.0"
+_CAPTURE_VERSION = "2.1.0"
 _PY_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 

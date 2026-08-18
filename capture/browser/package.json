@@ -1,6 +1,6 @@
 {
   "name": "@flowtrace/capture-browser",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "FlowTrace v2 browser capture: HTTP, navigation and error spans shipped to the dashboard collector",
   "type": "module",
   "main": "src/index.js",
