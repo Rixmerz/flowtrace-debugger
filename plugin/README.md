@@ -7,7 +7,7 @@ reading traces, a read-only analyst subagent, and two slash commands.
 
 ```
 /plugin marketplace add Rixmerz/flowtrace-debugger
-/plugin install flowtrace@Rixmerz
+/plugin install flowtrace@rixmerz-flowtrace
 ```
 
 ## What it provides
