@@ -26,13 +26,20 @@ install();
 const loaderUrl = new URL('./esm/loader.mjs', import.meta.url).href;
 register(loaderUrl, import.meta.url);
 
-// ── 3. Outgoing trace context ────────────────────────────────
-// Attaches `traceparent` to outbound fetch / http requests while a span is
-// active, so a call made by code we do not own still joins the trace on the
-// far side. Never overwrites a caller-set header; opt out with
-// FLOWTRACE_PROPAGATE=0.
+// ── 3. Trace context in and out ──────────────────────────────
+// Inbound: adopt a traceparent left in the environment by whatever spawned us,
+// so a child process joins its parent's trace instead of starting a new one.
+// Outbound: attach `traceparent` to fetch / http requests and to the
+// environment of processes we spawn, so a call made by code we do not own
+// still joins the trace on the far side. A caller-set header always wins.
+// Opt out of the outbound half with FLOWTRACE_PROPAGATE=0.
+import { seedFromEnvironment } from './runtime/context.js';
 import { installOutgoingPropagation } from './runtime/propagate.js';
+import { installSubprocessPropagation } from './runtime/subprocess.js';
+
+seedFromEnvironment();
 installOutgoingPropagation();
+installSubprocessPropagation();
 
 // ── 4. Worker propagation ────────────────────────────────────
 const bootstrapAbsPath = fileURLToPath(import.meta.url);

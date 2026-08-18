@@ -44,6 +44,13 @@ public class FlowtraceInstrumentationModule extends InstrumentationModule {
                 "io.flowtrace.emitter.FlowtraceEmitter",
                 "io.flowtrace.emitter.TraceEvent",
                 "io.flowtrace.advice.DepthTracker",
+                // Advice is inlined into the target class, which lives in the
+                // application's classloader — so every type it touches must be
+                // injected there too. Omitting this made onEnter throw
+                // NoClassDefFoundError, which the advice swallows: the trace
+                // then contained exit events only, with null ids and absurd
+                // durations, and nothing said why.
+                "io.flowtrace.advice.TraceparentSeed",
                 "io.flowtrace.advice.FlowtraceAdvice"
         );
     }

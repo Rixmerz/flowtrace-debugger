@@ -28,9 +28,28 @@
  * Opt out with FLOWTRACE_PROPAGATE=0.
  */
 
-import http from 'node:http';
-import https from 'node:https';
+import { createRequire } from 'node:module';
 import { currentTraceparent } from './context.js';
+
+// IMPORTANT: the builtins are reached through createRequire, NOT a static
+// `import http from 'node:http'`.
+//
+// A builtin's ESM facade snapshots its named exports from the CJS exports
+// object when the facade is created, and the facade is created on the first
+// *ESM* import of that builtin. A static import here would therefore build the
+// facade before we patch, so an application doing
+// `import { request } from 'node:http'` would keep binding the ORIGINAL
+// function and silently get no propagation, while
+// `import http from 'node:http'; http.request()` would work. Two import styles
+// with different behaviour is worse than not patching at all — a user would
+// have no way to tell which one they were in.
+//
+// createRequire reaches the CJS exports without creating the facade, so the
+// facade is later built from the already-patched exports and both styles see
+// it. Asserted by test-propagate-facade.mjs.
+const require = createRequire(import.meta.url);
+const http = require('node:http');
+const https = require('node:https');
 
 const HEADER = 'traceparent';
 

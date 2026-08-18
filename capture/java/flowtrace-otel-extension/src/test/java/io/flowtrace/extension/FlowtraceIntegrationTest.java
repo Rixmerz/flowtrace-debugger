@@ -135,7 +135,8 @@ class FlowtraceIntegrationTest {
 
         assertEquals(8, lines.size(),
                 "Expected 8 JSONL lines (4 enter + 4 exit). Got " + lines.size()
-                        + ".\nContent:\n" + String.join("\n", lines));
+                        + ".\nContent:\n" + String.join("\n", lines)
+                        + diagnostics(stderrFile));
 
         // --- parse all events ---
         List<JsonNode> events = new ArrayList<>();

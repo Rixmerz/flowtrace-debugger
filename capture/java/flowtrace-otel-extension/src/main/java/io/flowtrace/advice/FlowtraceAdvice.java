@@ -68,13 +68,31 @@ public class FlowtraceAdvice {
             depth = DepthTracker.enterAndGet();
 
             // Capture enclosing span BEFORE starting a new one — this is the parent.
-            Span enclosingSpan = Span.fromContext(Context.current());
+            Context parentContext = Context.current();
+            Span enclosingSpan = Span.fromContext(parentContext);
             SpanContext enclosingSc = enclosingSpan.getSpanContext();
+
+            // No enclosing span means this is a local root. Before letting OTel
+            // mint a brand-new trace_id, adopt an inbound context from the
+            // environment carrier so the trace continues across the process
+            // boundary. The OTel agent handles the *network* boundary itself
+            // but knows nothing about env vars, and Node and Python both honour
+            // FLOWTRACE_TRACEPARENT — so without this a Node parent spawning a
+            // Java child produced two unrelated traces.
+            if (!enclosingSc.isValid()) {
+                SpanContext seeded = TraceparentSeed.get();
+                if (seeded != null) {
+                    parentContext = parentContext.with(Span.wrap(seeded));
+                    enclosingSc = seeded;
+                }
+            }
             parentId = enclosingSc.isValid() ? enclosingSc.getSpanId() : null;
 
             Tracer tracer = GlobalOpenTelemetry.getTracer("io.flowtrace", "2.0.0");
-            span      = tracer.spanBuilder(methodName).startSpan();
-            scope     = Context.current().with(span).makeCurrent();
+            // setParent is required: without it the builder falls back to
+            // Context.current(), which does NOT contain the seeded span.
+            span      = tracer.spanBuilder(methodName).setParent(parentContext).startSpan();
+            scope     = parentContext.with(span).makeCurrent();
             startNanos = System.nanoTime();
 
             SpanContext sc = span.getSpanContext();

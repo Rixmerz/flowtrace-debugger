@@ -8,6 +8,22 @@ import { fileURLToPath } from 'node:url';
 import { extname } from 'node:path';
 import { readFileSync } from 'node:fs';
 
+/**
+ * FlowTrace's own source root. Nothing under it is ever instrumented.
+ *
+ * The only exclusion used to be '/node_modules/', which covers being installed
+ * as a dependency but not running FROM SOURCE. With the default prefix —
+ * "everything under cwd" — launching a traced program from a directory that
+ * contains capture/node made the loader transform our own runtime, and the
+ * program then died on a SyntaxError in FlowTrace's own code. It failed
+ * silently: exit status 0, no output, no error, no events.
+ *
+ * Scoped to src/ deliberately, not the whole package: test/fixtures/ sits
+ * beside it and must stay instrumentable, or every fixture-based test quietly
+ * stops producing events.
+ */
+const SELF_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
 // Dynamic import of transform and cache so the loader module itself is lean.
 // These are loaded lazily on first instrumented file.
 let _transform = null;
@@ -79,6 +95,7 @@ function shouldInstrument(url) {
   if (!url.startsWith('file://')) return false;
   const path = fileURLToPath(url);
   if (path.includes('/node_modules/')) return false;
+  if (path.startsWith(SELF_ROOT)) return false;
 
   const ext = extname(path);
   if (!['.js', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'].includes(ext)) return false;

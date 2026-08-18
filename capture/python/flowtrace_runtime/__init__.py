@@ -13,13 +13,20 @@ __all__ = [
     "uninstall",
     "get_emitter",
     "remote_context",
+    "seed_from_environment",
+    "TRACEPARENT_ENV",
     "current_traceparent",
 ]
 
 # Re-exported directly rather than lazily: these are cheap (contextvars only,
 # no import hook, no emitter) and a framework integration reaches for them on
 # the request path, where a lazy import on every call would be wasteful.
-from .context import current_traceparent, remote_context  # noqa: E402
+from .context import (  # noqa: E402
+    TRACEPARENT_ENV,
+    current_traceparent,
+    remote_context,
+    seed_from_environment,
+)
 
 
 def install() -> None:

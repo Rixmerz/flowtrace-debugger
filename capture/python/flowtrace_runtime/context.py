@@ -6,6 +6,7 @@ Python's contextvars module — no shared mutable state.
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Iterator, Optional, Tuple
@@ -83,3 +84,38 @@ def current_traceparent() -> Optional[str]:
     Returns ``None`` when no span is active.
     """
     return format_traceparent(current_trace_id.get(), current_span_id.get())
+
+
+TRACEPARENT_ENV = "FLOWTRACE_TRACEPARENT"
+
+
+def seed_from_environment(raw: Optional[str] = None) -> bool:
+    """Seed this process's trace from the environment, set by whatever spawned it.
+
+    HTTP carries trace context in a header; a process spawn has no header, so
+    the environment is the carrier. ``FLOWTRACE_TRACEPARENT`` holds a plain W3C
+    traceparent and every runtime reads the same name, so a Node parent can
+    seed a Python child and vice versa.
+
+    Unlike :func:`remote_context` this is not scoped to a block — there is no
+    block to scope it to. It sets the context for the life of the process,
+    which is exactly the span the parent's call covers, and the tokens are
+    deliberately dropped since nothing will ever reset them.
+
+    The seeded span is synthetic and never emitted: the parent already emitted
+    it. ``current_depth`` is set to 0 because this runtime reads it as the
+    depth of the span *about to start* — the same reason ``remote_context``
+    seeds 0 where the Node runtime seeds -1.
+
+    :param raw: Defaults to ``os.environ[TRACEPARENT_ENV]``.
+    :returns: whether a valid context was adopted.
+    """
+    if raw is None:
+        raw = os.environ.get(TRACEPARENT_ENV)
+    remote = parse_traceparent(raw)
+    if remote is None:
+        return False
+    current_trace_id.set(remote.trace_id)
+    current_span_id.set(remote.parent_id)
+    current_depth.set(0)
+    return True

@@ -88,3 +88,36 @@ export function currentTraceparent() {
 }
 
 export { storage };
+
+/**
+ * Seeds this process's trace from the FLOWTRACE_TRACEPARENT environment
+ * variable, set by whatever spawned it.
+ *
+ * This is the receiving half of `subprocess.js`. HTTP carries trace context in
+ * a header; a process spawn has no header, so the environment is the carrier.
+ * The value is a plain W3C traceparent, and every runtime reads the same name,
+ * so a Node parent can seed a Python or Java child and vice versa.
+ *
+ * The seeded span is synthetic and never emitted — the parent process already
+ * emitted it. It sits at depth -1 for the same reason as in
+ * runWithRemoteContext: the first *local* span then lands at depth 0, matching
+ * an ordinary root and satisfying the schema's `depth >= 0`.
+ *
+ * Unlike runWithRemoteContext this does not scope the context to a callback:
+ * there is no callback to scope it to. It sets the store for the lifetime of
+ * the process, which is exactly the lifetime the parent's span covers.
+ *
+ * @param {string} [raw] - Defaults to process.env.FLOWTRACE_TRACEPARENT.
+ * @returns {boolean} whether a valid context was adopted.
+ */
+export function seedFromEnvironment(raw = process.env.FLOWTRACE_TRACEPARENT) {
+  const remote = parseTraceparent(raw);
+  if (!remote) return false;
+  storage.enterWith({
+    trace_id: remote.trace_id,
+    span_id: remote.parent_id,
+    depth: -1,
+    remote: true,
+  });
+  return true;
+}

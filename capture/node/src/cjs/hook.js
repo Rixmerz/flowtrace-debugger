@@ -14,6 +14,9 @@ import { transform } from '../transform/swc.js';
 const _require = createRequire(import.meta.url);
 const Module   = _require('module');
 
+/** FlowTrace's own source root — never instrumented. See esm/loader.mjs. */
+const SELF_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
 // Absolute path to the runtime instrument module (CJS require path).
 // When the CJS hook rewrites a file it prepends a require() pointing here.
 // We use a file:// URL resolved relative to this file so it works regardless
@@ -32,6 +35,9 @@ const RUNTIME_PATH = fileURLToPath(new URL('../runtime/instrument.js', import.me
  */
 function shouldInstrument(filename) {
   if (filename.includes('/node_modules/')) return false;
+  // Never instrument FlowTrace's own runtime — see SELF_ROOT in esm/loader.mjs
+  // for why '/node_modules/' alone was not enough.
+  if (filename.startsWith(SELF_ROOT)) return false;
   if (!filename.endsWith('.js') && !filename.endsWith('.cjs') &&
       !filename.endsWith('.mjs') && !filename.endsWith('.ts') &&
       !filename.endsWith('.tsx')) return false;
