@@ -8,20 +8,12 @@ const fs   = require('fs');
 const path = require('path');
 const { spawnSync, spawn } = require('child_process');
 const chalk = require('chalk');
+const assets = require('../assets');
 const { detectLang, detectPackagePrefix } = require('../detect');
 
 const SUPPORTED_LANGS = new Set(['java', 'python', 'node', 'ts']);
 
 // ---------- helpers ----------
-
-/**
- * Locate a file relative to the directory of this module's repo root.
- * Works whether the CLI is run from any cwd.
- */
-function repoRoot() {
-  // This file is at <repo>/flowtrace-cli/lib/commands/run.js
-  return path.resolve(__dirname, '..', '..', '..'); // <repo>
-}
 
 /**
  * Scan the first pom.xml found in cwd for <groupId>.
@@ -195,21 +187,28 @@ async function runCommand(options = {}, restArgs = []) {
 }
 
 async function runJava({ options, restArgs, cwd, outPath }) {
-  const root = repoRoot();
-
-  // 1. Resolve jar paths
-  const otelAgent = path.join(root, 'flowtrace-cli', 'vendor', 'java', 'opentelemetry-javaagent.jar');
-  const flExt = path.join(root, 'capture', 'java', 'flowtrace-otel-extension', 'target',
-    'flowtrace-otel-extension-2.0.0-SNAPSHOT.jar');
-
-  if (!fs.existsSync(otelAgent)) {
-    console.error(chalk.red('Error:'), `No se encontró el agente OTel: ${otelAgent}`);
-    console.log(chalk.gray('Ejecuta: make build   (o: make fetch-deps) en flowtrace-cli/'));
+  // 1. Resolve jar paths through the asset resolver, which works both from an
+  //    npm install and from a checkout. The extension jar is found by prefix,
+  //    never by a name carrying the version — that name had gone stale two
+  //    releases back and pointed at a SNAPSHOT that no longer exists.
+  const flExt = assets.javaExtensionJar();
+  if (!flExt) {
+    console.error(chalk.red('Error:'), 'No se encontró la extensión FlowTrace para Java.');
+    console.log(chalk.gray(assets.isVendored()
+      ? 'La instalación parece incompleta — reinstala el paquete.'
+      : 'Ejecuta: make build-java'));
     process.exit(1);
   }
-  if (!fs.existsSync(flExt)) {
-    console.error(chalk.red('Error:'), `No se encontró la extensión FlowTrace: ${flExt}`);
-    console.log(chalk.gray('Ejecuta: make build   en flowtrace-cli/  (o mvn package en capture/java/flowtrace-otel-extension/)'));
+
+  // The OTel agent is not shipped inside the package (~24 MB, and not ours):
+  // it is fetched once and cached in ~/.flowtrace/.
+  let otelAgent;
+  try {
+    otelAgent = await assets.ensureOtelAgent((m) => console.log(chalk.gray(m)));
+  } catch (e) {
+    console.error(chalk.red('Error:'), `No se pudo obtener el agente OpenTelemetry: ${e.message}`);
+    console.log(chalk.gray(`Descárgalo manualmente a ${assets.otelAgentPath()} desde:`));
+    console.log(chalk.gray(`  ${assets.OTEL_URL}`));
     process.exit(1);
   }
 
@@ -289,9 +288,8 @@ function detectPythonPrefix(cwd) {
  * resolves correctly without a pip install.
  */
 function buildPythonEnv({ prefix, outPath, stubDir }) {
-  const root = repoRoot();
-  // capture/python/ is the directory that contains the flowtrace_runtime/ package.
-  const runtimeParent = path.resolve(root, 'capture', 'python');
+  // The directory that contains the flowtrace_runtime/ package.
+  const runtimeParent = assets.pythonRuntimeParent();
   const existing = process.env.PYTHONPATH || '';
   const parts = [stubDir, runtimeParent];
   if (existing) parts.push(existing);
@@ -305,10 +303,8 @@ function buildPythonEnv({ prefix, outPath, stubDir }) {
 }
 
 async function runPython({ options, restArgs, cwd, outPath }) {
-  const root = repoRoot();
-
-  // 1. Resolve stub dir (ships with capture/python/stub/).
-  const stubDir = path.join(root, 'capture', 'python', 'stub');
+  // 1. Resolve stub dir (vendored, or capture/python/stub/ in a checkout).
+  const stubDir = assets.pythonStubDir();
   if (!fs.existsSync(stubDir)) {
     console.error(chalk.red('Error:'), `No se encontró el directorio stub de Python: ${stubDir}`);
     console.log(chalk.gray('Asegúrate de que capture/python/stub/sitecustomize.py existe.'));
@@ -387,10 +383,8 @@ function buildNodeEnv({ bootstrapPath, prefix, outPath }) {
 }
 
 async function runNode({ options, restArgs, cwd, outPath }) {
-  const root = repoRoot();
-
   // 1. Resolve bootstrap path
-  const bootstrapPath = path.join(root, 'capture', 'node', 'src', 'bootstrap.mjs');
+  const bootstrapPath = assets.nodeBootstrap();
   if (!fs.existsSync(bootstrapPath)) {
     console.error(chalk.red('Error:'), `No se encontró el bootstrap de Node: ${bootstrapPath}`);
     console.log(chalk.gray('Asegúrate de que capture/node/src/bootstrap.mjs existe.'));

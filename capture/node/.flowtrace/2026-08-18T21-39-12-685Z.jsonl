@@ -1,0 +1,2 @@
+{"ts":1787089152.6853821,"trace_id":"034d34294a0ce6cbe51df06456a9ead2","span_id":"5c7a9bdd3a337c3e","parent_id":null,"event":"enter","thread":"main","lang":"node","module":"self-instr-probe-14746","class":"","method":"traced","visibility":"public","args":{},"depth":0}
+{"ts":1787089152.686521,"trace_id":"034d34294a0ce6cbe51df06456a9ead2","span_id":"5c7a9bdd3a337c3e","parent_id":null,"event":"exit","thread":"main","lang":"node","module":"self-instr-probe-14746","class":"","method":"traced","visibility":"public","args":{},"result":{"value":42},"duration_ns":1148735,"depth":0}

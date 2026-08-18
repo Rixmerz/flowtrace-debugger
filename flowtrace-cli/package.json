@@ -1,27 +1,28 @@
 {
-  "name": "@flowtrace/cli",
+  "name": "@rixmerz/flowtrace",
   "version": "2.1.0",
-  "description": "Universal FlowTrace installer and project manager for Java and Node.js",
+  "description": "Trace what Java, Node, TypeScript and Python actually did \u2014 one install, no Maven, no pip.",
   "main": "lib/index.js",
   "bin": {
     "flowtrace": "./bin/flowtrace.js"
   },
   "scripts": {
-    "test": "node test/test-cli.js"
+    "test": "node test/test-cli.js",
+    "vendor": "node scripts/vendor.mjs",
+    "prepack": "node scripts/vendor.mjs"
   },
   "keywords": [
     "flowtrace",
-    "debugger",
-    "debugging",
     "tracing",
+    "debugging",
     "instrumentation",
+    "observability",
     "java",
     "node",
+    "typescript",
     "python",
-    "go",
-    "rust",
-    "dotnet",
-    "cli",
+    "opentelemetry",
+    "mcp",
     "ai-debugging"
   ],
   "author": "Juan Pablo Diaz <jpablo@rixmerz.dev> (https://github.com/Rixmerz)",
@@ -35,15 +36,29 @@
   },
   "homepage": "https://github.com/Rixmerz/flowtrace-debugger#readme",
   "dependencies": {
-    "commander": "^11.1.0",
-    "inquirer": "^8.2.5",
+    "@babel/generator": "^7.29.1",
+    "@babel/parser": "^7.29.3",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
+    "@swc/core": "^1.7.0",
     "chalk": "^4.1.2",
-    "ora": "^5.4.1",
-    "fast-xml-parser": "^4.3.2",
+    "commander": "^11.1.0",
     "cosmiconfig": "^9.0.0",
-    "fs-extra": "^11.2.0"
+    "fast-xml-parser": "^4.3.2",
+    "fs-extra": "^11.2.0",
+    "inquirer": "^8.2.5",
+    "ora": "^5.4.1"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "vendor",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

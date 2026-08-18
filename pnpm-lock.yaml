@@ -40,6 +40,21 @@ importers:
 
   flowtrace-cli:
     dependencies:
+      '@babel/generator':
+        specifier: ^7.29.1
+        version: 7.29.8
+      '@babel/parser':
+        specifier: ^7.29.3
+        version: 7.29.8
+      '@babel/traverse':
+        specifier: ^7.29.0
+        version: 7.29.8
+      '@babel/types':
+        specifier: ^7.29.0
+        version: 7.29.8
+      '@swc/core':
+        specifier: ^1.7.0
+        version: 1.15.47
       chalk:
         specifier: ^4.1.2
         version: 4.1.2
