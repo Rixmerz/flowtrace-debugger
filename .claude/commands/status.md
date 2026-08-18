@@ -1,47 +1,56 @@
 ---
 name: status
-description: Show project health dashboard with DCC metrics, security findings, test results, and quality trends. Quick health check.
+description: Show FlowTrace repo health — golden fixtures, per-subproject test state, CI wiring, and workspace consistency. Quick health check.
 disable-model-invocation: true
 context: fork
 agent: Explore
 ---
 
-Generate a project health status report using available data.
+Report the health of this repository. Read and inspect; do not fix anything.
 
-## Gather Data
+## Gather
 
-1. **DCC Quality** (if DCC available):
-   - Call `cube_get_stats` — files indexed, lines of code
-   - Call `cube_detect_smells` with `summary_only: true`
-   - Call `cube_get_debt` (if response not too large, use top 5 files only)
+1. **Golden fixtures** — the load-bearing contract:
+   - `node scripts/validate-golden.mjs` — every fixture must exist and validate.
+     A fixture reporting zero events is a failure, not a pass.
+   - Confirm each `examples/golden/**/expected.jsonl` is tracked by git
+     (`git ls-files --error-unmatch`). They were silently gitignored once.
 
-2. **Security** (if scan data available):
-   - Call `cube_finding_stats`
+2. **Test state per subproject** — report which ran and which did not:
+   - Java: `capture/java/flowtrace-otel-extension` (JUnit; check the integration
+     test is not skipping itself)
+   - Python: `capture/python` (pytest)
+   - Node: `capture/node` (node:test)
+   - Consumers: `mcp-server`, `flowtrace-dashboard`, `flowtrace-cli`
 
-3. **Trends** (if trend data available):
-   - Call `trend_get_summary`
+3. **CI wiring** — `.github/workflows/v2-ci.yml`:
+   - Which branches actually trigger it, and does that include the default branch?
+   - Does every subproject with tests have a job?
 
-4. **Workflow** (if workflow active):
-   - Call `graph_status`
+4. **Workspace consistency**:
+   - Exactly one lockfile at the root; no stray `package-lock.json` in a
+     workspace package.
+   - `packageManager` in the root `package.json` matches the lockfile version.
 
-5. **Tests**:
-   - Check for test runner: `package.json` scripts, `go.mod`, `Cargo.toml`, `pyproject.toml`
-   - Report test command but do NOT run tests (too slow for a status check)
+5. **Git hygiene**:
+   - No generated files tracked (`git ls-files | grep -E '\.pyc$|egg-info|node_modules/'`).
 
-## Present Report
+## Report
 
 ```
-┌─────────────────────────────────────────┐
-│         Project Health Dashboard        │
-├──────────────┬──────────────────────────┤
-│ Files        │ N indexed, N lines       │
-│ Smells       │ N total (H high, M med)  │
-│ Debt Grade   │ A-F (score/100)          │
-│ Security     │ N findings (grade)       │
-│ Trend        │ Smells: X→Y, Debt: X→Y  │
-│ Workflow     │ Node: X, Phase: Y        │
-│ Tests        │ Command: `npm test`      │
-└──────────────┴──────────────────────────┘
+## FlowTrace status
+
+| Area | State | Detail |
+|------|-------|--------|
+| Golden fixtures | N events / M fixtures | pass/fail |
+| Java / Python / Node capture | | skipped tests called out explicitly |
+| Consumers (mcp, dashboard, cli) | | |
+| CI | triggers on … | jobs missing coverage |
+| Workspace | | lockfile / packageManager |
+
+### Needs attention
 ```
 
-Keep the report concise — one screen, no scrolling.
+Call out silent passes specifically — a suite that skipped everything, a
+validator that checked zero items, a job that never ran. Those read as green
+and are the failure mode this repo has actually been bitten by.

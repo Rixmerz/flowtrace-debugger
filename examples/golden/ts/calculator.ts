@@ -20,7 +20,7 @@ export class Calculator {
   }
 }
 
-if (require.main === module) {
-  // eslint-disable-next-line no-console
-  console.log(new Calculator().run());
-}
+// Invoked directly by the golden harness. No `require.main === module` guard:
+// the capture loads .ts through the ESM loader, where `require` is undefined.
+// eslint-disable-next-line no-console
+console.log(new Calculator().run());

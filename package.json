@@ -1,0 +1,24 @@
+{
+  "name": "flowtrace-workspace",
+  "version": "2.0.0",
+  "private": true,
+  "description": "FlowTrace v2 workspace root — orchestrates the JS/TS subprojects. Java and Python builds stay in the Makefile.",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "build": "pnpm --filter @flowtrace/mcp-server run build",
+    "test": "make test",
+    "test:node": "pnpm --filter @flowtrace/capture-node run test",
+    "test:mcp": "pnpm --filter @flowtrace/mcp-server run test",
+    "validate:schema": "node scripts/validate-golden.mjs",
+    "golden:check": "node scripts/check-golden.mjs",
+    "golden:gen": "node scripts/gen-golden.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rixmerz/flowtrace-debugger.git"
+  }
+}

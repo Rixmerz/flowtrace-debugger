@@ -176,7 +176,14 @@ def _ft_exit_error(ctx: dict, exc: BaseException) -> None:
         "method": ctx["method"],
         "visibility": ctx["visibility"],
         "args": ctx["args"],
-        "result": {"error": error_info},
+        # `result` stays {} and the error goes in the top-level `error` field.
+        # This used to emit `result: {"error": ...}`, which was schema-VALID
+        # (result is a free-form object, so nothing rejected it) but invisible
+        # to every consumer: trace.find_error looks for a top-level `error`, so
+        # it reported "no errors" on Python traces full of exceptions. Java and
+        # Node already used the top-level field; Python was the odd one out.
+        "result": {},
+        "error": error_info,
         "duration_ns": duration_ns,
         "depth": ctx["depth"],
     })

@@ -6,11 +6,16 @@
   "main": "app.mjs",
   "scripts": {
     "start": "node app.mjs",
-    "start:trace": "../../run-node-flowtrace.sh app.mjs",
-    "start:trace:debug": "FLOWTRACE_STDOUT=true ../../run-node-flowtrace.sh app.mjs",
-    "start:trace:filter": "FLOWTRACE_PACKAGE_PREFIX=app ../../run-node-flowtrace.sh app.mjs"
+    "start:trace": "node --import ../../capture/node/src/bootstrap.mjs app.mjs",
+    "start:trace:debug": "FLOWTRACE_STDOUT=true node --import ../../capture/node/src/bootstrap.mjs app.mjs",
+    "start:trace:filter": "FLOWTRACE_PACKAGE_PREFIX=app node --import ../../capture/node/src/bootstrap.mjs app.mjs"
   },
-  "keywords": ["flowtrace", "example", "esm", "es-modules"],
+  "keywords": [
+    "flowtrace",
+    "example",
+    "esm",
+    "es-modules"
+  ],
   "author": "FlowTrace",
   "license": "MIT"
 }

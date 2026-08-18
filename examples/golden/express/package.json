@@ -1,0 +1,10 @@
+{
+  "name": "@flowtrace/golden-express",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Express golden fixture — proves the Node capture traces user code running inside a real framework request cycle.",
+  "main": "app.js",
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

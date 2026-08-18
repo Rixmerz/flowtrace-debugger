@@ -296,26 +296,22 @@ Methods with exceptions:
 
 ## Integration with FlowTrace Agents
 
-### JavaScript Agent
-```bash
-cd flowtrace-agent-js
-node src/index.js your-app.js
-# Generates flowtrace.jsonl
+These referenced the v1 agents, which have been deleted. Capture now lives in
+`capture/<lang>/` and the simplest way to produce a trace is the CLI:
 
-# Open in dashboard
-cd ../flowtrace-dashboard
-node cli.js open ../flowtrace-agent-js/flowtrace.jsonl
+```bash
+flowtrace run -- node your-app.js      # or: python your_script.py, java -jar app.jar
+node cli.js open flowtrace.jsonl
 ```
 
-### Python Agent
+### Node / TypeScript, without the CLI
 ```bash
-cd flowtrace-agent-python
-python -m flowtrace_agent your_script.py
-# Generates flowtrace.jsonl
+node --import ./capture/node/src/bootstrap.mjs your-app.js
+```
 
-# Open in dashboard
-cd ../flowtrace-dashboard
-node cli.js open ../flowtrace-agent-python/flowtrace.jsonl
+### Python, without the CLI
+```bash
+PYTHONPATH=capture/python/stub:capture/python FLOWTRACE_ENABLE=1 python your_script.py
 ```
 
 ### Any Agent

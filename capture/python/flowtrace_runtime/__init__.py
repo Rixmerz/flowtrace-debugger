@@ -8,7 +8,25 @@ if TYPE_CHECKING:
     from .emitter import Emitter
 
 __version__ = "2.0.0a1"
-__all__ = ["install", "uninstall", "get_emitter"]
+__all__ = [
+    "install",
+    "uninstall",
+    "get_emitter",
+    "remote_context",
+    "seed_from_environment",
+    "TRACEPARENT_ENV",
+    "current_traceparent",
+]
+
+# Re-exported directly rather than lazily: these are cheap (contextvars only,
+# no import hook, no emitter) and a framework integration reaches for them on
+# the request path, where a lazy import on every call would be wasteful.
+from .context import (  # noqa: E402
+    TRACEPARENT_ENV,
+    current_traceparent,
+    remote_context,
+    seed_from_environment,
+)
 
 
 def install() -> None:

@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: flowtrace-runtime
-Version: 2.0.0a1
-Summary: FlowTrace v2 Python runtime — JSONL emitter and W3C trace context helpers
-Requires-Python: >=3.9
-Provides-Extra: dev
-Requires-Dist: pytest>=7.4; extra == "dev"
-Requires-Dist: jsonschema>=4.21; extra == "dev"

@@ -5,11 +5,15 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "start:trace": "../../run-node-flowtrace.sh app.js",
-    "start:trace:debug": "FLOWTRACE_STDOUT=true ../../run-node-flowtrace.sh app.js",
-    "start:trace:filter": "FLOWTRACE_PACKAGE_PREFIX=app ../../run-node-flowtrace.sh app.js"
+    "start:trace": "node --import ../../capture/node/src/bootstrap.mjs app.js",
+    "start:trace:debug": "FLOWTRACE_STDOUT=true node --import ../../capture/node/src/bootstrap.mjs app.js",
+    "start:trace:filter": "FLOWTRACE_PACKAGE_PREFIX=app node --import ../../capture/node/src/bootstrap.mjs app.js"
   },
-  "keywords": ["flowtrace", "example", "commonjs"],
+  "keywords": [
+    "flowtrace",
+    "example",
+    "commonjs"
+  ],
   "author": "FlowTrace",
   "license": "MIT"
 }

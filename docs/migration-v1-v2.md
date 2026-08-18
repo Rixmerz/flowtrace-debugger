@@ -43,7 +43,7 @@ To silence the warning and opt into v1 mode explicitly, pass `--schema-v1` to `f
 
 | Change | Detail |
 |---|---|
-| Agent location | v1 agents moved to `legacy/v1/`. Do not use them for new instrumentation. |
+| Agent location | The v1 agents have been deleted. Recover them from git history if ever needed. |
 | New capture path | `capture/<lang>/` — one directory per runtime. |
 | Java entry point | v1: `flowtrace-agent/` (ByteBuddy premain). v2: `capture/java/flowtrace-otel-extension/` (OTel extension). |
 | Python entry point | v1: `agents/python/`. v2: `capture/python/`. |
@@ -64,6 +64,12 @@ To silence the warning and opt into v1 mode explicitly, pass `--schema-v1` to `f
 
 ---
 
-## Go, Rust, .NET
+## Removed runtimes: Go, Rust, .NET
 
-Go, Rust, and .NET agents are not part of the v2 capture layer. They remain in `legacy/v1/` and continue to emit v1 schema logs. Support will be ported to v2 in a future sprint.
+The Go, Rust and .NET agents were never ported to the v2 capture layer and have
+been **deleted**. They emitted v1 schema logs with no `trace_id` or `span_id`,
+which nothing in the v2 pipeline — the MCP server, the dashboard, the plugin —
+can read, so keeping them advertised support that the tooling could not deliver.
+
+FlowTrace v2 covers Java, Node/TypeScript and Python. The deleted sources remain
+in git history if a port is ever revisited.

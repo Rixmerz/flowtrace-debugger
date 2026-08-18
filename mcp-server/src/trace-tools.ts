@@ -1,7 +1,7 @@
 // FlowTrace v2 trace.* tool implementations. Pure functions over TraceEvent[]
 // so they're trivially testable.
 
-import type { TraceEvent, EnterEvent, ExitEvent, ErrorEvent } from "./types";
+import type { TraceEvent, EnterEvent, ExitEvent } from "./types";
 
 export interface TreeNode {
   span_id: string;
@@ -18,9 +18,11 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+// Schema v2 has exactly two event variants: enter and exit. A failed call is an
+// exit carrying a top-level `error`. There is no separate event="error" — the
+// code that used to look for one was unreachable by construction.
 function isEnter(e: TraceEvent): e is EnterEvent { return e.event === "enter"; }
 function isExit(e: TraceEvent): e is ExitEvent { return e.event === "exit"; }
-function isError(e: TraceEvent): e is ErrorEvent { return e.event === "error"; }
 
 /** Build hierarchical call tree(s) for a given trace_id. Returns one root per
  *  parent_id=null span. */
@@ -28,18 +30,15 @@ export function traceTree(events: TraceEvent[], traceId: string): TreeNode[] {
   const scoped = events.filter(e => e.trace_id === traceId);
   const enters = scoped.filter(isEnter).sort((a, b) => a.ts - b.ts);
 
-  // Index exits/errors by span_id for O(1) duration lookup.
+  // Index exits by span_id for O(1) duration lookup.
   const exitBySpan = new Map<string, ExitEvent>();
-  const errorBySpan = new Map<string, ErrorEvent>();
   for (const e of scoped) {
     if (isExit(e)) exitBySpan.set(e.span_id, e);
-    else if (isError(e)) errorBySpan.set(e.span_id, e);
   }
 
   const nodeBySpan = new Map<string, TreeNode>();
   for (const e of enters) {
     const exit = exitBySpan.get(e.span_id);
-    const err = errorBySpan.get(e.span_id) ?? (exit?.error ? null : null);
     const node: TreeNode = {
       span_id: e.span_id,
       trace_id: e.trace_id,
@@ -51,11 +50,7 @@ export function traceTree(events: TraceEvent[], traceId: string): TreeNode[] {
       visibility: e.visibility,
       depth: e.depth ?? 0,
       duration_ns: exit?.duration_ns ?? null,
-      error: exit?.error
-        ? { type: exit.error.type, msg: exit.error.msg }
-        : err
-          ? { type: err.error.type, msg: err.error.msg }
-          : null,
+      error: exit?.error ? { type: exit.error.type, msg: exit.error.msg } : null,
       children: [],
     };
     nodeBySpan.set(e.span_id, node);
@@ -80,14 +75,13 @@ export interface ErrorPath {
   path: Array<{ span_id: string; class?: string; method: string; module?: string }>;
 }
 
-/** First event carrying an error (event="error" or event="exit" with `error`).
- *  Walks parents to root and returns the call path. */
+/** First exit event carrying an `error`. Walks parents to root and returns the
+ *  call path. */
 export function traceFindError(events: TraceEvent[]): ErrorPath | null {
   // Sort by ts so "first" is deterministic.
   const sorted = [...events].sort((a, b) => a.ts - b.ts);
   let target: { event: TraceEvent; err: { type: string; msg: string; stack?: string[] } } | null = null;
   for (const e of sorted) {
-    if (isError(e)) { target = { event: e, err: e.error }; break; }
     if (isExit(e) && e.error) { target = { event: e, err: e.error }; break; }
   }
   if (!target) return null;

@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "node:fs";
 import { loadJsonl } from "./lib/jsonl";
+import { applyFilters } from "./filter";
 import type { OpenSession, TraceEvent } from "./types";
 import {
   traceTree,
@@ -17,11 +18,55 @@ import {
 
 const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.0.0" });
 
+/**
+ * Open sessions, newest-touched last.
+ *
+ * A session holds every parsed event of a trace in memory, and this server is
+ * a long-lived stdio process: one debugging session can open a dozen traces,
+ * and nothing ever released them. Capped and evicted least-recently-used.
+ */
 const sessions = new Map<string, OpenSession>();
+
+/** Ids evicted to make room, so a stale id gets a useful error, not "invalid". */
+const evicted = new Set<string>();
+
+const MAX_SESSIONS = (() => {
+  const raw = Number(process.env.FLOWTRACE_MCP_MAX_SESSIONS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
+})();
+
 function genId(): string { return Math.random().toString(36).slice(2); }
+
+/** Drops least-recently-used sessions until the cap holds. */
+function evictOverCap(): string[] {
+  const dropped: string[] = [];
+  while (sessions.size > MAX_SESSIONS) {
+    // Map preserves insertion order and touch() reinserts, so the first key is
+    // the least recently used.
+    const oldest = sessions.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    sessions.delete(oldest);
+    evicted.add(oldest);
+    dropped.push(oldest);
+  }
+  return dropped;
+}
+
 function getSession(id: string): OpenSession {
   const s = sessions.get(id);
-  if (!s) throw new Error(`Invalid sessionId: ${id}`);
+  if (!s) {
+    if (evicted.has(id)) {
+      throw new Error(
+        `Session ${id} was evicted: at most ${MAX_SESSIONS} logs are kept open ` +
+        `(raise FLOWTRACE_MCP_MAX_SESSIONS). Re-open the log with log.open.`
+      );
+    }
+    throw new Error(`Invalid sessionId: ${id}`);
+  }
+  // Re-insert to move it to the most-recently-used end of the Map.
+  s.lastUsed = Date.now();
+  sessions.delete(id);
+  sessions.set(id, s);
   return s;
 }
 function v2OnlyEvents(s: OpenSession): TraceEvent[] {
@@ -41,8 +86,30 @@ mcp.tool(
     if (!fs.existsSync(path)) throw new Error(`File not found: ${path}`);
     const { rows, fields, schemaVersion, malformed } = await loadJsonl(path);
     const id = genId();
-    sessions.set(id, { id, path, rows, fields, schemaVersion, malformed });
-    return ok({ sessionId: id, count: rows.length, schemaVersion, malformed });
+    sessions.set(id, {
+      id, path, rows, fields, schemaVersion, malformed, lastUsed: Date.now(),
+    });
+    const dropped = evictOverCap();
+    return ok({
+      sessionId: id,
+      count: rows.length,
+      schemaVersion,
+      malformed,
+      // Reported rather than silent: a caller holding an older id needs to know
+      // it just became unusable.
+      ...(dropped.length ? { evictedSessions: dropped } : {}),
+    });
+  }
+);
+
+mcp.tool(
+  "log.close",
+  "Release a session and free the memory holding its events",
+  { sessionId: z.string().describe("Session id from log.open") },
+  async ({ sessionId }) => {
+    const existed = sessions.delete(sessionId);
+    evicted.delete(sessionId);
+    return ok({ closed: existed, openSessions: sessions.size });
   }
 );
 
@@ -60,26 +127,59 @@ mcp.tool(
   }
 );
 
+const whereSchema = z.object({
+  event: z.enum(["enter", "exit"]).optional().describe("Event variant"),
+  method: z.string().optional().describe("Substring, case-insensitive"),
+  class: z.string().optional().describe("Substring, case-insensitive"),
+  module: z.string().optional().describe("Substring, case-insensitive"),
+  lang: z.string().optional().describe("Substring, case-insensitive"),
+  visibility: z.string().optional().describe("public | private | internal | unknown"),
+  thread: z.string().optional().describe("Substring, case-insensitive"),
+  trace_id: z.string().optional().describe("Exact match"),
+  span_id: z.string().optional().describe("Exact match"),
+  parent_id: z.string().optional().describe("Exact match"),
+  has_error: z.boolean().optional().describe("true = only failing exits"),
+  min_duration_ns: z.number().optional().describe("Implies exit events only"),
+  max_duration_ns: z.number().optional().describe("Implies exit events only"),
+  min_depth: z.number().int().optional(),
+  max_depth: z.number().int().optional(),
+}).describe("Field-level predicates, ANDed together");
+
 mcp.tool(
   "log.search",
-  "Filter v2 events by substring and return selected fields",
+  "Filter v2 events by field (preferred) or free-text substring, with paging",
   {
     sessionId: z.string().describe("Session id from log.open"),
-    filter: z.string().optional().describe("Case-sensitive substring matched against the JSON form of each row"),
+    where: whereSchema.optional().describe("Field-level filters — prefer these over `filter`"),
+    filter: z.string().optional().describe("Case-sensitive substring matched against the whole serialized row. Broad: matches method, class, module and argument values alike. Prefer `where`."),
     fields: z.array(z.string()).optional().describe("Subset of fields to return"),
     limit: z.number().int().positive().optional().describe("Max rows (default 200)"),
+    offset: z.number().int().nonnegative().optional().describe("Rows to skip, for paging through a large match set"),
   },
-  async ({ sessionId, filter, fields, limit = 200 }) => {
+  async ({ sessionId, where, filter, fields, limit = 200, offset = 0 }) => {
     const s = getSession(sessionId);
-    let rows: unknown[] = s.rows.filter(r => !filter || JSON.stringify(r).includes(filter));
+    const matched = applyFilters(s.rows, where, filter);
+    const page = matched.slice(offset, offset + limit);
+
+    let rows: unknown[] = page;
     if (fields?.length) {
-      rows = (rows as TraceEvent[]).map(r => {
+      rows = page.map(r => {
         const o: Record<string, unknown> = {};
         for (const f of fields) o[f] = (r as unknown as Record<string, unknown>)[f];
         return o;
       });
     }
-    return ok(rows.slice(0, limit));
+
+    // The old shape was a bare array sliced to 200, so a caller could not tell
+    // 12 matches from 12,000 — it saw the same 200 rows either way and had no
+    // signal that it was reasoning about a fragment.
+    return ok({
+      total: matched.length,
+      offset,
+      returned: rows.length,
+      truncated: offset + rows.length < matched.length,
+      rows,
+    });
   }
 );
 
@@ -93,11 +193,12 @@ mcp.tool(
       op: z.enum(["count", "sum", "avg", "max", "min"]).describe("Aggregation operator"),
       field: z.string().optional().describe("Numeric field for sum/avg/max/min"),
     }),
+    where: whereSchema.optional().describe("Field-level filters applied before aggregation"),
     filter: z.string().optional().describe("Optional substring filter applied before aggregation"),
   },
-  async ({ sessionId, groupBy, metric, filter }) => {
+  async ({ sessionId, groupBy, metric, where, filter }) => {
     const s = getSession(sessionId);
-    const rows = s.rows.filter(r => !filter || JSON.stringify(r).includes(filter));
+    const rows = applyFilters(s.rows, where, filter);
     const grouped = new Map<string, number[]>();
     for (const r of rows) {
       const rec = r as unknown as Record<string, unknown>;

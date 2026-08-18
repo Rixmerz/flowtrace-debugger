@@ -109,7 +109,10 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args) {
     thread: 'main',
     lang: 'node',
     module: module_,
-    class: cls,
+    // Plain (non-method) functions arrive as null, but the v2 schema types
+    // `class` as a required string — emitting null produced events that failed
+    // schema validation. Python's capture already uses "" for the same case.
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
@@ -150,7 +153,10 @@ export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, arg
     thread: 'main',
     lang: 'node',
     module: module_,
-    class: cls,
+    // Plain (non-method) functions arrive as null, but the v2 schema types
+    // `class` as a required string — emitting null produced events that failed
+    // schema validation. Python's capture already uses "" for the same case.
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
@@ -184,10 +190,18 @@ export function __ft_exit_error(ctx, module_, cls, method, visibility, paramName
     thread: 'main',
     lang: 'node',
     module: module_,
-    class: cls,
+    // Plain (non-method) functions arrive as null, but the v2 schema types
+    // `class` as a required string — emitting null produced events that failed
+    // schema validation. Python's capture already uses "" for the same case.
+    class: cls ?? '',
     method,
     visibility,
     args: serializeArgs(paramNames, args),
+    // `result` is required on every exit event by schema v2. Emitting only
+    // `error` produced events that failed our own schema — invisibly, since no
+    // golden fixture exercised a throwing call. A call that threw produced no
+    // value, and {} is already how a void/undefined return is encoded.
+    result: {},
     error: err && typeof err === 'object' ? {
       type: err.name ?? 'Error',
       msg: err.message ?? String(err),

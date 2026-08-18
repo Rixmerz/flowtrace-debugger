@@ -48,13 +48,12 @@ export interface ExitEvent extends BaseEvent {
   error?: ErrorInfo;          // exit-with-error variant
 }
 
-export interface ErrorEvent extends BaseEvent {
-  event: "error";
-  error: ErrorInfo;
-  duration_ns?: number;
-}
-
-export type TraceEvent = EnterEvent | ExitEvent | ErrorEvent;
+// There is no ErrorEvent. schema/flowtrace-v2.json declares `oneOf: [enter,
+// exit]` with additionalProperties:false, so an event="error" line is invalid
+// and no capture layer emits one. A failed call is an exit whose `error` is
+// set. This union used to carry a third variant, which made the tools branch
+// on a case that could never occur.
+export type TraceEvent = EnterEvent | ExitEvent;
 
 // V1 (legacy) event shape — kept only so the compat shim can recognise it.
 // New code MUST NOT consume v1 fields directly.
@@ -78,6 +77,29 @@ export interface OpenSession {
   fields: Record<string, number>;
   schemaVersion: "v2" | "v1";
   malformed: number;          // count of dropped lines
+  /** Epoch ms of the last tool call that touched this session. Drives LRU
+   *  eviction: a trace can be hundreds of MB in memory and the server is a
+   *  long-lived stdio process, so sessions cannot be held forever. */
+  lastUsed: number;
+}
+
+/** Field-level predicates for log.search / log.aggregate. */
+export interface Where {
+  event?: "enter" | "exit";
+  method?: string;
+  class?: string;
+  module?: string;
+  lang?: string;
+  visibility?: string;
+  thread?: string;
+  trace_id?: string;
+  span_id?: string;
+  parent_id?: string;
+  has_error?: boolean;
+  min_duration_ns?: number;
+  max_duration_ns?: number;
+  min_depth?: number;
+  max_depth?: number;
 }
 
 export interface ServerConfig {

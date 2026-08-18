@@ -68,13 +68,31 @@ public class FlowtraceAdvice {
             depth = DepthTracker.enterAndGet();
 
             // Capture enclosing span BEFORE starting a new one — this is the parent.
-            Span enclosingSpan = Span.fromContext(Context.current());
+            Context parentContext = Context.current();
+            Span enclosingSpan = Span.fromContext(parentContext);
             SpanContext enclosingSc = enclosingSpan.getSpanContext();
+
+            // No enclosing span means this is a local root. Before letting OTel
+            // mint a brand-new trace_id, adopt an inbound context from the
+            // environment carrier so the trace continues across the process
+            // boundary. The OTel agent handles the *network* boundary itself
+            // but knows nothing about env vars, and Node and Python both honour
+            // FLOWTRACE_TRACEPARENT — so without this a Node parent spawning a
+            // Java child produced two unrelated traces.
+            if (!enclosingSc.isValid()) {
+                SpanContext seeded = TraceparentSeed.get();
+                if (seeded != null) {
+                    parentContext = parentContext.with(Span.wrap(seeded));
+                    enclosingSc = seeded;
+                }
+            }
             parentId = enclosingSc.isValid() ? enclosingSc.getSpanId() : null;
 
             Tracer tracer = GlobalOpenTelemetry.getTracer("io.flowtrace", "2.0.0");
-            span      = tracer.spanBuilder(methodName).startSpan();
-            scope     = Context.current().with(span).makeCurrent();
+            // setParent is required: without it the builder falls back to
+            // Context.current(), which does NOT contain the seeded span.
+            span      = tracer.spanBuilder(methodName).setParent(parentContext).startSpan();
+            scope     = parentContext.with(span).makeCurrent();
             startNanos = System.nanoTime();
 
             SpanContext sc = span.getSpanContext();
@@ -150,6 +168,11 @@ public class FlowtraceAdvice {
                         thrown.getMessage(),
                         stack
                 ));
+                // `result` is required on every exit event by schema v2, and
+                // TraceEvent omits nulls — so leaving it unset here emitted
+                // events that failed our own schema. A throwing call produced
+                // no value, and {} is already how a void return is encoded.
+                event.setResult(new LinkedHashMap<>());
             } else {
                 if (result != null) {
                     Map<String, Object> resultMap = new LinkedHashMap<>();
@@ -172,11 +195,20 @@ public class FlowtraceAdvice {
 
     // ---- helpers — must be public: ByteBuddy inlines advice into the target class ----
 
+    /**
+     * Maps Java modifiers onto the schema's visibility enum, which is
+     * {@code public | private | internal | unknown} — there is no
+     * {@code protected}. Returning it emitted events that failed our own
+     * schema for any protected method, and no golden fixture declares one, so
+     * nothing caught it.
+     *
+     * <p>protected and package-private both collapse to "internal": visible
+     * beyond the declaring type, but not public API.
+     */
     public static String visibilityFromModifiers(int mod) {
-        if (Modifier.isPublic(mod))    return "public";
-        if (Modifier.isPrivate(mod))   return "private";
-        if (Modifier.isProtected(mod)) return "protected";
-        return "internal"; // package-private
+        if (Modifier.isPublic(mod))  return "public";
+        if (Modifier.isPrivate(mod)) return "private";
+        return "internal"; // protected and package-private
     }
 
     public static Map<String, Object> buildArgs(Object[] args) {

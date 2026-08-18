@@ -1,61 +1,104 @@
 name: v2-ci
 
+# Triggers on main. The previous form listened only on `v2/main`, but the v2
+# work was merged into `main` and PRs target `main` — so for the whole period
+# after that merge no job ran on any pull request. Two suites (mcp-server,
+# dashboard) were failing that entire time without a single red check.
+# v2/main is kept so pushes to the legacy integration branch still build.
 on:
   push:
-    branches: [v2/main]
+    branches: [main, v2/main]
   pull_request:
-    branches: [v2/main]
+    branches: [main, v2/main]
+
+env:
+  NODE_VERSION: '20'
 
 jobs:
-  validate-schema:
-    name: Validate golden fixtures vs schema v2
+  # Schema validation + the golden regression diff. Everything else depends on
+  # this: if the trace contract moved, the rest of the report is noise.
+  golden:
+    name: Golden fixtures (schema + regression)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      # No `version:` here on purpose — pnpm/action-setup reads the pinned
+      # version from the root package.json "packageManager" field, and
+      # specifying both is a hard error (ERR_PNPM_BAD_PM_VERSION).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
-      - name: Install Ajv (scripts/)
-        working-directory: scripts
-        run: npm install --no-audit --no-fund
-
-      - name: Run schema validation
-        run: make validate-schema
-
-  java-tests:
-    name: Java tests (JDK 17)
-    runs-on: ubuntu-latest
-    needs: validate-schema
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build capture layers needed by the golden runners
+        run: make build-java build-python
+
+      - name: Validate fixtures against schema v2
+        run: make validate-schema
+
+      # STRICT: an unavailable fixture fails instead of skipping. A golden
+      # check that silently skips every language is the failure mode this
+      # whole job exists to prevent.
+      - name: Golden regression check
+        run: node scripts/check-golden.mjs
+        env:
+          FLOWTRACE_GOLDEN_STRICT: '1'
+
+  # Matrix over JDKs, not a single version. The agent compiles to bytecode 11
+  # so it can be loaded into old applications, but it is *loaded into whatever
+  # JVM the user runs* — and a bytecode agent is exactly the kind of thing new
+  # JVMs break: class file versions, stronger module encapsulation, changes to
+  # the instrumentation API. Testing only on 17 left 21 and 25 (the current
+  # LTS) completely unverified.
+  java-tests:
+    name: Java tests (JDK ${{ matrix.java-version }})
+    runs-on: ubuntu-latest
+    needs: golden
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: ['17', '21', '25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: maven
+
+      # test-java depends on build-java and sets -Dflowtrace.it.required=true,
+      # so FlowtraceIntegrationTest can no longer assume itself away.
       - name: Build and test Java capture module
-        run: make build-java test-java
+        run: make test-java
 
   python-tests:
     name: Python tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    needs: validate-schema
+    needs: golden
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.9', '3.11', '3.13']
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -65,78 +108,160 @@ jobs:
   node-tests:
     name: Node tests (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
-    needs: validate-schema
+    needs: golden
     strategy:
+      fail-fast: false
       matrix:
         node-version: ['20', '22']
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      # No `version:` here on purpose — pnpm/action-setup reads the pinned
+      # version from the root package.json "packageManager" field, and
+      # specifying both is a hard error (ERR_PNPM_BAD_PM_VERSION).
+      - uses: pnpm/action-setup@v4
 
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: pnpm
 
-      - name: Install pnpm deps (no frozen lockfile)
-        working-directory: capture/node
-        run: pnpm install --no-frozen-lockfile
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
 
-      - name: Build and test Node capture module
+      - name: Test Node capture module
         run: make test-node
 
-  cli-tests:
-    name: CLI tests
+      # The TypeScript capture path was a silent no-op on Node >= 22.18 and
+      # nothing caught it, because no job ever executed the ts fixture.
+      - name: TypeScript golden fixture
+        run: node scripts/check-golden.mjs ts
+        env:
+          FLOWTRACE_GOLDEN_STRICT: '1'
+
+  # The browser capture layer plus its end-to-end test, which boots the real
+  # dashboard collector and asserts that browser spans land on disk as valid
+  # v2 JSONL. Neither half proves that on its own.
+  browser-tests:
+    name: Browser capture + collector e2e
     runs-on: ubuntu-latest
-    needs: validate-schema
+    needs: golden
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
-      - name: Install CLI deps
-        working-directory: flowtrace-cli
-        run: npm install --no-audit --no-fund
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
 
-      - name: Run CLI tests
+      - name: Browser capture suite
+        run: make test-browser
+
+  # mcp-server and dashboard had no CI job at all. Both were red.
+  consumers:
+    name: MCP server + dashboard + CLI
+    runs-on: ubuntu-latest
+    needs: golden
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `version:` here on purpose — pnpm/action-setup reads the pinned
+      # version from the root package.json "packageManager" field, and
+      # specifying both is a hard error (ERR_PNPM_BAD_PM_VERSION).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: MCP server
+        run: make test-mcp
+
+      - name: Dashboard
+        run: make test-dashboard
+
+      - name: CLI
+        run: make test-cli
+
+  # Guard against the class of bug that started all of this: a .gitignore rule
+  # that silently swallows a file the build depends on.
+  fixtures-committed:
+    name: Golden fixtures are committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The fixture list comes from scripts/golden/runners.mjs rather than being
+      # repeated here. It used to be a hardcoded bash array, which meant adding
+      # a fixture to the registry silently left it unguarded by this job — the
+      # exact drift the job exists to prevent.
+      - name: Every fixture must be tracked by git
         run: |
-          cd flowtrace-cli && for t in test/test-cli.js test/test-cli-java.js test/test-cli-python.js test/test-cli-node.js test/test-detect.js test/test-cli-autodetect.js test/test-analyze.js; do
-            node $t || exit 1
+          missing=0
+          for dir in $(node -e "import('./scripts/golden/runners.mjs').then(m => console.log(m.FIXTURE_IDS.join(' ')))"); do
+            f="examples/golden/$dir/expected.jsonl"
+            if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::$f is not tracked by git (check .gitignore)"
+              missing=1
+            fi
           done
+          exit $missing
+
+  # The plugin is the product for anyone who installs it from the marketplace,
+  # and none of the jobs above touch it: every one of them runs from a checkout
+  # with node_modules installed, which is the one environment where a broken
+  # plugin still appears to work. This job rebuilds the bundle, proves it did
+  # not drift from mcp-server/src, and boots it in an empty directory.
+  plugin:
+    name: Plugin is installable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      # Rebuilds plugin/mcp/server.bundle.js and fails if the committed copy is
+      # stale, then validates manifests, paths and a standalone boot.
+      - name: Bundle is current and the plugin boots standalone
+        run: make check-bundle
 
   bench:
     name: Benchmark harness (informational)
     runs-on: ubuntu-latest
-    needs: validate-schema
+    needs: golden
     continue-on-error: true
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Python capture module
         run: make build-python

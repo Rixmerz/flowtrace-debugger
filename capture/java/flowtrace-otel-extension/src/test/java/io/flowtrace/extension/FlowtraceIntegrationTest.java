@@ -55,15 +55,14 @@ class FlowtraceIntegrationTest {
 
         File otelAgentJar = new File(projectBase,
                 "target/dependency/opentelemetry-javaagent.jar");
-        assumeTrue(otelAgentJar.exists(),
+        requireArtifact(otelAgentJar.exists(),
                 "OTel agent jar not present at " + otelAgentJar.getAbsolutePath()
-                        + " — run 'mvn process-test-resources' with network access first. "
-                        + "Skipping integration test.");
+                        + " — run 'mvn process-test-resources' with network access first.");
 
-        File extensionJar = new File(projectBase,
-                "target/flowtrace-otel-extension-2.0.0-SNAPSHOT.jar");
-        assumeTrue(extensionJar.exists(),
-                "Extension jar not built — run 'mvn package' first. Skipping integration test.");
+        File extensionJar = findExtensionJar(projectBase);
+        requireArtifact(extensionJar != null,
+                "Extension jar not built under " + new File(projectBase, "target")
+                        + " — run 'mvn package' first.");
 
         // Calculator is compiled to target/test-classes during test-compile phase.
         File testClasses = new File(projectBase, "target/test-classes");
@@ -81,7 +80,14 @@ class FlowtraceIntegrationTest {
         cmd.add("-Dotel.traces.exporter=none");
         cmd.add("-Dotel.metrics.exporter=none");
         cmd.add("-Dotel.logs.exporter=none");
-        cmd.add("-Dotel.javaagent.logging=none");
+        // Agent logging stays ON. It was set to `none`, which silenced the one
+        // component able to explain a silent no-op: when the agent cannot
+        // instrument (an unsupported class file version, a bad extension), it
+        // says so on stderr and then exits 0 having done nothing. With logging
+        // off, that surfaced only as "flowtrace.jsonl was not created" — a
+        // symptom indistinguishable from a dozen unrelated causes.
+        // stderr is captured to a file and printed only on failure, so a
+        // passing run stays quiet.
         cmd.add("-Dflowtrace.package-prefix=com.example.golden");
         cmd.add("-Dflowtrace.output=" + outputJsonl.toAbsolutePath());
         cmd.add("-cp");
@@ -91,24 +97,35 @@ class FlowtraceIntegrationTest {
         cmd.add("io.flowtrace.runner.CalcRunner");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(false);
+        // Redirect to a file rather than reading the pipe after waitFor(). With
+        // agent logging enabled the child can outrun the ~64 KB pipe buffer and
+        // block on write while we block on waitFor — a deadlock that would show
+        // up as the 60 s timeout rather than as anything diagnosable.
+        File stderrFile = tempDir.resolve("child-stderr.log").toFile();
+        pb.redirectError(stderrFile);
         pb.environment().put("OTEL_TRACES_EXPORTER", "none");
         pb.environment().put("OTEL_METRICS_EXPORTER", "none");
         pb.environment().put("OTEL_LOGS_EXPORTER", "none");
 
         Process process = pb.start();
         boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        assertTrue(finished, "Child JVM did not finish within 60 s");
+        if (!finished) {
+            process.destroyForcibly();
+        }
+        assertTrue(finished, "Child JVM did not finish within 60 s." + diagnostics(stderrFile));
 
-        // Capture stderr for diagnostics on failure.
-        String stderr = new String(process.getErrorStream().readAllBytes());
         int exitCode = process.exitValue();
         assertEquals(0, exitCode,
-                "Child JVM exited with code " + exitCode + ". stderr:\n" + stderr);
+                "Child JVM exited with code " + exitCode + "." + diagnostics(stderrFile));
 
         // --- parse and validate JSONL ---
+        // The agent can leave the JVM perfectly healthy (exit 0) while having
+        // instrumented nothing, so this assertion carries the child's stderr:
+        // it is the branch where the reason lives.
         assertTrue(outputJsonl.toFile().exists(),
-                "flowtrace.jsonl was not created at " + outputJsonl);
+                "flowtrace.jsonl was not created at " + outputJsonl
+                        + ". The child JVM ran and exited cleanly, so the agent "
+                        + "loaded but instrumented nothing." + diagnostics(stderrFile));
 
         List<String> lines = Files.readAllLines(outputJsonl);
         // Filter blank lines.
@@ -118,7 +135,8 @@ class FlowtraceIntegrationTest {
 
         assertEquals(8, lines.size(),
                 "Expected 8 JSONL lines (4 enter + 4 exit). Got " + lines.size()
-                        + ".\nContent:\n" + String.join("\n", lines));
+                        + ".\nContent:\n" + String.join("\n", lines)
+                        + diagnostics(stderrFile));
 
         // --- parse all events ---
         List<JsonNode> events = new ArrayList<>();
@@ -204,6 +222,71 @@ class FlowtraceIntegrationTest {
     }
 
     // ---- helpers ----
+
+    /**
+     * Locate the shaded extension jar without hardcoding a version.
+     *
+     * <p>The previous form looked for a literal
+     * {@code flowtrace-otel-extension-2.0.0-SNAPSHOT.jar}. When the pom moved to
+     * the {@code 2.0.0} release the file became
+     * {@code flowtrace-otel-extension-2.0.0.jar}, the lookup missed, and the whole
+     * integration test skipped itself silently on every run.
+     */
+    private static File findExtensionJar(File projectBase) {
+        File[] candidates = new File(projectBase, "target").listFiles((dir, name) ->
+                name.startsWith("flowtrace-otel-extension-")
+                        && name.endsWith(".jar")
+                        // shade leaves the pre-shading jar behind as original-*.jar
+                        && !name.startsWith("original-"));
+        return (candidates == null || candidates.length == 0) ? null : candidates[0];
+    }
+
+    /**
+     * Skip when a build artifact is genuinely unavailable (offline sandbox), but
+     * hard-fail when {@code -Dflowtrace.it.required=true} is set.
+     *
+     * <p>CI sets that flag: a self-skipping integration test that nobody notices
+     * is worse than no test, because it reports green.
+     */
+    private static void requireArtifact(boolean present, String message) {
+        if (Boolean.getBoolean("flowtrace.it.required")) {
+            assertTrue(present, message + " (flowtrace.it.required=true)");
+        } else {
+            assumeTrue(present, message + " Skipping integration test.");
+        }
+    }
+
+    /**
+     * Renders the child JVM's stderr for a failure message, including the JDK
+     * this ran on.
+     *
+     * <p>The JDK matters enough to always print: this test spawns a child on
+     * whichever JVM runs the build, and the agent's ability to instrument
+     * depends on that version. A failure that reads "instrumented nothing" is
+     * ambiguous until you know it happened on, say, 25 and not on 17.
+     */
+    private static String diagnostics(File stderrFile) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n  JDK: ").append(System.getProperty("java.version"))
+          .append(" (").append(System.getProperty("java.vendor")).append(")");
+        sb.append("\n  child stderr");
+        if (!stderrFile.exists()) {
+            sb.append(": <no file produced>");
+            return sb.toString();
+        }
+        String content;
+        try {
+            content = new String(Files.readAllBytes(stderrFile.toPath())).trim();
+        } catch (IOException e) {
+            return sb.append(": <unreadable: ").append(e.getMessage()).append(">").toString();
+        }
+        if (content.isEmpty()) {
+            sb.append(": <empty>");
+        } else {
+            sb.append(":\n").append(content);
+        }
+        return sb.toString();
+    }
 
     private static void assertFieldPresent(JsonNode node, String field) {
         assertNotNull(node.get(field), "Missing required field '" + field + "' in: " + node);
