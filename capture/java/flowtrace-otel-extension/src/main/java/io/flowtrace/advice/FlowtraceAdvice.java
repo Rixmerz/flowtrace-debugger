@@ -177,11 +177,20 @@ public class FlowtraceAdvice {
 
     // ---- helpers — must be public: ByteBuddy inlines advice into the target class ----
 
+    /**
+     * Maps Java modifiers onto the schema's visibility enum, which is
+     * {@code public | private | internal | unknown} — there is no
+     * {@code protected}. Returning it emitted events that failed our own
+     * schema for any protected method, and no golden fixture declares one, so
+     * nothing caught it.
+     *
+     * <p>protected and package-private both collapse to "internal": visible
+     * beyond the declaring type, but not public API.
+     */
     public static String visibilityFromModifiers(int mod) {
-        if (Modifier.isPublic(mod))    return "public";
-        if (Modifier.isPrivate(mod))   return "private";
-        if (Modifier.isProtected(mod)) return "protected";
-        return "internal"; // package-private
+        if (Modifier.isPublic(mod))  return "public";
+        if (Modifier.isPrivate(mod)) return "private";
+        return "internal"; // protected and package-private
     }
 
     public static Map<String, Object> buildArgs(Object[] args) {
