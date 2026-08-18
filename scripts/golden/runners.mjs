@@ -11,7 +11,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, readdirSync, mkdtempSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -32,10 +32,15 @@ const TIMEOUT_MS = 90_000;
 function extensionJar() {
   const targetDir = join(JAVA_MODULE, 'target');
   if (!existsSync(targetDir)) return null;
-  const hit = readdirSync(targetDir).find(
-    (n) => n.startsWith('flowtrace-otel-extension-') && n.endsWith('.jar') && !n.startsWith('original-')
-  );
-  return hit ? join(targetDir, hit) : null;
+  // Most recently modified, not the first match: after a version bump target/
+  // holds the previous jar too, and readdir order is filesystem-dependent — so
+  // taking the first would silently run the golden fixtures against the old
+  // agent and still report green.
+  const hits = readdirSync(targetDir)
+    .filter((n) => n.startsWith('flowtrace-otel-extension-') && n.endsWith('.jar') && !n.startsWith('original-'))
+    .map((n) => join(targetDir, n));
+  if (hits.length === 0) return null;
+  return hits.reduce((a, b) => (statSync(a).mtimeMs >= statSync(b).mtimeMs ? a : b));
 }
 
 // ── runner builders ──────────────────────────────────────────────

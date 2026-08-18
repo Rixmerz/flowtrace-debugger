@@ -21391,7 +21391,7 @@ function traceDiff(a, b) {
 }
 
 // src/server.ts
-var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.0.0" });
+var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
 var sessions = /* @__PURE__ */ new Map();
 var evicted = /* @__PURE__ */ new Set();
 var MAX_SESSIONS = (() => {

@@ -28,8 +28,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       {@code target/dependency/opentelemetry-javaagent.jar} (downloaded by
  *       Maven dependency-plugin during the {@code prepare-integration-test}
  *       phase, or by running {@code mvn process-test-resources}).</li>
- *   <li>The extension jar must have been built:
- *       {@code target/flowtrace-otel-extension-2.0.0-SNAPSHOT.jar}.</li>
+ *   <li>The extension jar must have been built. It is located by prefix rather
+ *       than by an exact name, so a version bump does not silently un-find it —
+ *       see {@link #findExtensionJar}.</li>
  *   <li>The Calculator class must be compiled to
  *       {@code target/test-classes/} — achieved by the test-compile phase
  *       picking up {@code src/test/java/com/example/golden/Calculator.java}.</li>
@@ -238,7 +239,16 @@ class FlowtraceIntegrationTest {
                         && name.endsWith(".jar")
                         // shade leaves the pre-shading jar behind as original-*.jar
                         && !name.startsWith("original-"));
-        return (candidates == null || candidates.length == 0) ? null : candidates[0];
+        if (candidates == null || candidates.length == 0) return null;
+        // Most recently modified, not candidates[0]: after a version bump target/
+        // holds the old jar alongside the new one and File.listFiles() order is
+        // filesystem-dependent, so the fixed index could silently test the
+        // previous release.
+        File newest = candidates[0];
+        for (File f : candidates) {
+            if (f.lastModified() > newest.lastModified()) newest = f;
+        }
+        return newest;
     }
 
     /**

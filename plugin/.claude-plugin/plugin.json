@@ -1,7 +1,7 @@
 {
   "name": "flowtrace",
   "description": "Trace what your code actually did. Instruments Java, Python, Node and TypeScript without touching the source, then reads the resulting flowtrace.jsonl to answer where a call came from, what it returned, and where the time went.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": {
     "name": "Juan Pablo Diaz",
     "email": "jpablo@rixmerz.dev",

@@ -88,7 +88,7 @@ public class FlowtraceAdvice {
             }
             parentId = enclosingSc.isValid() ? enclosingSc.getSpanId() : null;
 
-            Tracer tracer = GlobalOpenTelemetry.getTracer("io.flowtrace", "2.0.0");
+            Tracer tracer = GlobalOpenTelemetry.getTracer("io.flowtrace", "2.1.0");
             // setParent is required: without it the builder falls back to
             // Context.current(), which does NOT contain the seeded span.
             span      = tracer.spanBuilder(methodName).setParent(parentContext).startSpan();

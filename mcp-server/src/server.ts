@@ -16,7 +16,7 @@ import {
   traceDiff,
 } from "./trace-tools";
 
-const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.0.0" });
+const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
 
 /**
  * Open sessions, newest-touched last.
