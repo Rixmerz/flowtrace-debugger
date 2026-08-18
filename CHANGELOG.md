@@ -62,6 +62,13 @@ identically by 2.1.0.
 
 ### Changed
 
+- **MCP tools renamed from dotted to underscored names** — `log.open` becomes
+  `log_open`, `trace.tree` becomes `trace_tree`, and so on for all nine. Tool
+  names are expected to match `^[a-zA-Z0-9_-]+$`, and strict clients reject a
+  dot at registration, so the server exposed tools some clients simply could not
+  see. Everything that referenced them — the skill, the subagent, the commands,
+  the tests and the docs — moved in the same commit, and the plugin ships the
+  server, so there is no separately versioned client to strand.
 - **`log.search` returns `{total, offset, returned, truncated, rows}`** instead
   of a bare array. The previous shape silently sliced to 200 rows, so a caller
   could not tell 12 matches from 12,000. This is a breaking change for direct

@@ -56,10 +56,10 @@ The MCP server exposes tools so AI agents can analyze traces directly:
 
 | Tool | Description |
 |---|---|
-| `trace.tree` | Call tree for a trace |
-| `trace.find_error` | Find the first exception in the log |
-| `trace.private_calls` | List internal methods not exposed in the API |
-| `trace.diff` | Compare two traces (before/after a change) |
+| `trace_tree` | Call tree for a trace |
+| `trace_find_error` | Find the first exception in the log |
+| `trace_private_calls` | List internal methods not exposed in the API |
+| `trace_diff` | Compare two traces (before/after a change) |
 
 ```bash
 npx @flowtrace/mcp-server

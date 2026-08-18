@@ -44,7 +44,7 @@ schema `flowtrace-v2`.
 ## Reading the trace
 
 The [FlowTrace Claude Code plugin](https://github.com/Rixmerz/flowtrace-debugger/tree/main/plugin)
-gives an agent `log.*` and `trace.*` tools over the file, plus a skill that
+gives an agent `log_*` and `trace_*` tools over the file, plus a skill that
 teaches it what the fields mean. Without it the trace is still plain JSONL —
 `jq` works fine:
 

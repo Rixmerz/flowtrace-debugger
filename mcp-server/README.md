@@ -22,22 +22,22 @@ make bundle-mcp    # rebuild the bundle the plugin ships (required after src cha
 
 ## Tools
 
-A log is loaded once per `log.open` and held in an in-memory session keyed by
+A log is loaded once per `log_open` and held in an in-memory session keyed by
 the returned `sessionId`; every other tool takes that id.
 
 | Tool | Purpose |
 |------|---------|
-| `log.open` | Load a JSONL trace, return `sessionId`, event count and detected schema version |
-| `log.close` | Release a session and free its events |
-| `log.schema` | Discovered fields plus one sample row |
-| `log.search` | Filter events by field (`where`) or free text, with paging |
-| `log.aggregate` | Group and count / sum over a field, with the same `where` |
-| `trace.tree` | Rebuild the call tree for one `trace_id` from `parent_id` links |
-| `trace.find_error` | First failing call, with the path from the root down to it |
-| `trace.private_calls` | Calls whose `visibility` is not public — what the public API did internally |
-| `trace.diff` | Compare two traces: calls only in one, and duration deltas |
+| `log_open` | Load a JSONL trace, return `sessionId`, event count and detected schema version |
+| `log_close` | Release a session and free its events |
+| `log_schema` | Discovered fields plus one sample row |
+| `log_search` | Filter events by field (`where`) or free text, with paging |
+| `log_aggregate` | Group and count / sum over a field, with the same `where` |
+| `trace_tree` | Rebuild the call tree for one `trace_id` from `parent_id` links |
+| `trace_find_error` | First failing call, with the path from the root down to it |
+| `trace_private_calls` | Calls whose `visibility` is not public — what the public API did internally |
+| `trace_diff` | Compare two traces: calls only in one, and duration deltas |
 
-`trace.find_error` looks for an `exit` event carrying a top-level `error`.
+`trace_find_error` looks for an `exit` event carrying a top-level `error`.
 Schema v2 has no `event: "error"` variant.
 
 ### Filtering
@@ -55,7 +55,7 @@ Predicates are ANDed. Ids (`trace_id`, `span_id`, `parent_id`) match exactly;
 other strings match case-insensitive substrings. A duration or depth range
 implies `exit` events only, since only those carry the field.
 
-`log.search` returns `{total, offset, returned, truncated, rows}` — `total` is
+`log_search` returns `{total, offset, returned, truncated, rows}` — `total` is
 the full match count, so a truncated page is visible as such rather than
 looking like the whole answer.
 
@@ -64,7 +64,7 @@ looking like the whole answer.
 Each session holds the entire parsed trace in memory. At most
 `FLOWTRACE_MCP_MAX_SESSIONS` (default 8) are kept; opening past the cap evicts
 the least recently used and names it in `evictedSessions`. Using an evicted id
-returns an error saying so and how to recover. `log.close` releases one
+returns an error saying so and how to recover. `log_close` releases one
 explicitly.
 
 ## v1 logs

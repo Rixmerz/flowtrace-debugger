@@ -83,7 +83,7 @@ export interface OpenSession {
   lastUsed: number;
 }
 
-/** Field-level predicates for log.search / log.aggregate. */
+/** Field-level predicates for log_search / log_aggregate. */
 export interface Where {
   event?: "enter" | "exit";
   method?: string;

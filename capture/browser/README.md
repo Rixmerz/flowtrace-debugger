@@ -37,7 +37,7 @@ nothing is invented. Browser work is expressed with the fields that exist:
 | `error` | `{type, msg, stack}`, exactly as the other layers emit it |
 
 A trace mixing browser and server spans therefore reads uniformly, and
-`trace.tree`, `trace.find_error` and the dashboard work on it unchanged.
+`trace_tree`, `trace_find_error` and the dashboard work on it unchanged.
 
 **URLs are scrubbed of query strings and fragments before being recorded.**
 Traces get shared, and query strings routinely carry tokens.

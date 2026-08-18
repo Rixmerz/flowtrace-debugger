@@ -1,4 +1,4 @@
-// FlowTrace v2 — unit tests for trace.* tools.
+// FlowTrace v2 — unit tests for trace_* tools.
 // Run with: node test/test-trace-tools.mjs (after `npm run build`).
 
 import assert from 'node:assert/strict';
@@ -25,8 +25,8 @@ function loadJsonlSync(p) {
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 
-// -- trace.tree --
-test('trace.tree builds nested structure for java golden', () => {
+// -- trace_tree --
+test('trace_tree builds nested structure for java golden', () => {
   const events = loadJsonlSync(JAVA_GOLDEN);
   const traceId = events[0].trace_id;
   const roots = traceTree(events, traceId);
@@ -42,14 +42,14 @@ test('trace.tree builds nested structure for java golden', () => {
   assert.ok([...depths].some((d) => d >= 2), 'tree reaches depth >= 2');
 });
 
-// -- trace.find_error --
-test('trace.find_error returns null when no error in golden', () => {
+// -- trace_find_error --
+test('trace_find_error returns null when no error in golden', () => {
   const events = loadJsonlSync(JAVA_GOLDEN);
   const r = traceFindError(events);
   assert.equal(r, null);
 });
 
-test('trace.find_error walks parents to root from a failing exit', () => {
+test('trace_find_error walks parents to root from a failing exit', () => {
   // This used to build its error as `event: 'error'`, a variant schema v2 does
   // not define and no capture layer emits. The test passed against data that
   // could never occur while the real shape — an `exit` carrying `error` — went
@@ -77,7 +77,7 @@ test('trace.find_error walks parents to root from a failing exit', () => {
 // amount of schema validation could catch it — find_error simply returned null
 // on a trace full of exceptions. Only asserting on real capture output does.
 for (const lang of ['python', 'node', 'java']) {
-  test(`trace.find_error finds the error in the ${lang} golden error fixture`, () => {
+  test(`trace_find_error finds the error in the ${lang} golden error fixture`, () => {
     const events = loadJsonlSync(
       path.join(REPO_ROOT, `examples/golden/error/${lang}/expected.jsonl`)
     );
@@ -108,8 +108,8 @@ for (const lang of ['python', 'node', 'java']) {
   });
 }
 
-// -- trace.private_calls --
-test('trace.private_calls counts private methods in java golden', () => {
+// -- trace_private_calls --
+test('trace_private_calls counts private methods in java golden', () => {
   const events = loadJsonlSync(JAVA_GOLDEN);
   const r = tracePrivateCalls(events);
   assert.ok(r.length > 0, 'java golden has private calls');
@@ -118,8 +118,8 @@ test('trace.private_calls counts private methods in java golden', () => {
   assert.ok(validate.count >= 1);
 });
 
-// -- trace.diff --
-test('trace.diff detects only-in-A and duration delta > 20%', () => {
+// -- trace_diff --
+test('trace_diff detects only-in-A and duration delta > 20%', () => {
   const trace_id = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
   const mk = (method, dur, span) => [
     { ts: 0, trace_id, span_id: span, parent_id: null, event: 'enter', thread: 't',
