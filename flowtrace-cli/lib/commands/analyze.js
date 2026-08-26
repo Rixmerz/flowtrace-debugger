@@ -113,6 +113,62 @@ async function waitForHealth(url, { retries = 30, intervalMs = 200 } = {}) {
   return false;
 }
 
+/**
+ * POSTs `{filePath}` to `${baseUrl}/api/analyze-file` and resolves with the
+ * returned `analysisId`, or `null` on any failure (bad JSON, non-2xx,
+ * network error). Mirrors flowtrace-dashboard/mcp-tools.js's
+ * openInDashboard(), which already does this against the same endpoint.
+ */
+function postAnalyzeFile(baseUrl, filePath) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ filePath });
+    const { hostname, port, pathname } = new URL('/api/analyze-file', baseUrl);
+    const req = http.request(
+      {
+        hostname,
+        port,
+        path: pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) return resolve(null);
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            resolve(parsed.analysisId || null);
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * Pre-loads `target` into the running dashboard server and returns the URL
+ * to open — `?analysis=<id>` on success, or the bare `baseUrl` (with a
+ * stderr warning) if the pre-load fails for any reason. A failed pre-load
+ * must never block opening the dashboard.
+ */
+async function buildOpenUrl(baseUrl, target) {
+  const analysisId = await postAnalyzeFile(baseUrl, target);
+  if (!analysisId) {
+    console.error(chalk.yellow('Warning:'), 'No se pudo pre-cargar el trace en el dashboard; abriendo vacio.');
+    return baseUrl;
+  }
+  return `${baseUrl}?analysis=${analysisId}`;
+}
+
 async function analyzeCommand(file, options = {}) {
   const cwd = process.cwd();
   let target = file;
@@ -153,13 +209,13 @@ async function analyzeCommand(file, options = {}) {
   // ERR_CONNECTION_REFUSED tabs.
   if (await checkHealth(`${url}/health`)) {
     console.log(chalk.green('OK'), `Dashboard ya esta corriendo en ${url}`);
-    openBrowser(url);
+    openBrowser(await buildOpenUrl(url, target));
     return { file: target, exitCode: 0, reused: true };
   }
 
   console.log(chalk.gray('Iniciando servidor de dashboard...'));
 
-  const env = { ...process.env, PORT: String(PORT), FLOWTRACE_FILE: target };
+  const env = { ...process.env, PORT: String(PORT) };
   const child = spawn(process.execPath, [dashboardServer], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -174,10 +230,10 @@ async function analyzeCommand(file, options = {}) {
     process.exit(0);
   });
 
-  waitForHealth(`${url}/health`).then((ready) => {
+  waitForHealth(`${url}/health`).then(async (ready) => {
     if (ready) {
       console.log(chalk.green('OK'), `Dashboard listo en ${url}`);
-      openBrowser(url);
+      openBrowser(await buildOpenUrl(url, target));
     } else {
       console.error(chalk.red('Error:'), 'El dashboard no respondio a tiempo.');
     }
@@ -195,5 +251,7 @@ analyzeCommand._findLatestJsonl = findLatestJsonl;
 analyzeCommand._openBrowser = openBrowser;
 analyzeCommand._resolveDashboardServer = resolveDashboardServer;
 analyzeCommand._checkHealth = checkHealth;
+analyzeCommand._postAnalyzeFile = postAnalyzeFile;
+analyzeCommand._buildOpenUrl = buildOpenUrl;
 
 module.exports = analyzeCommand;

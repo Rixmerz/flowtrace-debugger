@@ -7,7 +7,7 @@ did not change in this release, and `schema/flowtrace-v2.json` remains the
 contract every capture layer locks to. A trace produced by 2.0.0 is read
 identically by 2.1.0.
 
-## [Unreleased]
+## [2.1.1]
 
 ### Fixed
 
@@ -30,8 +30,21 @@ identically by 2.1.0.
 - **`log_close` sessions are now distinguishable from unknown ones.** A
   session id closed via `log_close` reports a descriptive "was closed"
   message on reuse instead of the generic "Invalid sessionId".
+- **`flowtrace init` detects the Python import name too, not just `run`.**
+  `init` and `run` used to call two separately-implemented prefix-detection
+  functions; `init`'s copy never received the distribution-name-vs-import-name
+  fix above, so `flowtrace init` alone still printed the wrong prefix for
+  exactly the case that motivated the original fix. Both commands now share
+  one implementation (`lib/python-prefix.js`).
 
 ### Changed
+
+- **`flowtrace analyze` opens the trace already loaded**, instead of a bare
+  dashboard tab the user then has to manually upload the JSONL into. It POSTs
+  the file to the dashboard's `/api/analyze-file` (the same call
+  `flowtrace-dashboard/mcp-tools.js` already made for MCP-agent callers) and
+  opens `?analysis=<id>`; a failed pre-load falls back to the bare URL with a
+  stderr warning rather than blocking the dashboard from opening at all.
 
 - **BREAKING (behavior): argument redaction.** `_serialize_args` now redacts
   argument values whose name matches a redact-key list (case-insensitive

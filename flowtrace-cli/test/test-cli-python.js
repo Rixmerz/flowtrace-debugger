@@ -102,8 +102,12 @@ test('detectPythonPrefix returns null when no config found', () => {
 test('buildPythonEnv does not alter user command args', () => {
   // Verify that env composition doesn't touch argv — the caller passes restArgs
   // directly to spawn(). We verify env keys only relate to flowtrace, not argv.
+  // Snapshot ambient FLOWTRACE_* keys first so a stray var already present in
+  // the runner's shell (e.g. FLOWTRACE_AGENT) doesn't break this assertion —
+  // we only assert on the keys _buildPythonEnv itself adds.
+  const ambientKeys = Object.keys(process.env).filter(k => k.startsWith('FLOWTRACE'));
   const env = _buildPythonEnv({ prefix: 'pkg', outPath: '/tmp/x.jsonl', stubDir: '/s' });
-  const envKeys = Object.keys(env).filter(k => k.startsWith('FLOWTRACE'));
+  const envKeys = Object.keys(env).filter(k => k.startsWith('FLOWTRACE') && !ambientKeys.includes(k));
   assert.deepStrictEqual(envKeys.sort(), ['FLOWTRACE_ENABLE', 'FLOWTRACE_OUTPUT', 'FLOWTRACE_PACKAGE_PREFIX'].sort());
 });
 

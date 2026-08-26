@@ -7,6 +7,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { detectPythonPrefix } = require('./python-prefix');
 
 /**
  * Returns 'java'|'python'|'node'|'ts'|null
@@ -69,19 +70,7 @@ function _javaPrefix(cwd) {
 
 // ---- Python ----
 function _pythonPrefix(cwd) {
-  const pyprojectPath = path.join(cwd, 'pyproject.toml');
-  if (fs.existsSync(pyprojectPath)) {
-    const src = fs.readFileSync(pyprojectPath, 'utf-8');
-    const m = src.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
-    if (m) return m[1].trim().replace(/-/g, '_');
-  }
-  const setupPath = path.join(cwd, 'setup.py');
-  if (fs.existsSync(setupPath)) {
-    const src = fs.readFileSync(setupPath, 'utf-8');
-    const m = src.match(/name\s*=\s*["']([^"']+)["']/);
-    if (m) return m[1].trim().replace(/-/g, '_');
-  }
-  return null;
+  return detectPythonPrefix(cwd);
 }
 
 // ---- Node / TS ----
