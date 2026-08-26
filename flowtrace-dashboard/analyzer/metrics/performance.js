@@ -5,6 +5,11 @@
 
 'use strict';
 
+/** Convert raw event duration_ns to milliseconds. */
+function nsToMs(ns) {
+  return ns / 1e6;
+}
+
 class PerformanceAnalyzer {
   constructor(events) {
     this.events = events || [];
@@ -54,17 +59,15 @@ class PerformanceAnalyzer {
         class: s.class,
         method: s.method,
         callCount: durations.length,
-        avg_ns: Math.round(avg),
-        min_ns: durations[0] || 0,
-        max_ns: durations[durations.length - 1] || 0,
-        p50_ns: pick(0.5),
-        p95_ns: pick(0.95),
-        p99_ns: pick(0.99),
-        total_ns: sum,
+        avgDuration: nsToMs(avg),
+        p95: nsToMs(pick(0.95)),
+        p99: nsToMs(pick(0.99)),
+        totalTime: nsToMs(sum),
         errors: s.errors,
+        impactScore: Math.round(durations.length * nsToMs(avg)),
       });
     }
-    out.sort((a, b) => b.avg_ns - a.avg_ns);
+    out.sort((a, b) => b.avgDuration - a.avgDuration);
     return out.slice(0, top);
   }
 
@@ -72,15 +75,20 @@ class PerformanceAnalyzer {
     const out = [];
     for (const [name, s] of this.methodStats) {
       const sum = s.calls.reduce((a, c) => a + c.duration_ns, 0);
+      const durations = s.calls.map((c) => c.duration_ns).sort((a, b) => a - b);
       const avg = sum / s.calls.length;
+      const pick = (p) => durations[Math.floor(durations.length * p)] || 0;
       out.push({
         name,
         class: s.class,
         method: s.method,
         callCount: s.calls.length,
-        avg_ns: Math.round(avg),
-        total_ns: sum,
-        impactScore: Math.round(s.calls.length * avg),
+        avgDuration: nsToMs(avg),
+        p95: nsToMs(pick(0.95)),
+        p99: nsToMs(pick(0.99)),
+        totalTime: nsToMs(sum),
+        errors: s.errors,
+        impactScore: Math.round(s.calls.length * nsToMs(avg)),
       });
     }
     out.sort((a, b) => b.impactScore - a.impactScore);
@@ -88,23 +96,35 @@ class PerformanceAnalyzer {
   }
 
   calculateTimeDistribution() {
-    let totalTime = 0;
+    const BUCKETS = [
+      { range: '<1ms', max: 1 },
+      { range: '1-10ms', max: 10 },
+      { range: '10-100ms', max: 100 },
+      { range: '100ms-1s', max: 1000 },
+      { range: '1-10s', max: 10000 },
+      { range: '>10s', max: Infinity },
+    ];
+    const counts = new Map(BUCKETS.map((b) => [b.range, 0]));
+    let totalCalls = 0;
     for (const s of this.methodStats.values()) {
-      totalTime += s.calls.reduce((a, c) => a + c.duration_ns, 0);
+      for (const c of s.calls) {
+        const ms = nsToMs(c.duration_ns);
+        const bucket = BUCKETS.find((b) => ms < b.max);
+        counts.set(bucket.range, counts.get(bucket.range) + 1);
+        totalCalls++;
+      }
     }
-    const distribution = [];
-    for (const [name, s] of this.methodStats) {
-      const t = s.calls.reduce((a, c) => a + c.duration_ns, 0);
-      distribution.push({
-        name,
-        class: s.class,
-        method: s.method,
-        total_ns: t,
-        percentage: totalTime > 0 ? Math.round((t / totalTime) * 10000) / 100 : 0,
+    const ranges = [];
+    for (const b of BUCKETS) {
+      const count = counts.get(b.range);
+      if (count === 0) continue;
+      ranges.push({
+        range: b.range,
+        count,
+        percentage: totalCalls > 0 ? Math.round((count / totalCalls) * 10000) / 100 : 0,
       });
     }
-    distribution.sort((a, b) => b.percentage - a.percentage);
-    return { total_ns: totalTime, distribution: distribution.slice(0, 20) };
+    return { ranges };
   }
 
   findErrorHotspots() {
@@ -115,12 +135,12 @@ class PerformanceAnalyzer {
         name,
         class: s.class,
         method: s.method,
-        totalCalls: s.calls.length,
-        errors: s.errors,
+        callCount: s.calls.length,
+        exceptions: s.errors,
         errorRate: Math.round((s.errors / s.calls.length) * 10000) / 100,
       });
     }
-    out.sort((a, b) => b.errors - a.errors);
+    out.sort((a, b) => b.exceptions - a.exceptions);
     return out;
   }
 
@@ -165,20 +185,20 @@ class PerformanceAnalyzer {
 
   getSummary() {
     let totalCalls = 0;
-    let totalErrors = 0;
+    let totalExceptions = 0;
     let total_ns = 0;
     for (const s of this.methodStats.values()) {
       totalCalls += s.calls.length;
-      totalErrors += s.errors;
+      totalExceptions += s.errors;
       total_ns += s.calls.reduce((a, c) => a + c.duration_ns, 0);
     }
     return {
       totalCalls,
       totalMethods: this.methodStats.size,
-      avg_ns: totalCalls > 0 ? Math.round(total_ns / totalCalls) : 0,
-      total_ns,
-      totalErrors,
-      errorRate: totalCalls > 0 ? Math.round((totalErrors / totalCalls) * 10000) / 100 : 0,
+      avgDuration: totalCalls > 0 ? nsToMs(total_ns / totalCalls) : 0,
+      totalTime: nsToMs(total_ns),
+      totalExceptions,
+      errorRate: totalCalls > 0 ? Math.round((totalExceptions / totalCalls) * 10000) / 100 : 0,
     };
   }
 }

@@ -26,10 +26,7 @@ class MetricsPanel {
     this.totalMethodsEl.textContent = this.formatNumber(summary.totalMethods);
 
     // Error rate
-    const errorRate = summary.totalCalls > 0
-      ? (summary.totalExceptions / summary.totalCalls) * 100
-      : 0;
-    this.errorRateEl.textContent = `${errorRate.toFixed(2)}%`;
+    this.errorRateEl.textContent = `${summary.errorRate.toFixed(2)}%`;
   }
 
   /**

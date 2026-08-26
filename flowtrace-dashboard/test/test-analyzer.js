@@ -28,9 +28,9 @@ const GOLDEN = path.join(REPO_ROOT, 'examples/golden/java/expected.jsonl');
   const tree = perf.callTrees[0];
   assert.ok(typeof tree.trace_id === 'string');
   assert.ok(tree.roots.length > 0, 'tree has roots');
-  // Validate v2-shape fields are exposed (no v1 names)
-  assert.ok('avg_ns' in (perf.slowMethods[0] || { avg_ns: 0 }));
-  assert.ok('total_ns' in perf.timeDistribution);
+  // Validate the ms-based dashboard contract fields are exposed (no _ns names)
+  assert.ok('avgDuration' in (perf.slowMethods[0] || { avgDuration: 0 }));
+  assert.ok(Array.isArray(perf.timeDistribution.ranges));
 
   console.log(`  ok   dashboard analyzer reads java golden (${result.fileStats.totalEvents} events, ${perf.callTrees.length} trace(s))`);
   console.log('1 passed, 0 failed');

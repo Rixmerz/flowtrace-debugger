@@ -36,9 +36,32 @@ identically by 2.1.0.
   fix above, so `flowtrace init` alone still printed the wrong prefix for
   exactly the case that motivated the original fix. Both commands now share
   one implementation (`lib/python-prefix.js`).
+- **The dashboard no longer shows `NaN`/`NaN%` for every duration metric.**
+  `PerformanceAnalyzer` had been rewritten to return raw-nanosecond,
+  `_ns`-suffixed fields (`avg_ns`, `total_ns`, `p95_ns`, `p99_ns`,
+  `totalErrors`) that none of its three real consumers
+  (`metrics-panel.js`, `table-renderer.js`, `cli.js`) were ever updated to
+  read. The analyzer now converts to milliseconds at its own boundary and
+  emits the ms-based, consumer-matching contract those three already
+  expected (`avgDuration`, `totalTime`, `totalExceptions`, `errorRate`,
+  `p95`, `p99`, `callCount`, `exceptions`), with no dual emission of the old
+  `_ns` names.
+- **The Time Distribution chart no longer renders empty.**
+  `calculateTimeDistribution()` returned a per-method breakdown
+  (`{total_ns, distribution: [...]}`) while `chart-renderer.js` expected a
+  duration-range histogram (`{ranges: [{range, count, percentage}]}`),
+  so `.map()` on the missing `ranges` threw and the chart never drew. It now
+  buckets every call across the whole trace into `<1ms`, `1-10ms`,
+  `10-100ms`, `100ms-1s`, `1-10s`, `>10s` ranges, only emitting buckets that
+  have at least one call.
 
 ### Changed
 
+- **`flowtrace analyze` no longer opens a second browser tab when a
+  dashboard is already running.** The reuse path still POSTs the trace and
+  prints the resulting URL (`Dashboard already running — view this trace
+  at: <url>`), but only a genuinely fresh server spawn now opens a browser
+  tab automatically.
 - **`flowtrace analyze` opens the trace already loaded**, instead of a bare
   dashboard tab the user then has to manually upload the JSONL into. It POSTs
   the file to the dashboard's `/api/analyze-file` (the same call

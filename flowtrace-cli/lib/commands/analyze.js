@@ -203,13 +203,13 @@ async function analyzeCommand(file, options = {}) {
   console.log(chalk.gray(`  archivo : ${target}`));
   console.log(chalk.gray(`  dashboard: ${url}`));
 
-  // AC3: never spawn a second server, and never open a browser tab before a
-  // /health probe against a server that is actually listening succeeds — that
-  // speculative open-before-verify sequence is exactly what produced repeated
-  // ERR_CONNECTION_REFUSED tabs.
+  // AC3: never spawn a second server, and never open a second browser tab —
+  // a server that is already running means some earlier invocation already
+  // opened one. Pre-load the trace so the URL is ready, but only print it.
   if (await checkHealth(`${url}/health`)) {
     console.log(chalk.green('OK'), `Dashboard ya esta corriendo en ${url}`);
-    openBrowser(await buildOpenUrl(url, target));
+    const openUrl = await buildOpenUrl(url, target);
+    console.log(chalk.cyan('Dashboard already running — view this trace at:'), openUrl);
     return { file: target, exitCode: 0, reused: true };
   }
 
@@ -233,7 +233,7 @@ async function analyzeCommand(file, options = {}) {
   waitForHealth(`${url}/health`).then(async (ready) => {
     if (ready) {
       console.log(chalk.green('OK'), `Dashboard listo en ${url}`);
-      openBrowser(await buildOpenUrl(url, target));
+      analyzeCommand._openBrowser(await buildOpenUrl(url, target));
     } else {
       console.error(chalk.red('Error:'), 'El dashboard no respondio a tiempo.');
     }

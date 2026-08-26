@@ -196,11 +196,26 @@ async function main() {
     }
     assert(/ya esta corriendo/.test(secondOut), 'reuse: second invocation reports reuse, not a fresh spawn');
 
-    const openedUrl = await readOpenedUrl(capturedB);
-    assert(!!openedUrl && /\?analysis=/.test(openedUrl), `reuse: opened URL contains ?analysis= (got: ${openedUrl})`);
+    // AC3: the reuse path must still pre-load the trace (postAnalyzeFile is
+    // called, so the URL it prints carries ?analysis=) but must NOT open a
+    // browser tab — assert against the `open`/`xdg-open` shim (the
+    // `_openBrowser` test-injection point for a real subprocess) never
+    // being invoked, not by mocking the function in-process.
+    assert(/view this trace at:/.test(secondOut), `reuse: stdout prints the "view this trace at" message instead of opening a tab (got: ${JSON.stringify(secondOut)})`);
+    // Extract the pre-loaded URL specifically (stdout also logs the bare
+    // `dashboard: http://localhost:PORT` line earlier without ?analysis=) —
+    // match on the ?analysis= query string, not just any localhost URL, and
+    // don't split on the message text since chalk wraps it in ANSI codes.
+    const printedUrlMatch = secondOut.match(/(http:\/\/localhost:\d+\?analysis=\S+)/);
+    assert(!!printedUrlMatch, `reuse: stdout contains the pre-loaded dashboard URL with ?analysis= (got: ${JSON.stringify(secondOut)})`);
+    const printedUrl = printedUrlMatch && printedUrlMatch[1];
+    assert(!!printedUrl && /\?analysis=/.test(printedUrl), `reuse: printed URL contains ?analysis= — postAnalyzeFile ran (got: ${printedUrl})`);
 
-    if (openedUrl && /\?analysis=/.test(openedUrl)) {
-      const analysisId = openedUrl.split('?analysis=')[1].trim();
+    const openedUrl = await readOpenedUrl(capturedB, 4, 250); // short poll: we expect this to NEVER appear
+    assert(!openedUrl, `reuse: openBrowser (the open/xdg-open shim) was NOT invoked (got: ${openedUrl})`);
+
+    if (printedUrl && /\?analysis=/.test(printedUrl)) {
+      const analysisId = printedUrl.split('?analysis=')[1].trim();
       const { statusCode, body } = await httpGetJson(`http://localhost:${PORT}/api/analyze/${analysisId}`);
       assert(statusCode === 200, `reuse: GET /api/analyze/${analysisId} returns 200 (got ${statusCode})`);
       assert(!!body && body.fileName === 'expected.jsonl' && body.filePath === secondJsonl, `reuse: returned analysis is for the SECOND file, not the first (filePath: ${body && body.filePath})`);

@@ -150,10 +150,10 @@ async function main() {
         } else {
           console.log(`\n❌ Error Hotspots (${errors.length} methods):\n`);
           errors.forEach((error, i) => {
-            const errorRate = (error.exceptionCount / error.callCount) * 100;
+            const errorRate = (error.exceptions / error.callCount) * 100;
             console.log(`${i + 1}. ${error.method}`);
             console.log(`   Total Calls: ${error.callCount.toLocaleString()}`);
-            console.log(`   Exceptions: ${error.exceptionCount}`);
+            console.log(`   Exceptions: ${error.exceptions}`);
             console.log(`   Error Rate: ${errorRate.toFixed(2)}%\n`);
           });
         }
