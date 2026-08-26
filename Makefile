@@ -6,7 +6,7 @@
 .PHONY: build test bench validate-schema check-golden gen-golden \
         build-java test-java build-python test-python build-node test-node \
         build-mcp test-mcp test-browser test-dashboard test-cli bundle-mcp check-bundle \
-        clean help
+        bundle-dashboard clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
@@ -16,7 +16,8 @@ help:
 	@echo "  make build-node       Install capture/node dependencies"
 	@echo "  make build-mcp        Install + compile mcp-server (tsc -> dist/)"
 	@echo "  make bundle-mcp       Rebuild plugin/mcp/server.bundle.js from mcp-server/src"
-	@echo "  make check-bundle     Verify the plugin bundle is current and boots standalone"
+	@echo "  make bundle-dashboard Rebuild flowtrace-cli/vendor/dashboard from flowtrace-dashboard/server"
+	@echo "  make check-bundle     Verify the committed bundles are current and boot standalone"
 	@echo "  make test             Full suite: schema + golden + java + python + node + mcp + dashboard + cli"
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make test-python      Run pytest for the Python capture module"
@@ -114,13 +115,26 @@ bundle-mcp:
 	@echo "==> bundle-mcp: plugin/mcp/server.bundle.js"
 	@cd mcp-server && pnpm install --silent && pnpm run bundle
 
-# Fails when the committed bundle no longer matches mcp-server/src. Without
-# this, the plugin silently ships whatever the bundle happened to contain the
-# last time someone remembered to rebuild it.
-check-bundle: bundle-mcp
-	@echo "==> check-bundle: committed bundle matches source"
+# flowtrace-cli's installed package can't rely on flowtrace-dashboard/ being a
+# sibling checkout (it's a sibling package in the monorepo, not nested under
+# flowtrace-cli/), so the dashboard server ships as a committed single-file
+# bundle too. See flowtrace-cli/scripts/bundle-dashboard.mjs.
+bundle-dashboard:
+	@echo "==> bundle-dashboard: flowtrace-cli/vendor/dashboard"
+	@cd flowtrace-cli && pnpm install --silent && pnpm run bundle:dashboard
+
+# Fails when a committed bundle no longer matches the source it was built
+# from. Without this, the plugin or the packaged CLI silently ships whatever
+# the bundle happened to contain the last time someone remembered to rebuild
+# it.
+check-bundle: bundle-mcp bundle-dashboard
+	@echo "==> check-bundle: committed bundles match source"
 	@git diff --exit-code --stat -- plugin/mcp/server.bundle.js \
 	  || { echo "ERROR: plugin/mcp/server.bundle.js is stale. Run 'make bundle-mcp' and commit."; exit 1; }
+	@git diff --exit-code --stat -- flowtrace-cli/vendor/dashboard flowtrace-cli/schema \
+	  || { echo "ERROR: flowtrace-cli/vendor/dashboard is stale. Run 'make bundle-dashboard' and commit."; exit 1; }
+	@[ -z "$$(git status --porcelain -- flowtrace-cli/vendor/dashboard flowtrace-cli/schema | grep '^??')" ] \
+	  || { echo "ERROR: flowtrace-cli/vendor/dashboard or flowtrace-cli/schema has untracked files. Run 'make bundle-dashboard' and 'git add' them."; exit 1; }
 	@node scripts/check-plugin.mjs
 
 test-dashboard:

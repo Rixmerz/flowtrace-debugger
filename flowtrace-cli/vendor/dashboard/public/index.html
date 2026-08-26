@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowTrace Performance Dashboard</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>⚡ FlowTrace Performance Dashboard</h1>
+            <p class="subtitle">Analyze performance bottlenecks in your application</p>
+        </header>
+
+        <!-- Upload Section -->
+        <div id="upload-section" class="section">
+            <div class="upload-box" id="upload-box">
+                <div class="upload-content">
+                    <svg class="upload-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    <h3>Drop your flowtrace.jsonl file here</h3>
+                    <p>or click to browse</p>
+                    <input type="file" id="file-input" accept=".jsonl" style="display: none;">
+                </div>
+            </div>
+            <div id="upload-progress" class="upload-progress" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <p id="progress-text">Analyzing...</p>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-section" class="section" style="display: none;">
+            <!-- Summary Cards -->
+            <div class="summary-cards">
+                <div class="card">
+                    <h4>Total Calls</h4>
+                    <p class="metric" id="total-calls">0</p>
+                </div>
+                <div class="card">
+                    <h4>Avg Duration</h4>
+                    <p class="metric" id="avg-duration">0ms</p>
+                </div>
+                <div class="card">
+                    <h4>Total Methods</h4>
+                    <p class="metric" id="total-methods">0</p>
+                </div>
+                <div class="card error-card">
+                    <h4>Error Rate</h4>
+                    <p class="metric" id="error-rate">0%</p>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab active" data-tab="slow-methods">🐌 Slow Methods</button>
+                <button class="tab" data-tab="bottlenecks">🔴 Bottlenecks</button>
+                <button class="tab" data-tab="distribution">📊 Time Distribution</button>
+                <button class="tab" data-tab="errors">❌ Errors</button>
+            </div>
+
+            <!-- Tab Content -->
+            <div class="tab-content">
+                <!-- Slow Methods Tab -->
+                <div id="slow-methods-tab" class="tab-panel active">
+                    <h3>Top Slow Methods</h3>
+                    <div class="table-container">
+                        <table class="results-table">
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Calls</th>
+                                    <th>Avg</th>
+                                    <th>P95</th>
+                                    <th>P99</th>
+                                    <th>Total Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="slow-methods-body">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Bottlenecks Tab -->
+                <div id="bottlenecks-tab" class="tab-panel">
+                    <h3>Performance Bottlenecks</h3>
+                    <p class="help-text">Methods with high call frequency and high duration (high impact)</p>
+                    <div class="table-container">
+                        <table class="results-table">
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Call Count</th>
+                                    <th>Avg Duration</th>
+                                    <th>Total Time</th>
+                                    <th>Impact Score</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bottlenecks-body">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Time Distribution Tab -->
+                <div id="distribution-tab" class="tab-panel">
+                    <h3>Time Distribution</h3>
+                    <div class="chart-container">
+                        <canvas id="distribution-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Errors Tab -->
+                <div id="errors-tab" class="tab-panel">
+                    <h3>Error Hotspots</h3>
+                    <div class="table-container">
+                        <table class="results-table">
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Total Calls</th>
+                                    <th>Exceptions</th>
+                                    <th>Error Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody id="errors-body">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/lib/api-client.js"></script>
+    <script src="js/components/file-uploader.js"></script>
+    <script src="js/components/metrics-panel.js"></script>
+    <script src="js/components/table-renderer.js"></script>
+    <script src="js/components/chart-renderer.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        // Auto-load analysis if analysisId is in URL
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const analysisId = params.get('analysis');
+
+            if (analysisId) {
+                const apiClient = new APIClient();
+                apiClient.getAnalysis(analysisId)
+                    .then(analysis => {
+                        window.dashboard.handleAnalysisResults(analysis);
+                    })
+                    .catch(error => {
+                        console.error('Failed to load analysis:', error);
+                    });
+            }
+        });
+    </script>
+</body>
+</html>

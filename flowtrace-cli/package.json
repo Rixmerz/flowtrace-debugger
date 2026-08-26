@@ -9,7 +9,8 @@
   "scripts": {
     "test": "for f in test/*.js; do node \"$f\" || exit 1; done",
     "vendor": "node scripts/vendor.mjs",
-    "prepack": "node scripts/vendor.mjs"
+    "bundle:dashboard": "node scripts/bundle-dashboard.mjs",
+    "prepack": "node scripts/vendor.mjs && node scripts/bundle-dashboard.mjs"
   },
   "keywords": [
     "flowtrace",
@@ -49,6 +50,9 @@
     "inquirer": "^8.2.5",
     "ora": "^5.4.1"
   },
+  "devDependencies": {
+    "esbuild": "0.24.2"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
@@ -56,6 +60,7 @@
     "bin",
     "lib",
     "vendor",
+    "schema",
     "README.md"
   ],
   "publishConfig": {

@@ -76,6 +76,10 @@ importers:
       ora:
         specifier: ^5.4.1
         version: 5.4.1
+    devDependencies:
+      esbuild:
+        specifier: 0.24.2
+        version: 0.24.2
 
   flowtrace-dashboard:
     dependencies:

@@ -10,7 +10,7 @@ const analyzeRouter = require('./api/analyze');
 const collectRouter = require('./api/collect');
 
 const app = express();
-const PORT = process.env.PORT || 8765;
+const PORT = process.env.FLOWTRACE_DASHBOARD_PORT || process.env.PORT || 8765;
 
 /**
  * CORS is restricted to localhost origins by default, because /api/trace
@@ -58,7 +58,7 @@ app.get('/', (req, res) => {
 if (require.main === module) startServer();
 
 function startServer() {
-  return app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════');
     console.log('  FlowTrace Performance Dashboard');
@@ -71,6 +71,24 @@ function startServer() {
     console.log('═══════════════════════════════════════════════════════');
     console.log('');
   });
+
+  // Without this, Node's default behavior for an unhandled 'error' event on
+  // a server is to throw — so a second `node server.js` on an already-taken
+  // port crashed with a raw uncaught-exception stack trace instead of a
+  // clean message, and left the process (and stdio) hanging around.
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `FlowTrace dashboard: port ${PORT} is already in use — something else ` +
+        '(quite possibly another `flowtrace analyze`) already owns it. Set ' +
+        'FLOWTRACE_DASHBOARD_PORT to use another one.'
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
+
+  return server;
 }
 
 module.exports = app;

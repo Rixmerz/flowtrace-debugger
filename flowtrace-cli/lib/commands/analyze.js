@@ -7,6 +7,7 @@
 'use strict';
 
 const fs      = require('fs');
+const http    = require('http');
 const path    = require('path');
 const { spawn } = require('child_process');
 const chalk   = require('chalk');
@@ -38,8 +39,78 @@ function openBrowser(url) {
   }
 }
 
-function repoRoot() {
-  return path.resolve(__dirname, '..', '..', '..'); // <repo>
+/**
+ * Locates the dashboard server, whichever of the two layouts this file is
+ * running from:
+ *
+ *   installed package: flowtrace-cli/lib/commands/analyze.js ships alongside
+ *   the committed esbuild bundle at flowtrace-cli/vendor/dashboard/server/
+ *   server.bundle.js (see scripts/bundle-dashboard.mjs). This is the only
+ *   layout that exists once the package is npm-installed.
+ *
+ *   monorepo / local dev: flowtrace-dashboard/ is a sibling of flowtrace-cli/
+ *   in the checkout, so contributors testing `analyze` against source (no
+ *   vendor build) fall back to flowtrace-dashboard/server/server.js.
+ *
+ * The old repoRoot() hardcoded '..','..','..' and only worked by coincidence
+ * of the monorepo's own directory depth — nothing to fall back to once the
+ * bundle (fixing "ship the dashboard at all") existed. This checks the
+ * installed-package path first and only falls back for local dev.
+ *
+ * `baseDir` defaults to this file's own directory but is injectable so tests
+ * can point it at a fixture tree instead of depending on this checkout's
+ * ambient build state (whether `make bundle-dashboard` has run).
+ */
+function resolveDashboardServer(baseDir = __dirname) {
+  const bundled = path.resolve(baseDir, '..', '..', 'vendor', 'dashboard', 'server', 'server.bundle.js');
+  if (fs.existsSync(bundled)) return bundled;
+
+  const fromSource = path.resolve(baseDir, '..', '..', '..', 'flowtrace-dashboard', 'server', 'server.js');
+  if (fs.existsSync(fromSource)) return fromSource;
+
+  return null;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * True only if a server is actually listening at `url`, answers 200, and its
+ * body identifies it as the flowtrace dashboard (`{"service":"flowtrace-dashboard"}`)
+ * — not just any process that happens to be on the port. Mirrors
+ * flowtrace-dashboard/mcp-tools.js's own startDashboard() — probe before
+ * spawn, so a second `flowtrace analyze` invocation reuses the first one's
+ * server instead of spawning a redundant process or opening a tab at a
+ * foreign server.
+ */
+function checkHealth(url, timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const req = http.get(url, { timeout: timeoutMs }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        if (res.statusCode !== 200) return resolve(false);
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          resolve(body.service === 'flowtrace-dashboard');
+        } catch {
+          resolve(false);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(false));
+  });
+}
+
+/** Polls /health until it succeeds or `retries` is exhausted. */
+async function waitForHealth(url, { retries = 30, intervalMs = 200 } = {}) {
+  for (let i = 0; i < retries; i++) {
+    if (await checkHealth(url)) return true;
+    await sleep(intervalMs);
+  }
+  return false;
 }
 
 async function analyzeCommand(file, options = {}) {
@@ -62,10 +133,10 @@ async function analyzeCommand(file, options = {}) {
 
   target = path.resolve(target);
 
-  const serverJs = path.join(repoRoot(), 'flowtrace-dashboard', 'server', 'server.js');
-  if (!fs.existsSync(serverJs)) {
-    console.error(chalk.red('Error:'), `No se encontro el dashboard: ${serverJs}`);
-    console.log(chalk.gray('Asegurate de que flowtrace-dashboard/server/server.js existe.'));
+  const dashboardServer = resolveDashboardServer();
+  if (!dashboardServer) {
+    console.error(chalk.red('Error:'), 'No se encontro el dashboard.');
+    console.log(chalk.gray('Reinstala @rixmerz/flowtrace, o si estas en el checkout corre `make bundle-dashboard`.'));
     process.exit(1);
   }
 
@@ -75,32 +146,41 @@ async function analyzeCommand(file, options = {}) {
   console.log(chalk.cyan('FlowTrace analyze'));
   console.log(chalk.gray(`  archivo : ${target}`));
   console.log(chalk.gray(`  dashboard: ${url}`));
+
+  // AC3: never spawn a second server, and never open a browser tab before a
+  // /health probe against a server that is actually listening succeeds — that
+  // speculative open-before-verify sequence is exactly what produced repeated
+  // ERR_CONNECTION_REFUSED tabs.
+  if (await checkHealth(`${url}/health`)) {
+    console.log(chalk.green('OK'), `Dashboard ya esta corriendo en ${url}`);
+    openBrowser(url);
+    return { file: target, exitCode: 0, reused: true };
+  }
+
   console.log(chalk.gray('Iniciando servidor de dashboard...'));
 
   const env = { ...process.env, PORT: String(PORT), FLOWTRACE_FILE: target };
-  const child = spawn(process.execPath, [serverJs], {
+  const child = spawn(process.execPath, [dashboardServer], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  // Wait for server ready signal then open browser
-  let ready = false;
-  const onData = (data) => {
-    const text = data.toString();
-    process.stdout.write(chalk.gray(text));
-    if (!ready && text.includes('localhost')) {
-      ready = true;
-      console.log(chalk.green('OK'), `Dashboard listo en ${url}`);
-      openBrowser(url);
-    }
-  };
-  child.stdout.on('data', onData);
+  child.stdout.on('data', (d) => process.stdout.write(chalk.gray(d.toString())));
   child.stderr.on('data', (d) => process.stderr.write(chalk.gray(d.toString())));
 
   // Forward Ctrl-C
   process.on('SIGINT', () => {
     child.kill('SIGINT');
     process.exit(0);
+  });
+
+  waitForHealth(`${url}/health`).then((ready) => {
+    if (ready) {
+      console.log(chalk.green('OK'), `Dashboard listo en ${url}`);
+      openBrowser(url);
+    } else {
+      console.error(chalk.red('Error:'), 'El dashboard no respondio a tiempo.');
+    }
   });
 
   return new Promise((resolve) => {
@@ -113,5 +193,7 @@ async function analyzeCommand(file, options = {}) {
 // Expose internals for testing
 analyzeCommand._findLatestJsonl = findLatestJsonl;
 analyzeCommand._openBrowser = openBrowser;
+analyzeCommand._resolveDashboardServer = resolveDashboardServer;
+analyzeCommand._checkHealth = checkHealth;
 
 module.exports = analyzeCommand;
