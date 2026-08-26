@@ -7,7 +7,7 @@
     "flowtrace": "./bin/flowtrace.js"
   },
   "scripts": {
-    "test": "node test/test-cli.js",
+    "test": "for f in test/*.js; do node \"$f\" || exit 1; done",
     "vendor": "node scripts/vendor.mjs",
     "prepack": "node scripts/vendor.mjs"
   },

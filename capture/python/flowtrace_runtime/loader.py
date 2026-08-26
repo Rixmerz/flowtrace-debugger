@@ -70,6 +70,19 @@ class FlowtraceSourceLoader(importlib.machinery.SourceFileLoader):
 
         return code
 
+    def get_code(self, fullname: str) -> types.CodeType | None:  # type: ignore[override]
+        # SourceFileLoader.get_code() checks the standard __pycache__ *.pyc
+        # cache first and returns it without calling source_to_code() when it
+        # is fresh. That cache is written by any un-instrumented run (a plain
+        # `python -c "import ..."` during dev/CI) and, once present, made
+        # every subsequent `flowtrace run` silently trace zero events for
+        # that module. Bypassing it here forces every import through
+        # source_to_code(), which has its own instrumentation-aware cache
+        # keyed on a hash of the source (see _cache_path above).
+        source_path = self.get_filename(fullname)
+        source_bytes = self.get_data(source_path)
+        return self.source_to_code(source_bytes, source_path)
+
     def exec_module(self, module: types.ModuleType) -> None:  # type: ignore[override]
         from .runtime import HELPERS
 

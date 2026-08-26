@@ -7,6 +7,54 @@ did not change in this release, and `schema/flowtrace-v2.json` remains the
 contract every capture layer locks to. A trace produced by 2.0.0 is read
 identically by 2.1.0.
 
+## [Unreleased]
+
+### Fixed
+
+- **`_ft_exit` no longer crashes the traced process.** A function returning a
+  `dict` with non-JSON-serializable values now has its `result` passed
+  through `_to_json_safe` like every other return type, instead of being
+  handed to the emitter raw.
+- **A stale `__pycache__` no longer silently disables Python instrumentation.**
+  `FlowtraceSourceLoader` now overrides `get_code()` so every import goes
+  through `source_to_code()` (and FlowTrace's own content-hashed cache),
+  instead of `SourceFileLoader` returning a pre-existing, un-instrumented
+  `.pyc` from disk.
+- **`flowtrace init`/`run` detect the Python import name, not just the PyPI
+  distribution name.** `detectPythonPrefix()` now also checks
+  `[tool.hatch.build.targets.wheel].packages`,
+  `[tool.setuptools.packages.find]`, a single package under `src/`, and a
+  single top-level package next to `pyproject.toml`, before falling back to
+  the distribution-name guess. `flowtrace run` also warns on stderr with the
+  final event count when a Python run completes with zero events.
+- **`log_close` sessions are now distinguishable from unknown ones.** A
+  session id closed via `log_close` reports a descriptive "was closed"
+  message on reuse instead of the generic "Invalid sessionId".
+
+### Changed
+
+- **BREAKING (behavior): argument redaction.** `_serialize_args` now redacts
+  argument values whose name matches a redact-key list (case-insensitive
+  substring match) before truncation, checked recursively so a matching key
+  nested inside a dict argument is also caught, not just top-level ones. This
+  applies by default even when `FLOWTRACE_REDACT_KEYS` is unset, using a
+  built-in list: `password,secret,token,authorization,api_key,url,dsn,
+  connection_string,email`. `FLOWTRACE_REDACT_KEYS`, when set, is
+  comma-separated substrings ADDED to that built-in list, not a replacement
+  for it. Any traced argument (or nested dict key) whose name contains one of
+  those substrings is now emitted as `"<redacted>"` instead of its real
+  value.
+- **MCP `trace_tree` caps output.** Accepts optional `maxDepth` and
+  `maxNodes` (default 2000 total nodes); an elided subtree carries
+  `truncated: true` plus a count of elided descendants, and the top-level
+  result reports `truncated`/`totalNodes`.
+- **MCP `trace_diff` groups by `module + class + method`**, matching the key
+  `trace_private_calls` already uses, instead of by method name alone —
+  identically-named methods in different classes/modules no longer get
+  averaged together. Rows also carry `module`/`class` fields, and are
+  filterable/sortable by a `min_abs_delta_ns` floor so a tiny sub-microsecond
+  percentage swing no longer outranks a large absolute regression.
+
 ## [2.1.0]
 
 ### Added

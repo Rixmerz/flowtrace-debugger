@@ -21262,13 +21262,16 @@ function applyFilters(rows, where, freeText) {
 }
 
 // src/trace-tools.ts
+var DEFAULT_MAX_NODES = 2e3;
 function isEnter(e) {
   return e.event === "enter";
 }
 function isExit(e) {
   return e.event === "exit";
 }
-function traceTree(events, traceId) {
+function traceTree(events, traceId, options = {}) {
+  const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES;
+  const maxDepth = options.maxDepth;
   const scoped = events.filter((e) => e.trace_id === traceId);
   const enters = scoped.filter(isEnter).sort((a, b) => a.ts - b.ts);
   const exitBySpan = /* @__PURE__ */ new Map();
@@ -21294,15 +21297,55 @@ function traceTree(events, traceId) {
     };
     nodeBySpan.set(e.span_id, node);
   }
+  const childrenOf = /* @__PURE__ */ new Map();
   const roots = [];
   for (const node of nodeBySpan.values()) {
     if (node.parent_id && nodeBySpan.has(node.parent_id)) {
-      nodeBySpan.get(node.parent_id).children.push(node);
+      const siblings = childrenOf.get(node.parent_id) ?? [];
+      siblings.push(node);
+      childrenOf.set(node.parent_id, siblings);
     } else {
       roots.push(node);
     }
   }
-  return roots;
+  function countDescendants(node) {
+    const kids = childrenOf.get(node.span_id) ?? [];
+    let n = kids.length;
+    for (const kid of kids) n += countDescendants(kid);
+    return n;
+  }
+  let emitted = 0;
+  let truncated = false;
+  function build(node, depth) {
+    emitted++;
+    const out = { ...node, children: [] };
+    const kids = childrenOf.get(node.span_id) ?? [];
+    if (maxDepth !== void 0 && depth >= maxDepth && kids.length) {
+      truncated = true;
+      out.truncated = true;
+      out.elidedCount = kids.reduce((n, k) => n + 1 + countDescendants(k), 0);
+      return out;
+    }
+    for (const kid of kids) {
+      if (emitted >= maxNodes) {
+        truncated = true;
+        out.truncated = true;
+        out.elidedCount = (out.elidedCount ?? 0) + 1 + countDescendants(kid);
+        continue;
+      }
+      out.children.push(build(kid, depth + 1));
+    }
+    return out;
+  }
+  const outRoots = [];
+  for (const root of roots) {
+    if (emitted >= maxNodes) {
+      truncated = true;
+      break;
+    }
+    outRoots.push(build(root, 0));
+  }
+  return { roots: outRoots, truncated, totalNodes: emitted };
 }
 function traceFindError(events) {
   const sorted = [...events].sort((a, b) => a.ts - b.ts);
@@ -21347,46 +21390,54 @@ function tracePrivateCalls(events) {
   return [...counts.values()].sort((a, b) => b.count - a.count);
 }
 function methodKey(e) {
-  return `${e.class ?? ""}.${e.method}`;
+  return `${e.module ?? ""}|${e.class ?? ""}|${e.method}`;
 }
-function traceDiff(a, b) {
+function formatMethodKey(key) {
+  return key.split("|").filter(Boolean).join(".");
+}
+var DEFAULT_MIN_ABS_DELTA_NS = 1e3;
+function traceDiff(a, b, options = {}) {
+  const minAbsDeltaNs = options.min_abs_delta_ns ?? DEFAULT_MIN_ABS_DELTA_NS;
   const avgByMethod = (events) => {
     const acc = /* @__PURE__ */ new Map();
     for (const e of events) {
       if (!isExit(e)) continue;
       const k = methodKey(e);
-      const cur = acc.get(k) ?? { sum: 0, n: 0 };
+      const cur = acc.get(k) ?? { sum: 0, n: 0, module: e.module, class: e.class, method: e.method };
       cur.sum += e.duration_ns;
       cur.n += 1;
       acc.set(k, cur);
     }
     const out = /* @__PURE__ */ new Map();
-    for (const [k, v] of acc) out.set(k, v.sum / v.n);
+    for (const [k, v] of acc) out.set(k, { avg: v.sum / v.n, module: v.module, class: v.class, method: v.method });
     return out;
   };
   const aAvg = avgByMethod(a);
   const bAvg = avgByMethod(b);
   const aMethods = new Set(aAvg.keys());
   const bMethods = new Set(bAvg.keys());
-  const only_in_a = [...aMethods].filter((m) => !bMethods.has(m)).sort();
-  const only_in_b = [...bMethods].filter((m) => !aMethods.has(m)).sort();
+  const only_in_a = [...aMethods].filter((m) => !bMethods.has(m)).map(formatMethodKey).sort();
+  const only_in_b = [...bMethods].filter((m) => !aMethods.has(m)).map(formatMethodKey).sort();
   const duration_deltas = [];
-  for (const m of aMethods) {
-    if (!bMethods.has(m)) continue;
-    const av = aAvg.get(m);
-    const bv = bAvg.get(m);
-    if (av <= 0) continue;
-    const delta = (bv - av) / av * 100;
-    if (Math.abs(delta) > 20) {
-      duration_deltas.push({
-        method: m,
-        avg_a_ns: Math.round(av),
-        avg_b_ns: Math.round(bv),
-        delta_pct: Math.round(delta * 10) / 10
-      });
-    }
+  for (const k of aMethods) {
+    if (!bMethods.has(k)) continue;
+    const av = aAvg.get(k);
+    const bv = bAvg.get(k);
+    if (av.avg <= 0) continue;
+    const deltaNs = bv.avg - av.avg;
+    if (Math.abs(deltaNs) < minAbsDeltaNs) continue;
+    const deltaPct = deltaNs / av.avg * 100;
+    duration_deltas.push({
+      module: av.module,
+      class: av.class,
+      method: av.method,
+      avg_a_ns: Math.round(av.avg),
+      avg_b_ns: Math.round(bv.avg),
+      delta_ns: Math.round(deltaNs),
+      delta_pct: Math.round(deltaPct * 10) / 10
+    });
   }
-  duration_deltas.sort((x, y) => Math.abs(y.delta_pct) - Math.abs(x.delta_pct));
+  duration_deltas.sort((x, y) => Math.abs(y.delta_ns) - Math.abs(x.delta_ns));
   return { only_in_a, only_in_b, duration_deltas };
 }
 
@@ -21394,6 +21445,7 @@ function traceDiff(a, b) {
 var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
 var sessions = /* @__PURE__ */ new Map();
 var evicted = /* @__PURE__ */ new Set();
+var closed = /* @__PURE__ */ new Set();
 var MAX_SESSIONS = (() => {
   const raw = Number(process.env.FLOWTRACE_MCP_MAX_SESSIONS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
@@ -21415,6 +21467,11 @@ function evictOverCap() {
 function getSession(id) {
   const s = sessions.get(id);
   if (!s) {
+    if (closed.has(id)) {
+      throw new Error(
+        `Session ${id} was closed via log_close. Re-open the log with log_open.`
+      );
+    }
     if (evicted.has(id)) {
       throw new Error(
         `Session ${id} was evicted: at most ${MAX_SESSIONS} logs are kept open (raise FLOWTRACE_MCP_MAX_SESSIONS). Re-open the log with log_open.`
@@ -21468,7 +21525,10 @@ mcp.tool(
   { sessionId: external_exports.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const existed = sessions.delete(sessionId);
-    evicted.delete(sessionId);
+    if (existed) {
+      evicted.delete(sessionId);
+      closed.add(sessionId);
+    }
     return ok({ closed: existed, openSessions: sessions.size });
   }
 );
@@ -21577,12 +21637,15 @@ mcp.tool(
   "Build a hierarchical call tree for a given trace_id from a v2 session",
   {
     sessionId: external_exports.string().describe("Session id from log_open"),
-    trace_id: external_exports.string().describe("W3C trace id (32 hex chars) to scope the tree")
+    trace_id: external_exports.string().describe("W3C trace id (32 hex chars) to scope the tree"),
+    maxDepth: external_exports.number().int().positive().optional().describe("Max depth (root = 0) to expand children for"),
+    maxNodes: external_exports.number().int().positive().optional().describe("Max total nodes to emit (default 2000)")
   },
-  async ({ sessionId, trace_id }) => {
+  async ({ sessionId, trace_id, maxDepth, maxNodes }) => {
     const s = getSession(sessionId);
     const events = v2OnlyEvents(s);
-    return ok({ trace_id, roots: traceTree(events, trace_id) });
+    const { roots, truncated, totalNodes } = traceTree(events, trace_id, { maxDepth, maxNodes });
+    return ok({ trace_id, roots, truncated, totalNodes });
   }
 );
 mcp.tool(
@@ -21608,15 +21671,16 @@ mcp.tool(
 );
 mcp.tool(
   "trace_diff",
-  "Compare two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas > 20%",
+  "Compare two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas grouped by module+class+method, ranked by absolute delta",
   {
     sessionId_a: external_exports.string().describe("Baseline session id (A)"),
-    sessionId_b: external_exports.string().describe("Comparison session id (B)")
+    sessionId_b: external_exports.string().describe("Comparison session id (B)"),
+    min_abs_delta_ns: external_exports.number().nonnegative().optional().describe("Absolute duration-delta floor in ns; rows below it are excluded (default excludes sub-microsecond deltas)")
   },
-  async ({ sessionId_a, sessionId_b }) => {
+  async ({ sessionId_a, sessionId_b, min_abs_delta_ns }) => {
     const a = getSession(sessionId_a);
     const b = getSession(sessionId_b);
-    return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b)));
+    return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b), { min_abs_delta_ns }));
   }
 );
 var transport = new StdioServerTransport();

@@ -156,8 +156,12 @@ test('log_close frees a session and it stops working', async () => {
     const closed = await c.call('log_close', { sessionId: a.sessionId });
     assert.equal(closed.closed, true);
     assert.equal(closed.openSessions, 0);
+    // AC7: a session this process explicitly closed must say so — not the
+    // generic "Invalid sessionId" a typo would produce.
     const err = await c.callExpectingError('log_schema', { sessionId: a.sessionId });
-    assert.match(err, /Invalid sessionId/);
+    assert.match(err, /was closed/i);
+    assert.match(err, /log_open/, 'the error says how to recover');
+    assert.doesNotMatch(err, /Invalid sessionId/);
   });
 });
 

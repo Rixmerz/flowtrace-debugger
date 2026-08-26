@@ -27,6 +27,31 @@ def _get_max_arg_length() -> int:
         return 512
 
 
+_DEFAULT_REDACT_KEYS = (
+    "password,secret,token,authorization,api_key,url,dsn,connection_string,email"
+)
+
+
+def _get_redact_keys() -> list[str]:
+    """Redact-key substrings matched case-insensitively against argument
+    (and nested dict key) names. Always includes the default list covering
+    common secret/PII-bearing names; FLOWTRACE_REDACT_KEYS, if set, is a
+    comma-separated list of ADDITIONAL substrings appended to it — it does
+    not replace the defaults."""
+    keys = [k.strip().lower() for k in _DEFAULT_REDACT_KEYS.split(",") if k.strip()]
+    raw = os.environ.get("FLOWTRACE_REDACT_KEYS", "")
+    for k in raw.split(","):
+        k = k.strip().lower()
+        if k and k not in keys:
+            keys.append(k)
+    return keys
+
+
+def _is_redacted_key(name: str, redact_keys: list[str]) -> bool:
+    lowered = name.lower()
+    return any(k in lowered for k in redact_keys)
+
+
 def _truncate_if_needed(serialized: Any) -> Any:
     """If JSON representation exceeds max-arg-length, replace with truncation marker."""
     max_len = _get_max_arg_length()
@@ -42,23 +67,37 @@ def _truncate_if_needed(serialized: Any) -> Any:
 
 
 def _serialize_args(locals_dict: dict[str, Any]) -> dict[str, Any]:
-    """Convert locals dict to a JSON-safe args dict, skipping self/cls."""
+    """Convert locals dict to a JSON-safe args dict, skipping self/cls and
+    redacting values whose arg name matches FLOWTRACE_REDACT_KEYS (checked
+    recursively, so a redact-key nested inside a dict value is also caught)."""
+    redact_keys = _get_redact_keys()
     result: dict[str, Any] = {}
     for k, v in locals_dict.items():
         if k in ("self", "cls", "_ft_ctx", "_ft_result", "_ft_exc"):
             continue
-        result[k] = _truncate_if_needed(_to_json_safe(v))
+        if redact_keys and _is_redacted_key(k, redact_keys):
+            result[k] = "<redacted>"
+            continue
+        result[k] = _truncate_if_needed(_to_json_safe(v, redact_keys))
     return result
 
 
-def _to_json_safe(v: Any) -> Any:
-    """Convert a value to something JSON-serializable."""
+def _to_json_safe(v: Any, redact_keys: list[str] | None = None) -> Any:
+    """Convert a value to something JSON-serializable, redacting dict values
+    whose key matches redact_keys at any nesting depth."""
     if v is None or isinstance(v, (bool, int, float, str)):
         return v
     if isinstance(v, (list, tuple)):
-        return [_to_json_safe(i) for i in v]
+        return [_to_json_safe(i, redact_keys) for i in v]
     if isinstance(v, dict):
-        return {str(k): _to_json_safe(vv) for k, vv in v.items()}
+        out: dict[str, Any] = {}
+        for k, vv in v.items():
+            sk = str(k)
+            if redact_keys and _is_redacted_key(sk, redact_keys):
+                out[sk] = "<redacted>"
+            else:
+                out[sk] = _to_json_safe(vv, redact_keys)
+        return out
     return repr(v)
 
 
@@ -123,13 +162,14 @@ def _ft_enter(
 def _ft_exit(ctx: dict, result: Any) -> None:
     """Called after the function body completes normally."""
     duration_ns = time.perf_counter_ns() - ctx["start_ns"]
+    redact_keys = _get_redact_keys()
 
     if isinstance(result, dict):
-        result_val = result
+        result_val = _to_json_safe(result, redact_keys)
     elif result is None:
         result_val = {}
     else:
-        result_val = {"value": _to_json_safe(result)}
+        result_val = {"value": _to_json_safe(result, redact_keys)}
 
     Emitter.instance().emit({
         "ts": time.time(),

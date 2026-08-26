@@ -58,6 +58,7 @@ jq -s 'map(select(.event=="exit")) | sort_by(-.duration_ns) | .[:10]' .flowtrace
 |----------|--------|
 | `FLOWTRACE_PACKAGE_PREFIX` | Restrict instrumentation to matching modules |
 | `FLOWTRACE_MAX_ARG_LENGTH` | Truncate args/results (`0` disables, default 512) |
+| `FLOWTRACE_REDACT_KEYS` | Comma-separated substrings ADDED to the built-in redact-key list (`password,secret,token,authorization,api_key,url,dsn,connection_string,email`); matched case-insensitively against argument names, at any nesting depth |
 | `FLOWTRACE_TRACEPARENT` | Continue a trace started by another process |
 | `FLOWTRACE_CACHE_DIR` | Where the OTel agent is cached (default `~/.flowtrace`) |
 | `FLOWTRACE_PROPAGATE=0` | Disable automatic outgoing trace propagation |

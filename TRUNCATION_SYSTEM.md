@@ -43,6 +43,20 @@ application.
 The limit applies to `args` and `result` independently, per value, measured on
 the JSON serialization rather than on the raw object.
 
+## Redaction runs before truncation
+
+Python's capture layer also redacts argument values whose name matches a
+redact-key list, before the truncation rule above ever sees them. A matching
+value is replaced in place with `"<redacted>"`, at any nesting depth inside a
+dict argument (not just top-level argument names).
+
+The built-in list — applied even when `FLOWTRACE_REDACT_KEYS` is unset — is:
+`password,secret,token,authorization,api_key,url,dsn,connection_string,email`.
+
+`FLOWTRACE_REDACT_KEYS` is a comma-separated list of ADDITIONAL substrings,
+matched case-insensitively, appended to the built-in list — it does not
+replace it.
+
 ## Parity is pinned by fixtures
 
 `examples/golden/truncation/{java,node,python}` run the same scenario — a

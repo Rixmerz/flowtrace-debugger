@@ -30,6 +30,10 @@ const sessions = new Map<string, OpenSession>();
 /** Ids evicted to make room, so a stale id gets a useful error, not "invalid". */
 const evicted = new Set<string>();
 
+/** Ids explicitly released via log_close — distinguishes "closed on purpose"
+ *  from "evicted for space" and from "never opened" (a typo). */
+const closed = new Set<string>();
+
 const MAX_SESSIONS = (() => {
   const raw = Number(process.env.FLOWTRACE_MCP_MAX_SESSIONS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
@@ -55,6 +59,11 @@ function evictOverCap(): string[] {
 function getSession(id: string): OpenSession {
   const s = sessions.get(id);
   if (!s) {
+    if (closed.has(id)) {
+      throw new Error(
+        `Session ${id} was closed via log_close. Re-open the log with log_open.`
+      );
+    }
     if (evicted.has(id)) {
       throw new Error(
         `Session ${id} was evicted: at most ${MAX_SESSIONS} logs are kept open ` +
@@ -108,7 +117,10 @@ mcp.tool(
   { sessionId: z.string().describe("Session id from log_open") },
   async ({ sessionId }) => {
     const existed = sessions.delete(sessionId);
-    evicted.delete(sessionId);
+    if (existed) {
+      evicted.delete(sessionId);
+      closed.add(sessionId);
+    }
     return ok({ closed: existed, openSessions: sessions.size });
   }
 );
@@ -230,11 +242,14 @@ mcp.tool(
   {
     sessionId: z.string().describe("Session id from log_open"),
     trace_id: z.string().describe("W3C trace id (32 hex chars) to scope the tree"),
+    maxDepth: z.number().int().positive().optional().describe("Max depth (root = 0) to expand children for"),
+    maxNodes: z.number().int().positive().optional().describe("Max total nodes to emit (default 2000)"),
   },
-  async ({ sessionId, trace_id }) => {
+  async ({ sessionId, trace_id, maxDepth, maxNodes }) => {
     const s = getSession(sessionId);
     const events = v2OnlyEvents(s);
-    return ok({ trace_id, roots: traceTree(events, trace_id) });
+    const { roots, truncated, totalNodes } = traceTree(events, trace_id, { maxDepth, maxNodes });
+    return ok({ trace_id, roots, truncated, totalNodes });
   }
 );
 
@@ -263,15 +278,16 @@ mcp.tool(
 
 mcp.tool(
   "trace_diff",
-  "Compare two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas > 20%",
+  "Compare two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas grouped by module+class+method, ranked by absolute delta",
   {
     sessionId_a: z.string().describe("Baseline session id (A)"),
     sessionId_b: z.string().describe("Comparison session id (B)"),
+    min_abs_delta_ns: z.number().nonnegative().optional().describe("Absolute duration-delta floor in ns; rows below it are excluded (default excludes sub-microsecond deltas)"),
   },
-  async ({ sessionId_a, sessionId_b }) => {
+  async ({ sessionId_a, sessionId_b, min_abs_delta_ns }) => {
     const a = getSession(sessionId_a);
     const b = getSession(sessionId_b);
-    return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b)));
+    return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b), { min_abs_delta_ns }));
   }
 );
 

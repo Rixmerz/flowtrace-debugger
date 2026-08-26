@@ -6,6 +6,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const readline = require('readline');
 const { spawnSync, spawn } = require('child_process');
 const chalk = require('chalk');
 const assets = require('../assets');
@@ -260,15 +261,93 @@ async function runJava({ options, restArgs, cwd, outPath }) {
 // ---------- Python injection ----------
 
 /**
- * Detect package prefix from pyproject.toml or setup.py in cwd.
- * Returns null if not found.
+ * Extract a TOML string array (e.g. `packages = ["a", "b"]`) that appears
+ * under a given `[section]` header. Regex-based (like the rest of this
+ * file's TOML reading) rather than a full parser — good enough for the
+ * flat arrays build backends put here.
+ */
+function _tomlArrayInSection(src, sectionHeader, key) {
+  const sectionRe = new RegExp(
+    `\\[${sectionHeader.replace(/[.[\]]/g, '\\$&')}\\]([\\s\\S]*?)(?:\\n\\[|$)`
+  );
+  const sectionMatch = src.match(sectionRe);
+  if (!sectionMatch) return null;
+  const body = sectionMatch[1];
+  const arrRe = new RegExp(`^\\s*${key}\\s*=\\s*\\[([^\\]]*)\\]`, 'm');
+  const arrMatch = body.match(arrRe);
+  if (!arrMatch) return null;
+  const items = arrMatch[1]
+    .split(',')
+    .map(s => s.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean);
+  return items.length ? items : null;
+}
+
+/**
+ * A single top-level directory under `baseDir` containing `__init__.py`.
+ * Returns its name, or null if there isn't exactly one.
+ */
+function _singlePackageDir(baseDir, excludeNames) {
+  if (!fs.existsSync(baseDir)) return null;
+  const candidates = fs.readdirSync(baseDir, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .filter(d => !d.name.startsWith('.'))
+    .filter(d => !excludeNames.has(d.name))
+    .filter(d => fs.existsSync(path.join(baseDir, d.name, '__init__.py')))
+    .map(d => d.name);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+const _NON_PACKAGE_DIRS = new Set([
+  'tests', 'test', 'venv', '.venv', 'build', 'dist', '__pycache__', 'docs', 'node_modules',
+]);
+
+/**
+ * Detect the Python *import* name — which frequently differs from the PyPI
+ * distribution name in pyproject.toml/setup.py `name=` (e.g. `pyyaml`→`yaml`,
+ * or a distro name with hyphens whose package lives under `src/`).
+ * Checked in order, before falling back to the distribution-name guess:
+ *   (a) [tool.hatch.build.targets.wheel].packages /
+ *       [tool.setuptools.packages.find].where+include in pyproject.toml
+ *   (b) a single top-level directory under src/ containing __init__.py
+ *   (c) a single top-level directory next to pyproject.toml containing __init__.py
+ * Returns null if nothing is found.
  */
 function detectPythonPrefix(cwd) {
-  // Try pyproject.toml [project] name field.
   const pyprojectPath = path.join(cwd, 'pyproject.toml');
+  let pyprojectSrc = null;
   if (fs.existsSync(pyprojectPath)) {
-    const src = fs.readFileSync(pyprojectPath, 'utf-8');
-    const m = src.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
+    pyprojectSrc = fs.readFileSync(pyprojectPath, 'utf-8');
+
+    // (a) explicit build-backend package declarations.
+    const hatchPackages = _tomlArrayInSection(
+      pyprojectSrc, 'tool.hatch.build.targets.wheel', 'packages'
+    );
+    if (hatchPackages) {
+      const first = hatchPackages[0].split('/').pop();
+      if (first) return first;
+    }
+
+    const include = _tomlArrayInSection(
+      pyprojectSrc, 'tool.setuptools.packages.find', 'include'
+    );
+    if (include) {
+      const first = include[0].replace(/\*.*$/, '');
+      if (first) return first;
+    }
+  }
+
+  // (b) single package under src/.
+  const underSrc = _singlePackageDir(path.join(cwd, 'src'), _NON_PACKAGE_DIRS);
+  if (underSrc) return underSrc;
+
+  // (c) single package next to pyproject.toml / setup.py.
+  const atRoot = _singlePackageDir(cwd, _NON_PACKAGE_DIRS);
+  if (atRoot) return atRoot;
+
+  // Fallback: distribution name from pyproject.toml [project].name.
+  if (pyprojectSrc) {
+    const m = pyprojectSrc.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
     if (m) return m[1].trim().replace(/-/g, '_');
   }
   // Try setup.py name= argument.
@@ -350,10 +429,46 @@ async function runPython({ options, restArgs, cwd, outPath }) {
   process.on('SIGINT', () => child.kill('SIGINT'));
 
   return new Promise((resolve) => {
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
+      // A wrong package prefix used to fail silently: exit 0, an output path
+      // printed, and no file ever written — indistinguishable from "nothing
+      // to trace". Warn loudly whenever a Python run traced zero events.
+      // The count itself is a best-effort diagnostic: a stat/read error here
+      // (e.g. permissions) must never mask the traced program's real exit code.
+      try {
+        const eventCount = await _countJsonlLines(outPath);
+        if (eventCount === 0) {
+          console.error(chalk.yellow('Warning:'), `0 eventos capturados en ${outPath}.`);
+          console.log(chalk.gray('  ¿El package prefix coincide con el nombre de import real (no el de distribución)?'));
+          console.log(chalk.gray(`  prefix usado: ${prefix}`));
+        }
+      } catch (err) {
+        console.error(chalk.yellow('Warning:'), `no se pudo verificar ${outPath}: ${err.message}`);
+      }
       process.exit(code ?? 0);
       resolve();
     });
+  });
+}
+
+/**
+ * Number of non-empty lines in a JSONL file, or 0 if it doesn't exist.
+ * Streams the file line-by-line rather than reading it whole — traced
+ * output routinely exceeds Node's string length limit (ERR_STRING_TOO_LONG).
+ */
+function _countJsonlLines(filePath) {
+  if (!fs.existsSync(filePath)) return Promise.resolve(0);
+  return new Promise((resolve, reject) => {
+    let count = 0;
+    const rl = readline.createInterface({
+      input: fs.createReadStream(filePath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+    rl.on('line', (line) => {
+      if (line.trim()) count += 1;
+    });
+    rl.on('close', () => resolve(count));
+    rl.on('error', reject);
   });
 }
 
@@ -434,5 +549,6 @@ runCommand._detectGroupIdFromPom = detectGroupIdFromPom;
 runCommand._ensureGitignore = ensureGitignore;
 runCommand._detectPythonPrefix = detectPythonPrefix;
 runCommand._buildPythonEnv = buildPythonEnv;
+runCommand._countJsonlLines = _countJsonlLines;
 
 module.exports = runCommand;

@@ -29,8 +29,13 @@ function test(name, fn) { tests.push({ name, fn }); }
 test('trace_tree builds nested structure for java golden', () => {
   const events = loadJsonlSync(JAVA_GOLDEN);
   const traceId = events[0].trace_id;
-  const roots = traceTree(events, traceId);
+  // AC5: traceTree now returns { roots, truncated, totalNodes } instead of a
+  // bare array, so a caller over MCP can tell a capped response from a
+  // complete one.
+  const { roots, truncated, totalNodes } = traceTree(events, traceId);
   assert.equal(roots.length, 1, 'one root per golden trace');
+  assert.equal(truncated, false, 'small golden trace is not truncated');
+  assert.ok(totalNodes > 0, 'totalNodes reflects emitted node count');
   const root = roots[0];
   assert.equal(root.method, 'run');
   assert.ok(root.children.length > 0, 'root has children');
@@ -40,6 +45,33 @@ test('trace_tree builds nested structure for java golden', () => {
   walk(root);
   assert.ok(depths.has(0));
   assert.ok([...depths].some((d) => d >= 2), 'tree reaches depth >= 2');
+});
+
+test('trace_tree caps total nodes at maxNodes and marks elided subtrees truncated', () => {
+  // 1 root -> 5 children -> each with 1 grandchild = 11 nodes total.
+  const trace_id = 'cccccccccccccccccccccccccccccccc';
+  const e = (over) => ({
+    ts: 0, trace_id, thread: 'main', lang: 'node', ...over,
+  });
+  const events = [
+    e({ ts: 0, span_id: 'root', parent_id: null, event: 'enter', method: 'root' }),
+    e({ ts: 100, span_id: 'root', parent_id: null, event: 'exit', method: 'root', duration_ns: 1 }),
+  ];
+  for (let i = 0; i < 5; i++) {
+    const child = `c${i}`, grand = `g${i}`;
+    events.push(
+      e({ ts: 1 + i, span_id: child, parent_id: 'root', event: 'enter', method: `child${i}` }),
+      e({ ts: 2 + i, span_id: grand, parent_id: child, event: 'enter', method: `grand${i}` }),
+      e({ ts: 3 + i, span_id: grand, parent_id: child, event: 'exit', method: `grand${i}`, duration_ns: 1 }),
+      e({ ts: 4 + i, span_id: child, parent_id: 'root', event: 'exit', method: `child${i}`, duration_ns: 1 }),
+    );
+  }
+  const { roots, truncated, totalNodes } = traceTree(events, trace_id, { maxNodes: 3 });
+  assert.equal(truncated, true, 'result-level truncated flag set when cap hit');
+  assert.equal(totalNodes, 3, 'emitted node count matches the cap');
+  const root = roots[0];
+  assert.equal(root.truncated, true, 'root node carries truncated flag once its children get elided');
+  assert.ok(root.elidedCount > 0, 'elidedCount reports how many descendants were dropped');
 });
 
 // -- trace_find_error --
@@ -130,11 +162,78 @@ test('trace_diff detects only-in-A and duration delta > 20%', () => {
   const a = [...mk('foo', 1000, 's1'), ...mk('only_a', 500, 's2')];
   const b = [...mk('foo', 2000, 's3'), ...mk('only_b', 700, 's4')];
   const d = traceDiff(a, b);
+  // AC6: only_in_a/only_in_b key on module+class+method now (not the old bare
+  // '.method' string), but stay human-readable — "class.method" here since
+  // module is absent, not the internal `module|class|method` join key.
   assert.deepEqual(d.only_in_a, ['X.only_a']);
   assert.deepEqual(d.only_in_b, ['X.only_b']);
   assert.equal(d.duration_deltas.length, 1);
-  assert.equal(d.duration_deltas[0].method, 'X.foo');
+  assert.equal(d.duration_deltas[0].method, 'foo');
+  assert.equal(d.duration_deltas[0].class, 'X');
   assert.equal(d.duration_deltas[0].delta_pct, 100);
+});
+
+test('trace_diff groups by module+class+method, not method alone', () => {
+  // Two unrelated methods named `_loader` in different modules used to be
+  // averaged together into one meaningless row. Regression for AC6.
+  const trace_id = 'dddddddddddddddddddddddddddddddd';
+  const mk = (module, dur, span) => [
+    { ts: 0, trace_id, span_id: span, parent_id: null, event: 'enter', thread: 't',
+      lang: 'python', module, method: '_loader' },
+    { ts: 1, trace_id, span_id: span, parent_id: null, event: 'exit', thread: 't',
+      lang: 'python', module, method: '_loader', duration_ns: dur },
+  ];
+  const a = [...mk('airline_class_master_store', 23500, 's1'), ...mk('fare_family_matrix_service', 334700, 's2')];
+  const b = a; // identical run: no deltas expected, just check grouping didn't collapse rows
+  const d = traceDiff(a, b);
+  assert.equal(d.duration_deltas.length, 0, 'identical runs produce no delta rows');
+  // Force a real diff to confirm the two modules are NOT merged into one row.
+  const b2 = [...mk('airline_class_master_store', 50000, 's3'), ...mk('fare_family_matrix_service', 334700, 's4')];
+  const d2 = traceDiff(a, b2); // fare_family_matrix_service unchanged -> under default floor, dropped
+  const rows = d2.duration_deltas;
+  assert.equal(rows.length, 1, 'only the changed module produces a delta row');
+  assert.equal(rows[0].module, 'airline_class_master_store');
+  assert.equal(rows[0].method, '_loader');
+});
+
+test('trace_diff only_in_a/only_in_b use readable module.class.method, never the raw pipe-joined key', () => {
+  // Regression: formatMethodKey() must render "module.class.method" (dropping
+  // empty parts), not leak the internal `module|class|method` grouping key
+  // used by methodKey() into a user-facing field.
+  const trace_id = 'ffffffffffffffffffffffffffffffff';
+  const mkFull = (module, cls, method, span) => [
+    { ts: 0, trace_id, span_id: span, parent_id: null, event: 'enter', thread: 't',
+      lang: 'python', module, class: cls, method },
+    { ts: 1, trace_id, span_id: span, parent_id: null, event: 'exit', thread: 't',
+      lang: 'python', module, class: cls, method, duration_ns: 1000 },
+  ];
+  // module + class + method all present.
+  const a = mkFull('fare_family_matrix_service', 'Loader', '_loader', 's1');
+  // module only, no class (empty part must be dropped, not rendered as "..").
+  const b = mkFull('billing', '', 'charge', 's2');
+  const d = traceDiff(a, b);
+  assert.deepEqual(d.only_in_a, ['fare_family_matrix_service.Loader._loader']);
+  assert.deepEqual(d.only_in_b, ['billing.charge']);
+  for (const key of [...d.only_in_a, ...d.only_in_b]) {
+    assert.ok(!key.includes('|'), `only_in_* entry leaked raw pipe-joined key: ${key}`);
+    assert.ok(!key.includes('..'), `only_in_* entry has a stray empty segment: ${key}`);
+  }
+});
+
+test('trace_diff min_abs_delta_ns floors out sub-microsecond deltas by default', () => {
+  const trace_id = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const mk = (dur, span) => [
+    { ts: 0, trace_id, span_id: span, parent_id: null, event: 'enter', thread: 't',
+      lang: 'node', module: 'm', class: 'X', method: 'tiny' },
+    { ts: 1, trace_id, span_id: span, parent_id: null, event: 'exit', thread: 't',
+      lang: 'node', module: 'm', class: 'X', method: 'tiny', duration_ns: dur },
+  ];
+  const a = mk(750, 's1');
+  const b = mk(1542, 's2'); // +106% but well under the default 1000ns floor... actually 792ns delta < 1000
+  const d = traceDiff(a, b);
+  assert.equal(d.duration_deltas.length, 0, 'sub-microsecond delta excluded by default floor');
+  const dNoFloor = traceDiff(a, b, { min_abs_delta_ns: 0 });
+  assert.equal(dNoFloor.duration_deltas.length, 1, 'floor override surfaces the row');
 });
 
 // -- v1 compat --
