@@ -2,7 +2,7 @@
 
 All notable changes to FlowTrace.
 
-## [Unreleased]
+## [3.0.2]
 
 ### Fixed
 
