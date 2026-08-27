@@ -2,6 +2,22 @@
 
 All notable changes to FlowTrace.
 
+## [Unreleased]
+
+### Fixed
+
+- **The dashboard no longer labels every module-level function "Unknown".**
+  `PerformanceAnalyzer._buildMethodStats` grouped calls by `class.method` and
+  discarded `module` entirely, so `findSlowMethods`/`findBottlenecks`/
+  `findErrorHotspots` never carried a module name for functions that aren't
+  inside a class (the normal shape for Python/Node top-level functions).
+  `table-renderer.js`'s `formatClassName` then rendered the resulting empty
+  class as the literal string `"Unknown"`. The analyzer now keys by
+  `module|class|method` (matching the convention `trace_diff`/
+  `trace_private_calls` already use) and carries `module` on every row; the
+  table renderer falls back to it when there is no class, and only reports
+  `"Unknown"` when neither is present.
+
 The **trace schema** is versioned separately from the tooling: it is `v2`, it
 did not change in this release, and `schema/flowtrace-v2.json` remains the
 contract every capture layer locks to. A trace produced by 2.0.0 is read

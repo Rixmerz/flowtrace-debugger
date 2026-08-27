@@ -31,13 +31,17 @@ class TableRenderer {
   }
 
   /**
-   * Format class name (remove package, keep class name)
+   * Format class name (remove package, keep class name). Falls back to the
+   * module name for a module-level function that has no class — that is a
+   * legitimate shape (Python/Node top-level functions), not missing data,
+   * so it must not read as "Unknown".
    * @param {string} className
+   * @param {string} [moduleName]
    * @returns {string}
    */
-  static formatClassName(className) {
-    if (!className || className === 'Unknown') {
-      return 'Unknown';
+  static formatClassName(className, moduleName) {
+    if (!className) {
+      return moduleName || 'Unknown';
     }
 
     // For Java-style package names (com.example.Class)
@@ -59,7 +63,7 @@ class TableRenderer {
 
     methods.forEach(method => {
       const row = document.createElement('tr');
-      const className = this.formatClassName(method.class || method.className);
+      const className = this.formatClassName(method.class || method.className, method.module);
 
       row.innerHTML = `
         <td>
@@ -91,7 +95,7 @@ class TableRenderer {
 
     bottlenecks.forEach(bottleneck => {
       const row = document.createElement('tr');
-      const className = this.formatClassName(bottleneck.class || bottleneck.className);
+      const className = this.formatClassName(bottleneck.class || bottleneck.className, bottleneck.module);
 
       row.innerHTML = `
         <td>
@@ -130,7 +134,7 @@ class TableRenderer {
     errors.forEach(error => {
       const row = document.createElement('tr');
       const errorRate = (error.exceptions / error.callCount) * 100;
-      const className = this.formatClassName(error.class || error.className);
+      const className = this.formatClassName(error.class || error.className, error.module);
 
       row.innerHTML = `
         <td>

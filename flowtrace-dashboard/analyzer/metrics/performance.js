@@ -32,10 +32,11 @@ class PerformanceAnalyzer {
     for (const e of this.events) {
       if (e.event !== 'exit') continue;
       const cls = e.class || '';
-      const key = `${cls}.${e.method}`;
+      const mod = e.module || '';
+      const key = `${mod}|${cls}|${e.method}`;
       let stats = this.methodStats.get(key);
       if (!stats) {
-        stats = { class: cls, method: e.method, lang: e.lang, calls: [], errors: 0 };
+        stats = { class: cls, module: mod, method: e.method, lang: e.lang, calls: [], errors: 0 };
         this.methodStats.set(key, stats);
       }
       stats.calls.push({
@@ -57,6 +58,7 @@ class PerformanceAnalyzer {
       out.push({
         name,
         class: s.class,
+        module: s.module,
         method: s.method,
         callCount: durations.length,
         avgDuration: nsToMs(avg),
@@ -81,6 +83,7 @@ class PerformanceAnalyzer {
       out.push({
         name,
         class: s.class,
+        module: s.module,
         method: s.method,
         callCount: s.calls.length,
         avgDuration: nsToMs(avg),
@@ -134,6 +137,7 @@ class PerformanceAnalyzer {
       out.push({
         name,
         class: s.class,
+        module: s.module,
         method: s.method,
         callCount: s.calls.length,
         exceptions: s.errors,
