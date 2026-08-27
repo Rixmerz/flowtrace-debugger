@@ -34,7 +34,7 @@ public class FlowtraceInstrumentationModule extends InstrumentationModule {
                     + "Set -Dflowtrace.package-prefix=com.example to scope instrumentation.");
             return Collections.emptyList();
         }
-        return Arrays.asList(new FlowtraceTypeInstrumentation());
+        return Arrays.asList(new FlowtraceTypeInstrumentation(), new ThreadContextInstrumentation());
     }
 
     @Override
@@ -51,7 +51,14 @@ public class FlowtraceInstrumentationModule extends InstrumentationModule {
                 // then contained exit events only, with null ids and absurd
                 // durations, and nothing said why.
                 "io.flowtrace.advice.TraceparentSeed",
-                "io.flowtrace.advice.FlowtraceAdvice"
+                "io.flowtrace.advice.FlowtraceAdvice",
+                // ThreadStartAdvice/ThreadRunAdvice inline into
+                // java.lang.VirtualThread, which lives on the bootstrap
+                // classloader — PendingThreadContext must be injected there too,
+                // same reasoning as above.
+                "io.flowtrace.advice.PendingThreadContext",
+                "io.flowtrace.advice.ThreadStartAdvice",
+                "io.flowtrace.advice.ThreadRunAdvice"
         );
     }
 }

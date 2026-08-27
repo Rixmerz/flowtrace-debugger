@@ -2,6 +2,30 @@
 
 All notable changes to FlowTrace.
 
+## [3.0.3]
+
+### Fixed
+
+- **A Java virtual thread's span landed orphaned, in its own trace.**
+  OpenTelemetry's `Context` propagation relies on a plain `ThreadLocal`,
+  which neither platform nor virtual threads inherit across `Thread.start()`
+  — found dogfooding the Java capture layer against a JDK 21 program using
+  `Thread.ofVirtual()`. A virtual thread's call now correctly nests under
+  its caller's span (same `trace_id`, correct `parent_id`) instead of
+  starting a disconnected trace with `parent_id: null`. Fixed by snapshotting
+  `Context.current()` at `Thread.start()` and restoring it for the duration
+  of the virtual thread's `run()`. Scoped to virtual threads only — platform
+  `Thread`s load before the javaagent's `premain` runs and are never
+  retransformed by this mechanism, so their context is not propagated by
+  this fix; a matcher that claimed otherwise, and did nothing, was removed
+  along with the false doc claim.
+- **That same fix, once added, leaked memory on a failed `Thread.start()`.**
+  A virtual thread that never reaches `run()` — restarting an
+  already-terminated one (`IllegalThreadStateException`), or a scheduler
+  rejection (`RejectedExecutionException`) — left its snapshotted `Context`
+  pinned in memory forever. `start()`'s advice now cleans up its pending
+  entry on any exception out of `start()`, not just on the success path.
+
 ## [3.0.2]
 
 ### Fixed

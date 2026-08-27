@@ -196,4 +196,40 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- src/test/java21 holds fixtures/tests that need JDK 21 syntax
+         (Thread.ofVirtual()) the module's release-11 floor would reject.
+         Compiling them only when the build JDK is actually >= 21 keeps the
+         JDK 17 leg of the CI matrix (java-tests, JDK 17/21/25) unaffected —
+         see VirtualThreadIntegrationTest's class doc. -->
+    <profile>
+      <id>jdk21-fixtures</id>
+      <activation>
+        <jdk>[21,)</jdk>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.13.0</version>
+            <executions>
+              <execution>
+                <id>testCompile-java21</id>
+                <phase>test-compile</phase>
+                <goals><goal>testCompile</goal></goals>
+                <configuration>
+                  <release>21</release>
+                  <compileSourceRoots>
+                    <compileSourceRoot>${project.basedir}/src/test/java21</compileSourceRoot>
+                  </compileSourceRoots>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
