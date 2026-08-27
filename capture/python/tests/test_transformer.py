@@ -227,6 +227,88 @@ def test_async_function_traced():
     assert events[-1]["event"] == "exit"
 
 
+def test_async_generator_with_bare_return_traced():
+    src = """
+    async def agen():
+        yield 1
+        return
+    """
+    mod, events = _compile_and_exec(src)
+
+    async def consume():
+        return [x async for x in mod.agen()]
+
+    vals = asyncio.run(consume())
+    assert vals == [1]
+    enters = [e for e in events if e["event"] == "enter"]
+    exits = [e for e in events if e["event"] == "exit"]
+    assert len(enters) == 1
+    assert len(exits) >= 1
+
+
+def test_async_generator_early_return_in_try_except_traced():
+    src = """
+    async def agen(fail):
+        try:
+            if fail:
+                return
+        except Exception:
+            return
+        yield 1
+    """
+    mod, events = _compile_and_exec(src)
+
+    async def consume():
+        return [x async for x in mod.agen(False)]
+
+    vals = asyncio.run(consume())
+    assert vals == [1]
+    enters = [e for e in events if e["event"] == "enter"]
+    exits = [e for e in events if e["event"] == "exit"]
+    assert len(enters) == 1
+    assert len(exits) >= 1
+
+
+def test_outer_async_function_with_nested_async_generator_returns_real_value():
+    """Regression: a yield inside a NESTED async generator must not make the
+    OUTER (non-generator) async function misclassify as is_generator=True.
+    Before the manual-recursion fix, ast.walk() would surface the nested
+    inner()'s Yield node to the outer _has_yield check regardless of the
+    FunctionDef skip, causing the outer's real return value to be dropped
+    (lap-1's async-generator guard would incorrectly skip return rewriting
+    for outer, leaving _ft_result as its default None)."""
+    src = """
+    async def outer():
+        async def inner():
+            yield 1
+            yield 2
+        total = 0
+        async for x in inner():
+            total += x
+        return total
+    """
+    mod, events = _compile_and_exec(src)
+    result = asyncio.run(mod.outer())
+    assert result == 3
+    exits = [e for e in events if e["event"] == "exit" and e["qualname"] == "outer"]
+    assert len(exits) == 1
+    assert exits[0]["result"] == 3
+
+
+def test_sync_generator_return_value_unaffected():
+    src = """
+    def gen():
+        yield 1
+        return 5
+    """
+    mod, events = _compile_and_exec(src)
+    g = mod.gen()
+    assert next(g) == 1
+    with pytest.raises(StopIteration) as exc_info:
+        next(g)
+    assert exc_info.value.value == 5
+
+
 # ---------------------------------------------------------------------------
 # Decorator preservation
 # ---------------------------------------------------------------------------

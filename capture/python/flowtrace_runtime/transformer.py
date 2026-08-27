@@ -24,13 +24,20 @@ def _visibility(name: str) -> str:
 
 
 def _has_yield(node: ast.AST) -> bool:
-    """Return True if node directly contains a Yield/YieldFrom (not in nested func)."""
-    for child in ast.walk(node):
-        if child is node:
-            continue
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue  # Don't descend into nested functions.
+    """Return True if node directly contains a Yield/YieldFrom (not in nested func).
+
+    ast.walk() flattens the whole subtree up front, so skipping a nested
+    FunctionDef/AsyncFunctionDef/Lambda node there only skips that node
+    itself -- it still yields the nested function's own children (including
+    any Yield/YieldFrom inside it) later in the same walk. Prune manually
+    instead of relying on ast.walk().
+    """
+    for child in ast.iter_child_nodes(node):
         if isinstance(child, (ast.Yield, ast.YieldFrom)):
+            return True
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue  # Don't descend into nested functions/lambdas.
+        if _has_yield(child):
             return True
     return False
 
@@ -136,8 +143,13 @@ class FlowtraceTransformer(ast.NodeTransformer):
         ctx_assign = _assign("_ft_ctx", enter_call, ref)
         result_default = _assign("_ft_result", ast.copy_location(ast.Constant(value=None), ref), ref)
 
-        # Rewrite Return nodes to capture result.
-        node.body = self._rewrite_returns(node.body, ref)
+        # Rewrite Return nodes to capture result. Skip for async generators:
+        # CPython only allows bare `return` inside `async def` + `yield`, and
+        # the rewriter always produces `return <value>`, which is a
+        # SyntaxError there regardless of what the original return contained.
+        is_async_generator = isinstance(node, ast.AsyncFunctionDef) and is_generator
+        if not is_async_generator:
+            node.body = self._rewrite_returns(node.body, ref)
         original_body = node.body
 
         if is_generator:
