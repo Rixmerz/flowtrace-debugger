@@ -7,7 +7,21 @@ did not change in this release, and `schema/flowtrace-v2.json` remains the
 contract every capture layer locks to. A trace produced by 2.0.0 is read
 identically by 2.1.0.
 
-## [2.1.1]
+## [3.0.1]
+
+### Fixed
+
+- **Instrumenting an async generator with a `return` no longer crashes at
+  import.** The AST rewriter used to turn every `return` — bare or not —
+  into a value-capturing form, but CPython only allows a bare `return`
+  inside an `async def` containing `yield`; the rewritten form was always
+  illegal there. A related pre-existing bug in `_has_yield()` (nested
+  functions' yields leaking into the outer function's generator
+  classification, via `ast.walk()` not honoring a `continue` the way the
+  code assumed) is fixed alongside it — it fed the same misclassification
+  into both the old wrapping-branch selection and this new guard.
+
+## [3.0.0]
 
 ### Fixed
 

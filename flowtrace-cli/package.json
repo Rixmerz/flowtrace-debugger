@@ -1,6 +1,6 @@
 {
   "name": "@rixmerz/flowtrace",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Trace what Java, Node, TypeScript and Python actually did \u2014 one install, no Maven, no pip.",
   "bin": {
     "flowtrace": "./bin/flowtrace.js"
