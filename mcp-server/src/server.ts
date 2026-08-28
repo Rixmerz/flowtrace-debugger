@@ -15,6 +15,7 @@ import {
   tracePrivateCalls,
   traceDiff,
 } from "./trace-tools";
+import { renderRuntimes } from "./runtimes";
 
 const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
 
@@ -289,6 +290,24 @@ mcp.tool(
     const b = getSession(sessionId_b);
     return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b), { min_abs_delta_ns }));
   }
+);
+
+// -- resources -------------------------------------------------------------
+
+// What FlowTrace actually supports, queryable rather than inferred. An agent
+// that reads a README gets whichever of them it happened to open; this is the
+// one answer. See src/runtimes.ts for why it exists.
+mcp.resource(
+  "runtimes",
+  "flowtrace://runtimes",
+  {
+    description:
+      "Authoritative list of runtimes FlowTrace can instrument: minimum versions, how each is invoked, where the package prefix comes from, cross-process propagation support, and which npm package is real. Read this before telling a user whether their language is supported.",
+    mimeType: "text/markdown",
+  },
+  async (uri) => ({
+    contents: [{ uri: uri.href, mimeType: "text/markdown", text: renderRuntimes() }],
+  })
 );
 
 // -- entrypoint ------------------------------------------------------------

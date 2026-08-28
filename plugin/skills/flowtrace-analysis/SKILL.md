@@ -53,6 +53,13 @@ When the FlowTrace plugin is installed its MCP server provides:
 | `trace_private_calls` | Just the private-method calls |
 | `trace_diff` | Compare two runs — spans only in one, duration deltas |
 
+It also serves one resource, **`flowtrace://runtimes`** — which runtimes are
+supported, their minimum versions, how each is invoked, where the package
+prefix comes from, and what cross-process propagation each has. Read it before
+telling anyone whether their language is supported or how to install anything.
+It is authoritative: any README, command or skill that disagrees with it is
+stale, including this file.
+
 Without the MCP server this is plain JSONL — one self-contained JSON object per
 line — so `Read`, `Grep` and `jq` are enough. For example, the slowest calls:
 `jq -s 'map(select(.event=="exit")) | sort_by(-.duration_ns) | .[:10]' flowtrace.jsonl`
@@ -78,6 +85,17 @@ flow; large duration deltas tell you about changed cost.
 **For "what actually ran":** `trace_tree` on the relevant `trace_id` and read
 it top-down. This is the cheapest way to discover that the code you were
 reading was never called.
+
+**For a chain of services:** the ids are W3C Trace Context compatible, so a
+request that crosses processes keeps ONE `trace_id` and reads as a single tree
+even though each process wrote its own file. Load them together (or concatenate
+them) and `trace_tree` the shared id.
+
+If the halves carry *different* `trace_id`s, the hop dropped the header — the
+chain is not joined and no per-hop analysis can tell you it is. That is a
+finding. Usual causes: the caller never attached `traceparent` (Go and Python
+do not attach it outbound on their own), or the child was launched without
+`FLOWTRACE_TRACEPARENT`. `flowtrace://runtimes` has the per-runtime matrix.
 
 ## Reading discipline
 

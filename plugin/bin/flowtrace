@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+# The `flowtrace` CLI, for a plugin install.
+#
+# Claude Code puts <plugin-root>/bin on PATH, so every doc, command and skill
+# that says `flowtrace run -- ...` resolves through this file. Before it
+# existed the plugin advertised the command and shipped nothing to answer it:
+# `which flowtrace` came back empty and agents fell back to whatever
+# flowtrace-cli checkout happened to be on disk, or to hand-wiring a capture
+# layer.
+#
+# It cannot be the real CLI. A plugin install copies a directory and runs no
+# build, so anything under CLAUDE_PLUGIN_ROOT must work with no node_modules —
+# and the CLI needs @swc/core and babel, which are platform-specific native
+# builds. npx fetches the right ones for this machine and caches them, so the
+# cost is a first run with network and nothing after that.
+#
+# Pinned deliberately: an unpinned `npx @rixmerz/flowtrace` would silently
+# change the capture layer under a fixed plugin version. scripts/check-plugin.mjs
+# asserts this pin matches flowtrace-cli/package.json.
+FLOWTRACE_CLI_VERSION="3.1.0"
+
+if command -v npx >/dev/null 2>&1; then
+  exec npx -y "@rixmerz/flowtrace@${FLOWTRACE_CLI_VERSION}" "$@"
+fi
+
+echo "flowtrace: npx not found — install Node.js 20.6+ (https://nodejs.org)," >&2
+echo "           or install the CLI directly: npm i -g @rixmerz/flowtrace" >&2
+exit 127

@@ -28,8 +28,23 @@ one before doing anything.
    State the prefix you chose. If detection is ambiguous, ask rather than guess —
    a wrong prefix produces an empty trace that looks like a bug in the code.
 
-3. **Run it** with `flowtrace run -- $ARGUMENTS` if the CLI is installed.
-   Otherwise wire the capture layer directly for the detected language.
+3. **Run it** with `flowtrace run -- $ARGUMENTS`.
+
+   The plugin ships `flowtrace` on your PATH, so this resolves with no global
+   install — the shim shells out to `npx @rixmerz/flowtrace`, which needs
+   network on its first run and is cached after. If `flowtrace` is somehow not
+   resolvable, use `npx @rixmerz/flowtrace run -- $ARGUMENTS` directly.
+
+   `@rixmerz/flowtrace` is the only published package and it vendors every
+   capture layer. Do NOT try to install `@flowtrace/cli` or
+   `@flowtrace/capture-node` — those names are not on npm and never have been;
+   they are workspace-internal. Do not hand-wire a capture layer, and do not
+   symlink one out of a flowtrace-debugger checkout: that only works on the
+   machine that happens to have it, which is how a repo ends up with an
+   instrumentation setup CI cannot reproduce.
+
+   Read the `flowtrace://runtimes` MCP resource if you need to confirm what is
+   supported. It is authoritative; any doc that disagrees with it is stale.
 
 4. **Report**, do not dump:
    - How many events, across how many `trace_id`s
@@ -41,4 +56,32 @@ one before doing anything.
 concluding anything about the application. Report the prefix you used and what
 you would try instead.
 
-Leave `flowtrace.jsonl` in place for follow-up analysis. Mention its path.
+## Tracing across processes
+
+For a chain of services, one `trace_id` should span every hop — otherwise you
+can show each hop is clean without showing the chain is. The ids are W3C Trace
+Context compatible, so this works:
+
+- **Node / TypeScript** propagate both ways on their own (inbound header, and
+  outbound `fetch` / `http.request` are patched).
+- **Python** and **Java** adopt an inbound `traceparent` on their own.
+- **Go** adopts one, but does not attach it outbound automatically — there is
+  no seam for it. The caller must attach `flowtracert.CurrentTraceparent()`,
+  and an HTTP handler seeds with
+  `flowtracert.SeedFromTraceparent(r.Header.Get("traceparent"))`.
+
+When there is no HTTP between the processes, export
+`FLOWTRACE_TRACEPARENT=00-<32 hex trace>-<16 hex span>-01` before launching the
+child; every runtime reads it.
+
+To verify a chain really joined: collect each process's trace and check they
+share one `trace_id`, then `trace_tree` it. Two different trace_ids means a hop
+dropped the header — that is the finding, not a reason to report success per
+hop.
+
+---
+
+Leave the trace in place for follow-up analysis and mention its path.
+`flowtrace run` writes `.flowtrace/<timestamp>.jsonl` in the working directory
+(it prints the path on startup) — not `flowtrace.jsonl`, which is only the
+default when a capture layer is wired by hand.

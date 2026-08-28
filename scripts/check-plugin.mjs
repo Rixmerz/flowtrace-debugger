@@ -135,6 +135,45 @@ for (const [label, dir, requiredFile] of markdownDirs) {
   }
 }
 
+// -- 3b. Executables in plugin/bin are shippable and pinned ----------------
+
+// Claude Code puts plugin/bin on PATH. A shim that is untracked, not
+// executable, or pinned to a CLI version that no longer matches the repo is
+// the same class of fault as the .mcp.json bugs above: invisible here, fatal
+// on someone else's machine.
+const binDir = join(PLUGIN, 'bin');
+if (existsSync(binDir)) {
+  const binFiles = execFileSync('git', ['ls-files', '-s', relative(ROOT, binDir)], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  }).split('\n').filter(Boolean);
+
+  if (binFiles.length === 0) fail('plugin/bin/ exists but tracks no files');
+
+  for (const line of binFiles) {
+    const [meta, file] = line.split('\t');
+    const mode = meta.split(' ')[0];
+    if (mode !== '100755') {
+      fail(`${file}: tracked mode ${mode} — a PATH shim must be committed executable (git update-index --chmod=+x)`);
+    }
+  }
+
+  // The pinned CLI version must be one that exists in this repo, or the
+  // plugin ships a shim for a release that was never cut.
+  const shim = join(binDir, 'flowtrace');
+  if (existsSync(shim)) {
+    const pinned = /FLOWTRACE_CLI_VERSION="([^"]+)"/.exec(readFileSync(shim, 'utf8'))?.[1];
+    const cliVersion = readJson(join(ROOT, 'flowtrace-cli', 'package.json'))?.version;
+    if (!pinned) fail('plugin/bin/flowtrace: no FLOWTRACE_CLI_VERSION pin found');
+    else if (pinned !== cliVersion) {
+      fail(
+        `plugin/bin/flowtrace pins @rixmerz/flowtrace@${pinned} but flowtrace-cli is ${cliVersion} — ` +
+        `bump the shim in the same commit as the CLI`
+      );
+    }
+  }
+}
+
 // -- 4. The bundle actually boots with no node_modules ---------------------
 
 /**
@@ -167,7 +206,9 @@ async function bootCheck({ name, target }) {
         params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'check', version: '1' } },
       }) + '\n' +
       JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n' +
-      JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) + '\n'
+      JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) + '\n' +
+      JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'resources/list', params: {} }) + '\n' +
+      JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'resources/read', params: { uri: 'flowtrace://runtimes' } }) + '\n'
     );
 
     const exited = await new Promise((done) => {
@@ -189,7 +230,21 @@ async function bootCheck({ name, target }) {
         `(exit=${exited})${stderr ? `\n  stderr: ${stderr.trim().slice(0, 400)}` : ''}`
       );
     } else {
-      console.log(`  ${name}: boots standalone, exposes ${listed.length} tools`);
+      // flowtrace://runtimes is the one place that says which runtimes are
+      // supported. A bundle that boots without it sends every agent back to
+      // guessing from a README, which is the drift this resource exists to end.
+      const resources = replies.find((r) => r.id === 3)?.result?.resources ?? [];
+      const runtimeDoc = replies.find((r) => r.id === 4)?.result?.contents?.[0]?.text ?? '';
+      if (!resources.some((r) => r.uri === 'flowtrace://runtimes')) {
+        fail(`.mcp.json [${name}]: bundle does not expose the flowtrace://runtimes resource`);
+      } else if (!/\bgo\b/i.test(runtimeDoc) || !/traceparent/i.test(runtimeDoc)) {
+        fail(`.mcp.json [${name}]: flowtrace://runtimes served ${runtimeDoc.length} chars but is missing the runtime or propagation tables`);
+      } else {
+        console.log(
+          `  ${name}: boots standalone, exposes ${listed.length} tools ` +
+          `and ${resources.length} resource(s) (runtimes doc: ${runtimeDoc.length} chars)`
+        );
+      }
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
