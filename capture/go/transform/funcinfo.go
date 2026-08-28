@@ -159,3 +159,92 @@ func instrumentResults(fset *token.FileSet, fd *ast.FuncDecl, used map[string]st
 	}
 	return names, edits
 }
+
+// netHTTPLocalName returns the identifier this file binds to "net/http", or
+// "" when the file does not import it in a usable way.
+//
+// Resolving the real import (rather than pattern-matching the literal text
+// "http.ResponseWriter") is what makes handler detection safe: the generated
+// seed calls r.Header.Get, so a false positive would be a COMPILE ERROR in
+// the user's build, which is the one failure a tracer must never cause. A
+// blank or dot import yields "" — neither gives a qualifier to match against.
+func netHTTPLocalName(file *ast.File) string {
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || path != "net/http" {
+			continue
+		}
+		if spec.Name == nil {
+			return "http" // default package name
+		}
+		if spec.Name.Name == "_" || spec.Name.Name == "." {
+			return ""
+		}
+		return spec.Name.Name
+	}
+	return ""
+}
+
+// isQualified reports whether expr is exactly `pkg.name`.
+func isQualified(expr ast.Expr, pkg, name string) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == pkg
+}
+
+// httpRequestParam returns the name of the *http.Request parameter when fd
+// has exactly the net/http handler signature
+// `func(http.ResponseWriter, *http.Request)` — no results, both parameters
+// matching, and the request parameter actually named (not "" or "_", which
+// give nothing to read the header off).
+//
+// This is what makes Go a usable *downstream* hop. The manual alternative
+// does not work in practice: flowtracert is injected as
+// <module>/internal/flowtracert and exists only during an instrumented
+// build, so a handler calling flowtracert.SeedFromTraceparent compiles under
+// `flowtrace run` and breaks the user's ordinary `go build`. Detecting the
+// signature and seeding here needs no user code at all, and so cannot break
+// a build FlowTrace is not part of.
+func httpRequestParam(fd *ast.FuncDecl, httpName string) string {
+	if httpName == "" || fd.Recv != nil || fd.Type.Params == nil {
+		return ""
+	}
+	if fd.Type.Results != nil && len(fd.Type.Results.List) > 0 {
+		return ""
+	}
+
+	// Flatten, because `func(w http.ResponseWriter, r *http.Request)` is two
+	// fields but `func(a, b T)` is one field with two names.
+	type param struct {
+		name string
+		typ  ast.Expr
+	}
+	var params []param
+	for _, f := range fd.Type.Params.List {
+		if len(f.Names) == 0 {
+			params = append(params, param{"", f.Type})
+			continue
+		}
+		for _, n := range f.Names {
+			params = append(params, param{n.Name, f.Type})
+		}
+	}
+	if len(params) != 2 {
+		return ""
+	}
+
+	if !isQualified(params[0].typ, httpName, "ResponseWriter") {
+		return ""
+	}
+	star, ok := params[1].typ.(*ast.StarExpr)
+	if !ok || !isQualified(star.X, httpName, "Request") {
+		return ""
+	}
+	if params[1].name == "" || params[1].name == "_" {
+		return ""
+	}
+	return params[1].name
+}

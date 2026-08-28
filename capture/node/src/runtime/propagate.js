@@ -9,8 +9,18 @@
  * with no trace context, so the far side started a fresh trace and the two
  * halves never joined.
  *
- * This patches the outbound edges of the process — global fetch, and
- * http/https.request — to attach `traceparent` when a span is active.
+ * This patches both edges of the process: outbound — global fetch and
+ * http/https.request — to attach `traceparent` when a span is active, and
+ * inbound — the HTTP server — to adopt a `traceparent` a caller sent.
+ *
+ * Inbound is patched for the same reason outbound was. runWithRemoteContext
+ * has always existed, but it is not reachable: @flowtrace/capture-node is not
+ * published, and under `flowtrace run` the runtime lives inside the CLI's
+ * tarball at a version-pinned vendor path. So "call runWithRemoteContext in
+ * your handler" was advice no user could actually follow, and every server
+ * started a fresh trace per request no matter what the caller sent —
+ * silently, since a split trace looks like a working trace until you go
+ * looking for the other half.
  *
  * Patching globals is a heavier decision than the rest of the runtime, so the
  * rules here are deliberately conservative:
@@ -29,7 +39,7 @@
  */
 
 import { createRequire } from 'node:module';
-import { currentTraceparent } from './context.js';
+import { currentTraceparent, runWithRemoteContext } from './context.js';
 
 // IMPORTANT: the builtins are reached through createRequire, NOT a static
 // `import http from 'node:http'`.
@@ -147,6 +157,48 @@ function patchNodeHttp(mod, name) {
   mod[name] = wrapper;
 }
 
+// ── inbound ──────────────────────────────────────────────
+
+/**
+ * Adopts an inbound `traceparent` so this process continues the caller's trace.
+ *
+ * Patched at `http.Server.prototype.emit` rather than at `createServer`'s
+ * listener because that is the single choke point: `createServer(fn)` is
+ * itself `server.on('request', fn)`, and every framework — express, fastify,
+ * koa, plain http — arrives through `emit('request', req, res)`. One patch,
+ * no per-framework knowledge. https.Server extends http.Server, so this covers
+ * TLS too.
+ *
+ * The same conservative rules as the outbound half: never throw (a failure
+ * here would break the traced application, and losing correlation is the
+ * lesser loss), do nothing when there is no header, and stay idempotent.
+ * runWithRemoteContext already calls fn() directly for an absent or malformed
+ * header, so an untraced request goes through exactly as it would have.
+ */
+function patchServerInbound(mod) {
+  const Server = mod.Server;
+  if (typeof Server !== 'function' || !Server.prototype) return;
+
+  const original = Server.prototype.emit;
+  if (typeof original !== 'function' || original[PATCHED]) return;
+
+  const wrapper = function emit(event, ...args) {
+    if (event !== 'request') return original.call(this, event, ...args);
+    try {
+      const tp = args[0]?.headers?.[HEADER];
+      if (tp) {
+        return runWithRemoteContext(tp, () => original.call(this, event, ...args));
+      }
+    } catch {
+      // Fall through and emit exactly as the caller would have.
+    }
+    return original.call(this, event, ...args);
+  };
+
+  wrapper[PATCHED] = true;
+  Server.prototype.emit = wrapper;
+}
+
 // ── install ──────────────────────────────────────────────────
 
 /**
@@ -159,6 +211,8 @@ export function installOutgoingPropagation() {
   if (process.env.FLOWTRACE_PROPAGATE === '0') return false;
   try {
     patchFetch();
+    // http.Server covers https.Server too — it extends it.
+    patchServerInbound(http);
     patchNodeHttp(http, 'request');
     patchNodeHttp(http, 'get');
     patchNodeHttp(https, 'request');

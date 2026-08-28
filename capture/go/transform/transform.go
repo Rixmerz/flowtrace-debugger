@@ -74,7 +74,7 @@ func File(filename string, src []byte, modulePath, pkgImportPath string) (Result
 			// says skip it, not the whole file.
 			continue
 		}
-		edits = append(edits, instrumentFunc(fset, fd, pkgImportPath)...)
+		edits = append(edits, instrumentFunc(fset, astFile, fd, pkgImportPath)...)
 		instrumented++
 	}
 
@@ -104,7 +104,7 @@ func importsCgo(file *ast.File) bool {
 // instrumentFunc builds the edits for a single instrumented FuncDecl: the
 // result-naming edits in its signature (if any), and the single enter/defer
 // insertion right after its opening brace.
-func instrumentFunc(fset *token.FileSet, fd *ast.FuncDecl, module string) []edit {
+func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, module string) []edit {
 	used := collectIdents(fd)
 
 	spanVar := uniqueName("_ft_s", used)
@@ -137,6 +137,19 @@ func instrumentFunc(fset *token.FileSet, fd *ast.FuncDecl, module string) []edit
 		panicVar, panicVar, runtimeImportAlias, spanVar, panicVar, panicVar,
 		runtimeImportAlias, exitArgs,
 	)
+
+	// An HTTP handler adopts the caller's trace before its own span opens, so
+	// this process continues one distributed trace instead of starting a fresh
+	// one per request. Prepended, because Enter reads the context this
+	// installs. `defer f()()` calls the seed now and defers the restore it
+	// returns, which then runs after the exit defer (LIFO) — the span closes
+	// inside the adopted context, and the goroutine is handed back unchanged.
+	if reqParam := httpRequestParam(fd, netHTTPLocalName(file)); reqParam != "" {
+		inject = fmt.Sprintf(
+			"defer %s.SeedFromTraceparent(%s.Header.Get(\"traceparent\"))(); ",
+			runtimeImportAlias, reqParam,
+		) + inject
+	}
 
 	lbrace := fset.Position(fd.Body.Lbrace).Offset + 1 // right after '{', no newline
 	edits = append(edits, edit{start: lbrace, end: lbrace, text: inject})
