@@ -123,6 +123,15 @@ All notable changes to FlowTrace.
   the only published package, and it carries every capture layer.
 - **`README.en.md` did not mention Go at all** while `README.md` did, and
   `CLAUDE.md` stated Go had been removed. Reconciled.
+- **The advertised Node floor was 18+; the capture layer has needed 20.6+ for
+  some while.** The ESM loader registers with `module.register()`, which landed
+  in 20.6 — `capture/node/package.json` has said `>=20.6` all along while both
+  READMEs said 18+. Corrected to 20.6+, and `flowtrace run` now refuses on an
+  older Node with the version and the reason instead of proceeding. This is the
+  failure that most deserves an up-front refusal: the loader silently never
+  registers and the trace comes out **empty**, which reads as "my code never
+  ran" rather than as a version problem. The CLI's own `engines` floor stays at
+  18 on purpose — tracing Java, Python and Go there is unaffected.
 - **Both READMEs said traces land in `./flowtrace.jsonl`.** `flowtrace run`
   writes `.flowtrace/<timestamp>.jsonl` and prints the path on startup;
   `flowtrace.jsonl` is only the default when a capture layer is wired by hand.

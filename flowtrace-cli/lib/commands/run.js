@@ -409,7 +409,36 @@ function buildNodeEnv({ bootstrapPath, prefix, outPath }) {
   };
 }
 
+/**
+ * Minimum Node for the Node/TS capture layer: module.register() landed in
+ * 20.6. The CLI's own `engines` floor is 18 deliberately — it runs fine there
+ * to trace Java, Python and Go — so nothing stops a Node 18 user installing it
+ * and reaching this path, where the ESM loader would simply never register and
+ * the trace would come out empty. An empty trace is the single most misleading
+ * failure this tool has: it reads as "my code never ran". Refuse up front with
+ * the version, the same way the Go driver refuses below its floor.
+ */
+const NODE_CAPTURE_MIN = [20, 6];
+
+function nodeTooOld() {
+  const [maj, min] = process.versions.node.split('.').map(Number);
+  const [reqMaj, reqMin] = NODE_CAPTURE_MIN;
+  return maj < reqMaj || (maj === reqMaj && min < reqMin);
+}
+
 async function runNode({ options, restArgs, cwd, outPath }) {
+  // 0. Refuse before doing anything if this Node cannot be instrumented.
+  if (nodeTooOld()) {
+    console.error(
+      chalk.red('Error:'),
+      `la captura de Node requiere Node ${NODE_CAPTURE_MIN.join('.')}+ y estás en ${process.versions.node}.`
+    );
+    console.log(chalk.gray('  El loader ESM se registra con module.register(), disponible desde 20.6.'));
+    console.log(chalk.gray('  En una versión anterior la traza saldría vacía en vez de fallar.'));
+    console.log(chalk.gray('  Java, Python y Go sí funcionan en esta versión de Node.'));
+    process.exit(1);
+  }
+
   // 1. Resolve bootstrap path
   const bootstrapPath = assets.nodeBootstrap();
   if (!fs.existsSync(bootstrapPath)) {
