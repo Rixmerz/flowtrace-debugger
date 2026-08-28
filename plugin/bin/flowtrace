@@ -11,18 +11,42 @@
 # It cannot be the real CLI. A plugin install copies a directory and runs no
 # build, so anything under CLAUDE_PLUGIN_ROOT must work with no node_modules —
 # and the CLI needs @swc/core and babel, which are platform-specific native
-# builds. npx fetches the right ones for this machine and caches them, so the
-# cost is a first run with network and nothing after that.
+# builds. So it is fetched once and cached.
 #
-# Pinned deliberately: an unpinned `npx @rixmerz/flowtrace` would silently
-# change the capture layer under a fixed plugin version. scripts/check-plugin.mjs
-# asserts this pin matches flowtrace-cli/package.json.
+# It deliberately does NOT use `npx`. npm resolves configuration from the
+# nearest package.json to the CURRENT directory, and `flowtrace run` is by
+# definition run from inside the user's project. A project declaring
+# `devEngines.packageManager` as pnpm or yarn — increasingly common — makes npm
+# refuse outright with EBADDEVENGINES, so `npx @rixmerz/flowtrace` died in
+# exactly the projects this is meant to trace. Installing into a cache
+# directory that owns its own package.json keeps the user's project out of
+# npm's config resolution entirely, and the CLI still runs with their cwd
+# because only the install is wrapped in a subshell.
+#
+# Pinned deliberately: an unpinned fetch would silently change the capture
+# layer under a fixed plugin version. scripts/check-plugin.mjs asserts this pin
+# matches flowtrace-cli/package.json.
 FLOWTRACE_CLI_VERSION="3.1.1"
 
-if command -v npx >/dev/null 2>&1; then
-  exec npx -y "@rixmerz/flowtrace@${FLOWTRACE_CLI_VERSION}" "$@"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/flowtrace-cli/$FLOWTRACE_CLI_VERSION"
+ENTRY="$CACHE/node_modules/@rixmerz/flowtrace/bin/flowtrace.js"
+
+if [ ! -f "$ENTRY" ]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "flowtrace: npm not found — install Node.js 20.6+ (https://nodejs.org)," >&2
+    echo "           or install the CLI directly: npm i -g @rixmerz/flowtrace" >&2
+    exit 127
+  fi
+  mkdir -p "$CACHE" || exit 1
+  # Its own package.json, so npm's upward search for config stops here and
+  # never reaches the user's home directory.
+  [ -f "$CACHE/package.json" ] || printf '{"name":"flowtrace-cli-cache","private":true}\n' > "$CACHE/package.json"
+  # Output to stderr: stdout belongs to the traced program.
+  if ! (cd "$CACHE" && npm install --silent --no-audit --no-fund \
+        "@rixmerz/flowtrace@$FLOWTRACE_CLI_VERSION" >&2); then
+    echo "flowtrace: could not fetch @rixmerz/flowtrace@$FLOWTRACE_CLI_VERSION into $CACHE" >&2
+    exit 1
+  fi
 fi
 
-echo "flowtrace: npx not found — install Node.js 20.6+ (https://nodejs.org)," >&2
-echo "           or install the CLI directly: npm i -g @rixmerz/flowtrace" >&2
-exit 127
+exec node "$ENTRY" "$@"
