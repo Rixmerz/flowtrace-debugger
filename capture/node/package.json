@@ -1,5 +1,7 @@
 {
   "name": "@flowtrace/capture-node",
+  "private": true,
+  "//": "Workspace-internal. Vendored into @rixmerz/flowtrace by flowtrace-cli/scripts/vendor.mjs; never published to npm. Do not add it as a dependency of anything outside this workspace.",
   "version": "2.1.0",
   "type": "module",
   "engines": {

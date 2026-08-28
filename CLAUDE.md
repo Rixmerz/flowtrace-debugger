@@ -12,8 +12,16 @@ the program actually did, rather than have it infer behaviour from source.
 
 Supported runtimes: **Java** (OpenTelemetry javaagent extension), **Node /
 TypeScript** (CJS hook + ESM loader + SWC transform), **Python** (import hook +
-AST transform). These three are the whole product — Go, Rust and .NET were v1
-experiments and have been removed.
+AST transform) and **Go** (source rewrite before compilation via
+`go build -overlay`). Rust and .NET were v1 experiments and have been removed;
+Go was too, and came back in a different shape — do not "restore" the v1 Go
+agent, `capture/go/` is a v2 layer emitting schema v2.
+
+The authoritative capability list is `mcp-server/src/runtimes.ts`, served as
+the `flowtrace://runtimes` MCP resource. When support changes, change it there
+first — every prose statement of what is supported (both READMEs,
+`plugin/commands/trace.md`, the skill) is a restatement, and this file has
+already gone stale against it once.
 
 `capture/browser/` is a fourth, deliberately narrower layer: with no
 `AsyncLocalStorage` in a browser there is no ambient async context, so it does
@@ -28,6 +36,7 @@ file.
 | `capture/java/flowtrace-otel-extension/` | OTel javaagent extension: ByteBuddy advice + JSONL emitter | Maven (bytecode target 11) |
 | `capture/node/` | CJS `Module._load` hook, ESM loader, SWC transform, runtime | pnpm |
 | `capture/python/` | `sitecustomize` bootstrap, import hook, AST transformer, runtime | setuptools |
+| `capture/go/` | `cmd/flowtrace-go` driver, `transform/` (AST byte-splice), `flowtracert/` runtime | go build |
 | `capture/browser/` | Browser capture (HTTP / router / errors) + Angular bindings | pnpm |
 | `schema/flowtrace-v2.json` | **The contract.** JSON Schema for every emitted event | — |
 | `examples/golden/` | Golden fixtures: real capture output, committed and diffed in CI | — |
@@ -48,6 +57,7 @@ make build            # build-java + build-python + build-node + build-mcp
 make test             # schema + golden + java + python + node + browser + mcp + dashboard + cli + plugin bundle
 
 make test-java        # JUnit 5 (capture/java)
+make test-go          # go test ./... (capture/go)
 make test-python      # pytest (capture/python)
 make test-node        # node:test (capture/node)
 make test-browser     # capture/browser + collector e2e
@@ -94,7 +104,13 @@ Two rules that have each already been broken once:
   in the same commit.
 
 The ids are W3C Trace Context compatible, so a trace survives a process hop:
-`traceparent` is parsed on the way in and rendered on the way out.
+`traceparent` is parsed on the way in and rendered on the way out. Inbound is
+automatic in all four runtimes (HTTP header where the layer can see one, plus
+`FLOWTRACE_TRACEPARENT` everywhere). Outbound is automatic only in Node/TS
+(`propagate.js` patches `fetch` and `http.request`) and in Java within what the
+OTel agent instruments; Python and Go expose it and leave attaching it to the
+caller — Go has no seam, `net/http` resolves at compile time. Do not describe
+Go/Python outbound as automatic.
 
 ### Golden fixtures are the regression net
 
@@ -151,6 +167,17 @@ perf complaint, check prefix wiring first.
   helper trio. Context propagation is `contextvars`. Note the deliberate
   divergence from Node: `current_depth` holds the depth of the span *about to
   start*, so `remote_context` seeds 0 where Node seeds -1.
+- **Go** — no runtime hook exists, so the rewrite happens *before* the
+  compiler: `cmd/flowtrace-go` enumerates packages with `go list -json`,
+  `transform/` byte-splices matching files at AST offsets, and the result
+  reaches the compiler through `go build -overlay`. The user's tree is never
+  written to. Context propagation is the goroutine's `runtime/pprof` label slot
+  reached by `//go:linkname` — the only mechanism that inherits across a bare
+  `go` statement for free, which is why `flowtracert.Span` must keep `list` as
+  its first field (see the comment there before touching that struct).
+  `flowtracert/` is copied byte-for-byte into the target module, so it must
+  stay stdlib-only and compile under the *target's* `go` directive, not this
+  repo's.
 
 ### CLI orchestrator (`flowtrace-cli`)
 

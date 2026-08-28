@@ -1,5 +1,7 @@
 {
   "name": "@flowtrace/capture-browser",
+  "private": true,
+  "//": "Workspace-internal. Vendored into @rixmerz/flowtrace by flowtrace-cli/scripts/vendor.mjs; never published to npm.",
   "version": "2.1.0",
   "description": "FlowTrace v2 browser capture: HTTP, navigation and error spans shipped to the dashboard collector",
   "type": "module",

@@ -4,15 +4,30 @@
 
 Trazador de llamadas multi-lenguaje sin modificar el código fuente. Genera logs JSONL estructurados de cada método instrumentado, listos para análisis con IA.
 
-**Runtimes soportados**: Java 11+ | Python 3.8+ | Node.js 18+ | TypeScript 5+ | Go 1.24+
+**Runtimes soportados**: Java 11+ | Python 3.8+ | Node.js 20.6+ | TypeScript 5+ | Go 1.24+
+
+La lista de arriba es la única fuente de verdad sobre qué runtimes soporta
+FlowTrace. El servidor MCP la expone como el recurso `flowtrace://runtimes`,
+así que un agente puede consultarla en vez de deducirla.
 
 ---
 
 ## Instalación rápida
 
 ```bash
-npm install -g @flowtrace/cli
+npm install -g @rixmerz/flowtrace
 ```
+
+O sin instalar nada:
+
+```bash
+npx @rixmerz/flowtrace run -- python miapp.py
+```
+
+`@rixmerz/flowtrace` es el **único** paquete publicado. Trae dentro las capas
+de captura de los cinco runtimes: no hace falta Maven, ni pip, ni instalar
+`@flowtrace/capture-node` (ese nombre no existe en npm — es un paquete interno
+del workspace, y la CLI ya lo lleva vendorizado).
 
 ---
 
@@ -43,7 +58,42 @@ flowtrace run -- go run ./cmd/api
 Requiere Go 1.24+. La instrumentacion ocurre antes de compilar (via `go build
 -overlay`): tu arbol de fuentes no se modifica, ni un byte.
 
-Los logs se escriben en `flowtrace.jsonl` en el directorio de trabajo.
+### Dónde queda la traza
+
+`flowtrace run` escribe en `.flowtrace/<timestamp>.jsonl` dentro del directorio
+de trabajo, y añade `.flowtrace/` al `.gitignore` del proyecto. Lo imprime al
+arrancar. El nombre `flowtrace.jsonl` es el default sólo cuando cableas una
+capa de captura a mano; toda herramienta acepta una ruta explícita.
+
+---
+
+## Tracing distribuido (multi-proceso)
+
+Los ids son compatibles con W3C Trace Context, así que una traza sobrevive a un
+salto entre procesos: un servicio propaga `traceparent` y el siguiente lo
+adopta en vez de empezar una traza nueva. Ambas mitades quedan bajo un mismo
+`trace_id`, consultable como un solo árbol.
+
+| Runtime | Entrante (adopta la traza del llamador) | Saliente (propaga a la siguiente) |
+|---|---|---|
+| Node / TS | Automático — header HTTP y `FLOWTRACE_TRACEPARENT` | **Automático** — parcha `fetch` y `http.request` |
+| Python | Automático — header HTTP y `FLOWTRACE_TRACEPARENT` | Manual |
+| Java | Automático — el agente OTel propaga en los frameworks que instrumenta, más `FLOWTRACE_TRACEPARENT` | Automático dentro de lo que instrumenta OTel |
+| Go | Automático vía `FLOWTRACE_TRACEPARENT`; en el handler, `flowtracert.SeedFromTraceparent(r.Header.Get("traceparent"))` | Manual — `flowtracert.CurrentTraceparent()` |
+
+Go no propaga solo porque no hay dónde engancharse: `net/http` se resuelve en
+tiempo de compilación y parcharlo obligaría a reescribir llamadas al stdlib
+dentro del overlay. Se adjunta a mano:
+
+```go
+req, _ := http.NewRequest("GET", url, nil)
+if tp := flowtracert.CurrentTraceparent(); tp != "" {
+    req.Header.Set("traceparent", tp)
+}
+```
+
+Para encadenar procesos sin HTTP de por medio, exporta `FLOWTRACE_TRACEPARENT`
+antes de lanzar el hijo: los cuatro runtimes lo leen.
 
 ---
 
@@ -69,11 +119,20 @@ El servidor MCP expone herramientas para que agentes de IA analicen trazas direc
 | `trace_private_calls` | Lista metodos internos no expuestos en la API |
 | `trace_diff` | Compara dos trazas (antes/despues de un cambio) |
 
-```bash
-npx @flowtrace/mcp-server
+Además expone el recurso `flowtrace://runtimes`: runtimes soportados, versión
+mínima, cómo se invoca cada uno y qué propagación tiene. Un agente lo lee en
+vez de inferir capacidades de un README.
+
+La forma soportada de correrlo es el plugin de Claude Code, que lo trae como un
+bundle de un solo archivo:
+
+```
+/plugin marketplace add Rixmerz/flowtrace-debugger
+/plugin install flowtrace@rixmerz-flowtrace
 ```
 
-Configura tu IDE para apuntar a este servidor y los agentes de IA podran analizar los logs automaticamente.
+El plugin también deja `flowtrace` en el PATH, así que `flowtrace run -- ...`
+funciona sin instalación global.
 
 ---
 

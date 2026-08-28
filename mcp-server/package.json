@@ -1,5 +1,7 @@
 {
   "name": "@flowtrace/mcp-server",
+  "private": true,
+  "//": "Workspace-internal. Ships as the single-file esbuild bundle plugin/mcp/server.bundle.js (make bundle-mcp); never published to npm.",
   "version": "2.1.0",
   "main": "index.js",
   "scripts": {
