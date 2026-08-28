@@ -2,6 +2,60 @@
 
 All notable changes to FlowTrace.
 
+## [3.2.0]
+
+### Added
+
+- **Inbound `traceparent` is adopted automatically in Node/TS and Go.** All
+  three runtimes already had an API for it — `runWithRemoteContext`,
+  `remote_context`, `SeedFromTraceparent` — and in none of them was that API
+  reachable. `@flowtrace/capture-node` is not published, and under
+  `flowtrace run` the Node runtime lives inside the CLI tarball at a
+  version-pinned vendor path. Worse in Go: `flowtracert` is injected as
+  `<module>/internal/flowtracert` and exists only during an instrumented build,
+  so a handler calling it compiles under `flowtrace run` and **breaks the
+  user's ordinary `go build`**. "Call this in your handler" was advice nobody
+  could act on.
+
+  Node is now patched at `http.Server.prototype.emit` — the single choke point
+  every framework arrives through, since `createServer(fn)` is itself
+  `on('request', fn)`, so express, fastify, koa, plain `http` and `https` are
+  all covered by one patch with no per-framework knowledge. Go is seeded by the
+  transformer, which recognises `func(http.ResponseWriter, *http.Request)` by
+  resolving the real `net/http` import rather than matching the text
+  `http.ResponseWriter` — a false positive would inject `r.Header.Get` into
+  something that is not a request, and a tracer must never break the build it
+  was pointed at.
+
+  Verified on a browser -> Node -> Java -> Go chain: all three service traces
+  carry the browser's `trace_id`. Before this, that chain produced three
+  unrelated trees.
+
+  **Python is the remaining gap** and is now documented as such instead of
+  being listed alongside the others. It has no equivalent single choke point —
+  WSGI, ASGI and `http.server` are three unrelated entry shapes — so its header
+  path is still a manual `remote_context` call.
+
+### Fixed
+
+- **That matrix was itself wrong on first writing**, and is corrected here.
+  It claimed Node and Python adopt an inbound HTTP `traceparent`
+  automatically. Only the `FLOWTRACE_TRACEPARENT` env carrier was automatic;
+  the header path was a manual call in both. The claim was found by running a
+  real four-stack chain, not by any test — `make test` validates no
+  documentation content, and the plugin check asserted only that the word
+  "traceparent" appeared in the resource, not that what it said was true.
+  Node's half is now genuinely automatic (see above); Python's is documented
+  as manual.
+
+- **`plugin/bin/flowtrace` used `npx`, which dies in the projects it exists to
+  trace.** npm resolves configuration from the nearest `package.json` to the
+  *current* directory, and `flowtrace run` is by definition run from inside the
+  user's project — so a project declaring `devEngines.packageManager` as pnpm
+  or yarn made npm refuse outright with `EBADDEVENGINES`. The shim now installs
+  into a cache directory that owns its own `package.json`, keeping the user's
+  project out of npm's config resolution, and execs the CLI from their cwd.
+
 ## [3.1.1]
 
 ### Fixed
@@ -59,36 +113,6 @@ All notable changes to FlowTrace.
   scope, goroutine pools defeat span inheritance because workers predate the
   span, and injecting a `defer` makes an instrumented function permanently
   non-inlinable.
-
-- **Inbound `traceparent` is adopted automatically in Node/TS and Go.** All
-  three runtimes already had an API for it — `runWithRemoteContext`,
-  `remote_context`, `SeedFromTraceparent` — and in none of them was that API
-  reachable. `@flowtrace/capture-node` is not published, and under
-  `flowtrace run` the Node runtime lives inside the CLI tarball at a
-  version-pinned vendor path. Worse in Go: `flowtracert` is injected as
-  `<module>/internal/flowtracert` and exists only during an instrumented build,
-  so a handler calling it compiles under `flowtrace run` and **breaks the
-  user's ordinary `go build`**. "Call this in your handler" was advice nobody
-  could act on.
-
-  Node is now patched at `http.Server.prototype.emit` — the single choke point
-  every framework arrives through, since `createServer(fn)` is itself
-  `on('request', fn)`, so express, fastify, koa, plain `http` and `https` are
-  all covered by one patch with no per-framework knowledge. Go is seeded by the
-  transformer, which recognises `func(http.ResponseWriter, *http.Request)` by
-  resolving the real `net/http` import rather than matching the text
-  `http.ResponseWriter` — a false positive would inject `r.Header.Get` into
-  something that is not a request, and a tracer must never break the build it
-  was pointed at.
-
-  Verified on a browser -> Node -> Java -> Go chain: all three service traces
-  carry the browser's `trace_id`. Before this, that chain produced three
-  unrelated trees.
-
-  **Python is the remaining gap** and is now documented as such instead of
-  being listed alongside the others. It has no equivalent single choke point —
-  WSGI, ASGI and `http.server` are three unrelated entry shapes — so its header
-  path is still a manual `remote_context` call.
 
 - **Go joins a trace another process started.** Go was the one capture layer
   that could not take part in a distributed trace: Java, Node and Python all
@@ -177,22 +201,6 @@ All notable changes to FlowTrace.
   covered end to end by `capture/node/test/test-cross-process.mjs` — so it kept
   being reported as a missing feature. `docs/architecture.md`, both READMEs,
   the skill and `/flowtrace:trace` now carry the per-runtime matrix.
-- **That matrix was itself wrong on first writing**, and is corrected here.
-  It claimed Node and Python adopt an inbound HTTP `traceparent`
-  automatically. Only the `FLOWTRACE_TRACEPARENT` env carrier was automatic;
-  the header path was a manual call in both. The claim was found by running a
-  real four-stack chain, not by any test — `make test` validates no
-  documentation content, and the plugin check asserted only that the word
-  "traceparent" appeared in the resource, not that what it said was true.
-  Node's half is now genuinely automatic (see above); Python's is documented
-  as manual.
-- **`plugin/bin/flowtrace` used `npx`, which dies in the projects it exists to
-  trace.** npm resolves configuration from the nearest `package.json` to the
-  *current* directory, and `flowtrace run` is by definition run from inside the
-  user's project — so a project declaring `devEngines.packageManager` as pnpm
-  or yarn made npm refuse outright with `EBADDEVENGINES`. The shim now installs
-  into a cache directory that owns its own `package.json`, keeping the user's
-  project out of npm's config resolution, and execs the CLI from their cwd.
 - **`docs/architecture.md` described capture mechanisms the code stopped using.**
   It had Python on a `sys.setprofile` global hook and Node on a `Module._load`
   monkey-patch with `--experimental-loader`; both have been AST rewriting at
