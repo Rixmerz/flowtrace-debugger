@@ -13,7 +13,7 @@ export type TraceId = string & { readonly __brand: "TraceId" };
 export type SpanId = string & { readonly __brand: "SpanId" };
 
 export type Visibility = "public" | "private" | "internal" | "unknown";
-export type Lang = "java" | "python" | "node" | "ts" | string;
+export type Lang = "java" | "python" | "node" | "ts" | "go" | string;
 
 export interface BaseEvent {
   ts: number;                 // float seconds since epoch

@@ -63,6 +63,19 @@ All notable changes to FlowTrace.
 
 - **Schema v2's `lang` enum accepts `"go"`.** Additive — every document valid
   before stays valid, so the schema is still v2.
+- The plugin (2.2.0) learns Go: `/flowtrace:trace` detects a `go.mod` and takes
+  the prefix from its `module` line, and the plugin and marketplace
+  descriptions name Go alongside the other four.
+
+### Fixed
+
+- **`docs/architecture.md` described capture mechanisms the code stopped using.**
+  It had Python on a `sys.setprofile` global hook and Node on a `Module._load`
+  monkey-patch with `--experimental-loader`; both have been AST rewriting at
+  load time for some while — Python through a `sys.meta_path` finder, Node
+  through a loader registered with `module.register()`. Corrected alongside
+  the new Go row, since a stale architecture doc is how the next reader
+  inherits a wrong mental model.
 
 ## [3.0.3]
 

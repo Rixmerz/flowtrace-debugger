@@ -23,9 +23,10 @@ Each runtime uses its native hook point:
 | Runtime | Mechanism |
 |---|---|
 | Java | OpenTelemetry Java agent extension. `SpanProcessor` intercepts every span at `onStart`/`onEnd`. No bytecode rewrite at the user level. |
-| Python | `sys.setprofile` global hook captures every `call`/`return`/`exception` event. Package prefix filter applied inline. |
-| Node.js | `Module._load` monkey-patch (CJS) + `--experimental-loader` hook (ESM). Wraps each required module's exported functions. |
-| TypeScript | Same Node.js hooks; additionally, `@Trace` decorator for explicit opt-in without loader flag. |
+| Python | A `sys.meta_path` finder (`FlowtraceFinder`) installs a loader that rewrites each matching module's AST at import time, injecting enter/exit calls. Compiled results are cached by content hash under `~/.flowtrace/cache/py`. |
+| Node.js | An ESM loader registered via `module.register()` (Node 20.6+), plus a CJS `require` hook, rewriting each matching module's AST as it loads. |
+| TypeScript | The same Node.js loaders — TypeScript is transformed on the same path, not a separate mechanism. |
+| Go | No runtime hook exists, so rewriting happens *before* the compiler: `go list -json` enumerates packages, each matching file is byte-spliced at AST offsets, and the result reaches the compiler through `go build -overlay`. The runtime is injected as `<module>/internal/flowtracert`, a package the compiler sees but the disk never holds — the user's tree is never written to. Requires Go 1.24+. |
 
 Capture agents live in `capture/<lang>/`. The v1 agents have been deleted — see
 "Removed runtimes" in `migration-v1-v2.md`.
@@ -55,7 +56,7 @@ Every agent emits one JSON object per line. Field names are stable — renaming 
 ```
 ts            float   Unix timestamp in seconds (float, microsecond precision)
 event         string  "enter" | "exit"
-lang          string  "java" | "python" | "node" | "typescript"
+lang          string  "java" | "python" | "node" | "ts" | "go"
 class         string  Class or module name
 method        string  Method or function name
 module        string  File path or package (optional, L1-dependent)

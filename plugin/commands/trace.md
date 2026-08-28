@@ -13,7 +13,7 @@ one before doing anything.
 
 1. **Detect the language** from what is present: `pom.xml` / `build.gradle` →
    Java; `pyproject.toml` / `setup.py` / `requirements.txt` → Python;
-   `package.json` → Node, plus `tsconfig.json` → TypeScript.
+   `package.json` → Node, plus `tsconfig.json` → TypeScript; `go.mod` → Go.
 
 2. **Determine the package prefix** — the scope of instrumentation. Without one
    the capture instruments frameworks and stdlib and the trace becomes
@@ -21,6 +21,9 @@ one before doing anything.
    - Java: `groupId` from `pom.xml`, or `group` from `build.gradle`
    - Python: `name` from `pyproject.toml` / `setup.py`
    - Node/TS: `name` from `package.json` (drop any `@scope/`)
+   - Go: the `module` line from `go.mod` (Go needs 1.24 or newer, and the
+     target module's own `go` directive must be 1.24+ too — FlowTrace refuses
+     before touching anything otherwise, rather than failing mid-build)
 
    State the prefix you chose. If detection is ambiguous, ask rather than guess —
    a wrong prefix produces an empty trace that looks like a bug in the code.
