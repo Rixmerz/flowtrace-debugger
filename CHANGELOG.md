@@ -2,6 +2,14 @@
 
 All notable changes to FlowTrace.
 
+## [3.1.1]
+
+### Fixed
+
+- `flowtrace run` refuses to trace Node below 20.6 instead of emitting an empty
+  trace — see the entry under 3.1.0 for why that failure mode deserves an
+  up-front refusal. 3.1.0 shipped without it.
+
 ## [3.1.0]
 
 ### Added
