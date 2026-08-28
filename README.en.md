@@ -76,24 +76,43 @@ a fresh trace. Both halves share one `trace_id` and read as a single tree.
 
 | Runtime | Inbound (adopts the caller's trace) | Outbound (propagates to the next hop) |
 |---|---|---|
-| Node / TS | Automatic — HTTP header and `FLOWTRACE_TRACEPARENT` | **Automatic** — patches `fetch` and `http.request` |
-| Python | Automatic — HTTP header and `FLOWTRACE_TRACEPARENT` | Manual |
-| Java | Automatic — the OTel agent propagates across the frameworks it instruments, plus `FLOWTRACE_TRACEPARENT` | Automatic within what OTel instruments |
-| Go | Automatic via `FLOWTRACE_TRACEPARENT`; in a handler, `flowtracert.SeedFromTraceparent(r.Header.Get("traceparent"))` | Manual — `flowtracert.CurrentTraceparent()` |
+| Java | Automatic — the OTel agent | Automatic within what OTel instruments |
+| Node / TS | Automatic — the HTTP server edge is patched (express, fastify, koa, plain `http`) | Automatic — patches `fetch` and `http.request` |
+| Go | Automatic — the transformer seeds every `func(http.ResponseWriter, *http.Request)` | Manual |
+| Python | **`FLOWTRACE_TRACEPARENT` only** — an inbound HTTP header is not adopted on its own | Manual |
 
-Go does not propagate on its own because there is no seam: `net/http` resolves
-at compile time, and patching it would mean rewriting stdlib call sites inside
-the overlay pass. Attach it by hand:
+All four also read `FLOWTRACE_TRACEPARENT`, so chaining processes with no HTTP
+in between is just a matter of exporting it before launching the child.
 
-```go
-req, _ := http.NewRequest("GET", url, nil)
-if tp := flowtracert.CurrentTraceparent(); tp != "" {
-    req.Header.Set("traceparent", tp)
-}
+Python needs the request wrapped by hand:
+
+```python
+from flowtrace_runtime import remote_context
+with remote_context(request.headers.get("traceparent")):
+    ...
 ```
 
-To chain processes with no HTTP in between, export `FLOWTRACE_TRACEPARENT`
-before launching the child — all four runtimes read it.
+That import only resolves under `flowtrace run`, so guard it with
+`try/except ImportError` if the same code also runs uninstrumented.
+
+Go needs nothing written for inbound, and you should **not** call `flowtracert`
+from your own source: it exists only during an instrumented build, so importing
+it would break your ordinary `go build`. Outbound is attached by hand from
+already-instrumented code — there is no seam, since `net/http` resolves at
+compile time.
+
+### Verifying the chain actually joined
+
+A split trace looks exactly like a working trace until you check the ids.
+Collect each process's file and confirm they share one `trace_id`:
+
+```bash
+for f in */.flowtrace/*.jsonl; do
+  echo "$f: $(jq -r .trace_id "$f" | sort -u | tr '\n' ' ')"
+done
+```
+
+Two different ids mean a hop dropped the header. That is the finding.
 
 ---
 

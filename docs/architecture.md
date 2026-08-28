@@ -56,14 +56,38 @@ single `trace_id` across a process hop and both halves read as one tree. This is
 asserted end to end by `capture/node/test/test-cross-process.mjs`, which spawns
 two real processes — it cannot be a golden fixture, because the golden
 normalizer rewrites every `trace_id` to one constant and a fixture would look
-identical whether or not correlation happened.
+identical whether or not correlation happened. Verified by hand on a
+browser -> Node -> Java -> Go chain: all three service traces carried the
+browser's `trace_id`.
 
-| Runtime | Inbound | Outbound | Carrier |
+| Runtime | Inbound | Outbound | Where it is implemented |
 |---|---|---|---|
-| Node / TS | automatic | **automatic** — `propagate.js` patches `fetch`, `http.request`, `https.request` | HTTP header, `FLOWTRACE_TRACEPARENT` |
-| Python | automatic | manual | HTTP header, `FLOWTRACE_TRACEPARENT` |
-| Java | automatic | automatic within what the OTel agent instruments | HTTP header, `FLOWTRACE_TRACEPARENT`, `-Dflowtrace.traceparent` |
-| Go | automatic from env; `flowtracert.SeedFromTraceparent(header)` for an inbound request | manual — `flowtracert.CurrentTraceparent()` | `FLOWTRACE_TRACEPARENT`, or the header passed to `SeedFromTraceparent` |
+| Java | automatic | automatic within what the OTel agent instruments | the OTel agent, plus `TraceparentSeed` for the env carrier |
+| Node / TS | automatic | automatic | `propagate.js` — patches `http.Server.prototype.emit` inbound, and `fetch` / `http.request` / `https.request` outbound |
+| Go | automatic for `func(http.ResponseWriter, *http.Request)` | manual | `transform/` injects the seed; `flowtracert.CurrentTraceparent()` for outbound |
+| Python | **env carrier only** | manual | `bootstrap.py` seeds from env; `remote_context` / `current_traceparent` are manual |
+
+Every runtime additionally reads `FLOWTRACE_TRACEPARENT`, which is the carrier
+for a process launched by another rather than called over HTTP.
+
+**Why inbound is patched rather than documented.** `runWithRemoteContext`
+(Node), `remote_context` (Python) and `SeedFromTraceparent` (Go) all existed
+before any of them was reachable. `@flowtrace/capture-node` is not published;
+under `flowtrace run` the Node runtime lives inside the CLI tarball at a
+version-pinned vendor path; and Go's `flowtracert` is injected as
+`<module>/internal/flowtracert`, so a handler importing it compiles under
+`flowtrace run` and **breaks the user's ordinary `go build`**. "Call this in
+your handler" was advice nobody could follow, and the failure was silent: every
+service started a fresh trace per request, which looks exactly like a working
+trace until you compare ids across processes. Node is patched at
+`http.Server.prototype.emit` because that is the single choke point every
+framework arrives through; Go is seeded by the transformer, which can recognise
+the handler signature without the user writing anything.
+
+Python is the remaining gap. It has no equivalent single choke point — WSGI,
+ASGI and `http.server` are three unrelated entry shapes — so its header path is
+still a manual `remote_context` call, and the docs say so rather than implying
+parity.
 
 **Why Go does not propagate outbound automatically.** Node can patch
 `globalThis.fetch` and `http.request` at runtime because they are mutable
@@ -71,8 +95,7 @@ bindings on a live module object. Go resolves `net/http` at compile time; the
 equivalent would mean rewriting stdlib call sites inside the `-overlay` pass —
 transforming code the user did not write, in a package FlowTrace does not own,
 to inject a header the caller may already be setting. That is a much larger
-blast radius than the inbound half, so Go ships inbound automatically and
-exposes `CurrentTraceparent()` for the outbound edge.
+blast radius than the inbound half.
 
 A synthetic remote parent is seeded at depth -1 in Node and Go so the first
 *local* span lands at depth 0, matching an ordinary root and satisfying the

@@ -92,10 +92,19 @@ even though each process wrote its own file. Load them together (or concatenate
 them) and `trace_tree` the shared id.
 
 If the halves carry *different* `trace_id`s, the hop dropped the header — the
-chain is not joined and no per-hop analysis can tell you it is. That is a
-finding. Usual causes: the caller never attached `traceparent` (Go and Python
-do not attach it outbound on their own), or the child was launched without
-`FLOWTRACE_TRACEPARENT`. `flowtrace://runtimes` has the per-runtime matrix.
+chain is not joined and no per-hop analysis can tell you it is. **Check this
+before reporting that a chain is healthy:** a split trace looks exactly like a
+working trace from inside any single process.
+
+The two causes, in order of likelihood:
+
+- **The caller never attached `traceparent` outbound.** Go and Python do not
+  attach it on their own; Java and Node do.
+- **The receiver never adopted it.** Python does not adopt an inbound header on
+  its own — it needs a manual `remote_context` wrap.
+
+`flowtrace://runtimes` has the per-runtime matrix; read it rather than guessing
+which side of a hop is at fault.
 
 ## Reading discipline
 

@@ -104,13 +104,24 @@ Two rules that have each already been broken once:
   in the same commit.
 
 The ids are W3C Trace Context compatible, so a trace survives a process hop:
-`traceparent` is parsed on the way in and rendered on the way out. Inbound is
-automatic in all four runtimes (HTTP header where the layer can see one, plus
-`FLOWTRACE_TRACEPARENT` everywhere). Outbound is automatic only in Node/TS
-(`propagate.js` patches `fetch` and `http.request`) and in Java within what the
-OTel agent instruments; Python and Go expose it and leave attaching it to the
-caller — Go has no seam, `net/http` resolves at compile time. Do not describe
-Go/Python outbound as automatic.
+`traceparent` is parsed on the way in and rendered on the way out.
+`FLOWTRACE_TRACEPARENT` is honoured by every runtime. For an inbound HTTP
+header, Java (OTel), Node/TS (`propagate.js` patches
+`http.Server.prototype.emit`) and Go (the transformer seeds every
+`func(http.ResponseWriter, *http.Request)`) are automatic; **Python is not** —
+its header path is a manual `remote_context` call. Outbound is automatic in
+Node/TS and in Java within what OTel instruments; Python and Go are manual, and
+Go has no seam at all because `net/http` resolves at compile time.
+
+Two rules that follow, both already broken once:
+
+- **Do not describe Python inbound-over-HTTP, or Go/Python outbound, as
+  automatic.** A wrong claim here is worse than no claim: a split trace looks
+  exactly like a working trace until someone compares ids across processes.
+- **Never tell a user to call `flowtracert` from their own Go source.** It is
+  injected as `<module>/internal/flowtracert` and exists only during an
+  instrumented build, so importing it breaks their plain `go build`. Anything
+  Go needs on the request path has to be done by the transformer.
 
 ### Golden fixtures are the regression net
 

@@ -50,8 +50,9 @@ export const RUNTIMES: RuntimeSupport[] = [
     mechanism: "sitecustomize bootstrap + sys.meta_path import hook, AST rewrite at import",
     invoke: "flowtrace run -- python myapp.py",
     prefix: "name from pyproject.toml / setup.py (the import name, not the distribution name)",
-    inbound: "automatic — HTTP traceparent header and FLOWTRACE_TRACEPARENT",
-    outbound: "manual",
+    inbound:
+      "FLOWTRACE_TRACEPARENT only. An inbound HTTP header is NOT adopted automatically — wrap the request in flowtrace_runtime.remote_context(header) yourself. Note that import only resolves under `flowtrace run`, so guard it if the same code also runs uninstrumented.",
+    outbound: "manual — flowtrace_runtime.current_traceparent()",
   },
   {
     lang: "node",
@@ -60,7 +61,8 @@ export const RUNTIMES: RuntimeSupport[] = [
     mechanism: "CJS Module._load hook + ESM loader + SWC transform; AsyncLocalStorage for context",
     invoke: "flowtrace run -- node myapp.js",
     prefix: "name from package.json (drop any @scope/)",
-    inbound: "automatic — HTTP traceparent header and FLOWTRACE_TRACEPARENT",
+    inbound:
+      "automatic — the HTTP server edge is patched (http.Server.prototype.emit, so express/fastify/koa/plain http and https all adopt an inbound traceparent), plus FLOWTRACE_TRACEPARENT",
     outbound: "automatic — patches global fetch and http/https.request (opt out with FLOWTRACE_PROPAGATE=0)",
   },
   {
@@ -70,7 +72,7 @@ export const RUNTIMES: RuntimeSupport[] = [
     mechanism: "the same Node loaders — TypeScript is transformed on the same path, not a separate layer",
     invoke: "flowtrace run -- ts-node myapp.ts",
     prefix: "name from package.json (drop any @scope/)",
-    inbound: "automatic — HTTP traceparent header and FLOWTRACE_TRACEPARENT",
+    inbound: "automatic — same as Node",
     outbound: "automatic — same as Node",
   },
   {
@@ -82,9 +84,9 @@ export const RUNTIMES: RuntimeSupport[] = [
     invoke: "flowtrace run -- go run ./cmd/api   (go build and go test work too)",
     prefix: "the module line from go.mod",
     inbound:
-      "automatic via FLOWTRACE_TRACEPARENT; for an inbound HTTP header call flowtracert.SeedFromTraceparent(r.Header.Get(\"traceparent\")) at the top of the handler",
+      "automatic — any func(http.ResponseWriter, *http.Request) is seeded from the inbound traceparent by the transformer, plus FLOWTRACE_TRACEPARENT. You write no code: flowtracert only exists during an instrumented build, so calling it from your own source would break a plain `go build`.",
     outbound:
-      "manual — attach flowtracert.CurrentTraceparent() to the outgoing request",
+      "manual, and only from code that is itself instrumented — there is no seam to patch, since net/http resolves at compile time",
     notes:
       "The target module's own `go` directive must be 1.24+ as well; FlowTrace refuses before touching anything otherwise. Go has no seam for automatic outbound propagation: net/http resolves at compile time.",
   },
@@ -129,7 +131,9 @@ export function renderRuntimes(): string {
     "",
     "## Cross-process (distributed) tracing",
     "",
-    "The ids are W3C Trace Context compatible, so one logical request keeps a single `trace_id` across a process hop and both halves read as one tree. Asserted end to end by capture/node/test/test-cross-process.mjs, which spawns two real processes.",
+    "The ids are W3C Trace Context compatible, so one logical request keeps a single `trace_id` across a process hop and every hop reads as one tree. Asserted by capture/node/test/test-cross-process.mjs (two real processes) and verified by hand on a browser -> Node -> Java -> Go chain, where all three service traces carried the browser's trace_id.",
+    "",
+    "**A split trace looks exactly like a working trace** until you check the ids, so verify rather than assume: collect each process's file and confirm they share one `trace_id`. Two different ids mean a hop dropped the header — that is the finding.",
     "",
     "| Runtime | Inbound (adopts the caller's trace) | Outbound (propagates onward) |",
     "|---|---|---|"

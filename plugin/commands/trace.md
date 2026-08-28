@@ -62,17 +62,23 @@ For a chain of services, one `trace_id` should span every hop — otherwise you
 can show each hop is clean without showing the chain is. The ids are W3C Trace
 Context compatible, so this works:
 
-- **Node / TypeScript** propagate both ways on their own (inbound header, and
-  outbound `fetch` / `http.request` are patched).
-- **Python** and **Java** adopt an inbound `traceparent` on their own.
-- **Go** adopts one, but does not attach it outbound automatically — there is
-  no seam for it. The caller must attach `flowtracert.CurrentTraceparent()`,
-  and an HTTP handler seeds with
-  `flowtracert.SeedFromTraceparent(r.Header.Get("traceparent"))`.
+- **Java** propagates both ways on its own (the OTel agent).
+- **Node / TypeScript** propagate both ways on their own — the HTTP server edge
+  and `fetch` / `http.request` are both patched.
+- **Go** adopts an inbound header on its own: the transformer seeds every
+  `func(http.ResponseWriter, *http.Request)`. Outbound is manual. Never tell
+  the user to call `flowtracert` from their own source — it exists only during
+  an instrumented build, so importing it breaks their plain `go build`.
+- **Python** does **not** adopt an inbound header on its own. It must be
+  wrapped in `flowtrace_runtime.remote_context(header)` by hand, and that
+  import only resolves under `flowtrace run`.
 
 When there is no HTTP between the processes, export
 `FLOWTRACE_TRACEPARENT=00-<32 hex trace>-<16 hex span>-01` before launching the
 child; every runtime reads it.
+
+Check `flowtrace://runtimes` rather than trusting this list — it is generated
+from one source and this is a restatement.
 
 To verify a chain really joined: collect each process's trace and check they
 share one `trace_id`, then `trace_tree` it. Two different trace_ids means a hop
