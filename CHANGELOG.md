@@ -52,6 +52,26 @@ All notable changes to FlowTrace.
   span, and injecting a `defer` makes an instrumented function permanently
   non-inlinable.
 
+- **Go joins a trace another process started.** Go was the one capture layer
+  that could not take part in a distributed trace: Java, Node and Python all
+  adopt an inbound W3C `traceparent`, while Go minted a fresh `trace_id` on
+  every root span, so a Node → Go → Java chain produced three unrelated trees.
+  You could show each hop was clean and still not show the chain was joined.
+
+  Inbound is automatic from `FLOWTRACE_TRACEPARENT`, the same carrier and the
+  same variable Java, Node and Python already read, so a parent seeds any
+  child the same way regardless of language. For a server receiving the header
+  on the wire, `flowtracert.SeedFromTraceparent(r.Header.Get("traceparent"))`
+  at the top of the handler does the same thing and returns a restore func.
+
+  Outbound is exposed as `flowtracert.CurrentTraceparent()` and left to the
+  caller — deliberately, not as an oversight. Node attaches it automatically
+  because `globalThis.fetch` and `http.request` are mutable bindings it can
+  patch at runtime; Go resolves `net/http` at compile time, so the equivalent
+  means rewriting standard-library call sites inside the `-overlay` pass, to
+  inject a header the caller may already be setting. The propagation matrix in
+  `docs/architecture.md` states per runtime which direction is automatic.
+
 - **`FLOWTRACE_MAX_EVENTS`** — a per-process event cap for the Go layer
   (default 100,000; `0` disables). It only stops *new* spans from opening: a
   span whose `enter` was written always gets its `exit`, so an `enter` with no
@@ -63,12 +83,53 @@ All notable changes to FlowTrace.
 
 - **Schema v2's `lang` enum accepts `"go"`.** Additive — every document valid
   before stays valid, so the schema is still v2.
-- The plugin (2.2.0) learns Go: `/flowtrace:trace` detects a `go.mod` and takes
+- The plugin (2.3.0) learns Go: `/flowtrace:trace` detects a `go.mod` and takes
   the prefix from its `module` line, and the plugin and marketplace
   descriptions name Go alongside the other four.
+- **The plugin ships `flowtrace` on your PATH.** Claude Code puts
+  `<plugin-root>/bin` on PATH and `/flowtrace:trace` told agents to run
+  `flowtrace run`, but the plugin shipped no `bin/` — `which flowtrace` came
+  back empty, and tooling fell back to whatever checkout happened to be on
+  disk. `plugin/bin/flowtrace` shells to a pinned
+  `npx @rixmerz/flowtrace@<version>`; it cannot be the real CLI, because a
+  plugin install copies a directory and runs no build while the CLI needs
+  platform-specific native builds of `@swc/core`.
+- **New MCP resource `flowtrace://runtimes`.** Which runtimes are supported,
+  their minimum versions, how each is invoked, where the package prefix comes
+  from, what cross-process propagation each has, and which npm package is
+  real. It exists because that question had four contradictory answers in this
+  repo at once, and an agent asked to trace a Go service picked whichever file
+  it read first. `mcp-server/src/runtimes.ts` is now the source; the prose is a
+  restatement.
+- `scripts/check-plugin.mjs` additionally enforces that `plugin/bin/*` is
+  tracked executable (mode 100755 — a shim committed 644 is not executable
+  after a clone), that the shim's version pin matches
+  `flowtrace-cli/package.json`, and that the booted bundle really serves
+  `flowtrace://runtimes`.
 
 ### Fixed
 
+- **`npm install -g @flowtrace/cli` was the first command in both READMEs, and
+  that package has never existed on npm.** The published CLI is
+  `@rixmerz/flowtrace`. Every user's first step 404'd — and with no resolvable
+  `flowtrace` binary, tooling falls back to hand-wiring a capture layer or
+  symlinking `@flowtrace/capture-node` out of a local checkout, which
+  reproduces on exactly one machine and never in CI.
+- **`@flowtrace/capture-node`, `@flowtrace/mcp-server` and
+  `flowtrace-dashboard` are not installable and now say so.** All three are
+  workspace-internal — vendored into the CLI tarball by
+  `flowtrace-cli/scripts/vendor.mjs` or bundled into the plugin — but nothing
+  marked them `private`, so they read as npm packages. `@rixmerz/flowtrace` is
+  the only published package, and it carries every capture layer.
+- **`README.en.md` did not mention Go at all** while `README.md` did, and
+  `CLAUDE.md` stated Go had been removed. Reconciled.
+- **Both READMEs said traces land in `./flowtrace.jsonl`.** `flowtrace run`
+  writes `.flowtrace/<timestamp>.jsonl` and prints the path on startup;
+  `flowtrace.jsonl` is only the default when a capture layer is wired by hand.
+- **Cross-process propagation was documented nowhere**, despite being real and
+  covered end to end by `capture/node/test/test-cross-process.mjs` — so it kept
+  being reported as a missing feature. `docs/architecture.md`, both READMEs,
+  the skill and `/flowtrace:trace` now carry the per-runtime matrix.
 - **`docs/architecture.md` described capture mechanisms the code stopped using.**
   It had Python on a `sys.setprofile` global hook and Node on a `Module._load`
   monkey-patch with `--experimental-loader`; both have been AST rewriting at
