@@ -4,7 +4,7 @@
 
 Trazador de llamadas multi-lenguaje sin modificar el código fuente. Genera logs JSONL estructurados de cada método instrumentado, listos para análisis con IA.
 
-**Runtimes soportados**: Java 11+ | Python 3.8+ | Node.js 18+ | TypeScript 5+
+**Runtimes soportados**: Java 11+ | Python 3.8+ | Node.js 18+ | TypeScript 5+ | Go 1.24+
 
 ---
 
@@ -34,6 +34,14 @@ flowtrace run -- node miapp.js
 # o con ts-node:
 flowtrace run -- ts-node miapp.ts
 ```
+
+### Go
+```bash
+flowtrace run -- go run ./cmd/api
+# tambien funcionan `go build` y `go test`
+```
+Requiere Go 1.24+. La instrumentacion ocurre antes de compilar (via `go build
+-overlay`): tu arbol de fuentes no se modifica, ni un byte.
 
 Los logs se escriben en `flowtrace.jsonl` en el directorio de trabajo.
 

@@ -2,6 +2,68 @@
 
 All notable changes to FlowTrace.
 
+## [3.1.0]
+
+### Added
+
+- **Go capture layer** (`capture/go/`). Go returns as a real v2 capture layer,
+  held to the same contract as the other three: schema-v2 JSONL, W3C trace
+  context, and nothing for the user to edit. `flowtrace run --lang go -- go
+  run ./cmd/api`; `go build` and `go test` work the same way.
+
+  Go has no runtime hook to attach to — no import hook, no module loader, no
+  bytecode agent — so instrumentation happens before the compiler runs.
+  Packages are enumerated with `go list -json`, each matching file is
+  rewritten, and the result reaches the compiler through `go build -overlay`.
+  **The user's tree is never written to**, not one byte: the runtime is
+  injected as `<their-module>/internal/flowtracert`, a package the compiler
+  sees but the disk never holds, which is also why it needs no `require`, no
+  `replace`, no `go.sum` entry and no network fetch. Both the transformer and
+  the injected runtime are stdlib-only, so tracing can never conflict with the
+  target's dependency graph.
+
+  Rewriting is byte-splicing at AST offsets rather than printing a mutated
+  AST, because printing shifts line numbers — a panic in instrumented code
+  reports the original file at the original line, verbatim.
+
+  A goroutine's spans nest under whatever spawned them, across a plain `go`
+  statement, with no change to the traced code. This uses the pprof label slot
+  (`g.labels`), which the Go runtime itself copies parent-to-child — the only
+  mechanism that propagates without rewriting `go` statements, which would
+  change when their arguments are evaluated.
+
+  Field mapping is Go's own: a method's receiver type becomes `class` (empty
+  for a package-level function), the package import path becomes `module`,
+  exported/unexported becomes `public`/`private`, and `thread` is
+  `goroutine-<id>`. A returned non-nil `error` populates the `error` field
+  alongside `panic` — returning an error is ordinary control flow in Go, but
+  it is also what a Go developer is debugging, and it is what makes
+  `trace_find_error` useful there.
+
+  **Requires Go 1.24 or newer.** The label slot only has the layout this
+  depends on from 1.24; on 1.21–1.23 it is a `map[string]string`, and writing
+  to it there crashes the profiler. Both the toolchain and the target module's
+  own `go` directive are checked before any file is touched, and refused with
+  an actionable message rather than a crash.
+
+  Known limits, stated rather than discovered later: closures (`FuncLit`) get
+  no span of their own, dependencies and the standard library are out of
+  scope, goroutine pools defeat span inheritance because workers predate the
+  span, and injecting a `defer` makes an instrumented function permanently
+  non-inlinable.
+
+- **`FLOWTRACE_MAX_EVENTS`** — a per-process event cap for the Go layer
+  (default 100,000; `0` disables). It only stops *new* spans from opening: a
+  span whose `enter` was written always gets its `exit`, so an `enter` with no
+  `exit` keeps meaning "this call never returned" and never "the cap dropped
+  it". The file can therefore exceed the cap by up to the number of spans open
+  when it is reached.
+
+### Changed
+
+- **Schema v2's `lang` enum accepts `"go"`.** Additive — every document valid
+  before stays valid, so the schema is still v2.
+
 ## [3.0.3]
 
 ### Fixed

@@ -12,8 +12,14 @@ const chalk = require('chalk');
 const assets = require('../assets');
 const { detectLang, detectPackagePrefix } = require('../detect');
 const { detectPythonPrefix } = require('../python-prefix');
+const { detectGoModulePath } = require('../go-module');
 
-const SUPPORTED_LANGS = new Set(['java', 'python', 'node', 'ts']);
+const SUPPORTED_LANGS = new Set(['java', 'python', 'node', 'ts', 'go']);
+
+/** `go run`/`go build`/`go test` are the only subcommands flowtrace-go can
+ * splice `-overlay` into — see capture/go/cmd/flowtrace-go's own
+ * validSubcommands for the second line of defense. */
+const GO_SUBCOMMANDS = new Set(['run', 'build', 'test']);
 
 // ---------- helpers ----------
 
@@ -129,8 +135,8 @@ async function runCommand(options = {}, restArgs = []) {
     const detected = detectLang(cwd);
     if (detected === null) {
       console.error(chalk.red('Error:'), 'No se pudo detectar el lenguaje del proyecto.');
-      console.log(chalk.gray('Archivos reconocidos: pom.xml, build.gradle, pyproject.toml, setup.py, requirements.txt, package.json'));
-      console.log(chalk.gray('O usa: flowtrace run --lang <java|python|node|ts> -- <cmd>'));
+      console.log(chalk.gray('Archivos reconocidos: pom.xml, build.gradle, pyproject.toml, setup.py, requirements.txt, package.json, go.mod'));
+      console.log(chalk.gray('O usa: flowtrace run --lang <java|python|node|ts|go> -- <cmd>'));
       process.exit(1);
     }
     if (Array.isArray(detected)) {
@@ -177,6 +183,11 @@ async function runCommand(options = {}, restArgs = []) {
   // ---- Node / TypeScript path ----
   if (lang === 'node' || lang === 'ts') {
     return runNode({ options, restArgs, cwd, outPath });
+  }
+
+  // ---- Go path ----
+  if (lang === 'go') {
+    return runGo({ options, restArgs, cwd, outPath });
   }
 
   // ---- Other langs: stub (S3-S4) ----
@@ -443,6 +454,86 @@ async function runNode({ options, restArgs, cwd, outPath }) {
   });
 }
 
+// ---------- Go injection ----------
+
+/**
+ * Build the `go run <driver>` invocation that launches flowtrace-go.
+ *
+ * flowtrace-go always runs from source via `go run` — like the Python path,
+ * there is no separate build step. The subtlety `go run` forces on us: it
+ * resolves the *main module* from its OWN working directory, not from the
+ * package path it is given, so this has to spawn with cwd = captureGoDir
+ * (flowtrace-go's own module, capture/go) and hand the target module's
+ * directory to the driver explicitly via its own -dir flag, rather than
+ * just letting it inherit cwd — see capture/go/cmd/flowtrace-go's -dir flag
+ * doc comment for the same story from the other side.
+ */
+function buildGoInvocation({ captureGoDir, moduleDir, goSubcommand, goRest, outPath }) {
+  const driverDir = path.join(captureGoDir, 'cmd', 'flowtrace-go');
+  const runtimeSrc = path.join(captureGoDir, 'flowtracert');
+  const args = [
+    'run', driverDir,
+    '-runtime-src', runtimeSrc,
+    '-dir', moduleDir,
+    goSubcommand, ...goRest,
+  ];
+  const env = { ...process.env, FLOWTRACE_OUTPUT: outPath };
+  return { cmd: 'go', args, cwd: captureGoDir, env };
+}
+
+async function runGo({ options, restArgs, cwd, outPath }) {
+  // 1. Resolve capture/go (checkout preferred over vendored, per assets.js).
+  const captureGoDir = assets.goCaptureDir();
+  if (!captureGoDir) {
+    console.error(chalk.red('Error:'), 'No se encontró capture/go.');
+    console.log(chalk.gray(assets.isVendored()
+      ? 'La instalación parece incompleta — reinstala el paquete.'
+      : 'Asegúrate de que capture/go existe en el checkout.'));
+    process.exit(1);
+  }
+
+  // 2. Validate the user command.
+  if (!restArgs.length) {
+    console.error(chalk.red('Error:'), 'Debes proporcionar el comando a ejecutar después de --.');
+    console.log(chalk.gray('Ejemplo: flowtrace run --lang go -- go run ./cmd/api'));
+    process.exit(1);
+  }
+  // Go has no runtime hook to instrument — a prebuilt binary has nothing
+  // left to splice into by the time it reaches here, so that has to be an
+  // explicit, actionable error rather than a silent empty trace (AC1).
+  if (restArgs[0] !== 'go' || !GO_SUBCOMMANDS.has(restArgs[1])) {
+    console.error(chalk.red('Error:'), 'flowtrace instrumenta `go run`, `go build` o `go test` — no un binario ya compilado.');
+    console.log(chalk.gray('Ejemplo: flowtrace run --lang go -- go run ./cmd/api'));
+    process.exit(1);
+  }
+
+  // 3. Module path — informational only here. flowtrace-go re-derives it
+  //    itself via `go list -json`, which is also where it gets the
+  //    module's root *directory*, not just its import path.
+  const modulePath = detectGoModulePath(cwd);
+  if (modulePath) console.log(chalk.gray(`  módulo  : ${modulePath}`));
+
+  const goSubcommand = restArgs[1];
+  const goRest = restArgs.slice(2);
+  const { cmd, args, cwd: spawnCwd, env } = buildGoInvocation({
+    captureGoDir, moduleDir: cwd, goSubcommand, goRest, outPath,
+  });
+
+  console.log(chalk.cyan('FlowTrace v2 — Go instrumentado'));
+  console.log(chalk.gray(`  salida  : ${outPath}`));
+  console.log(chalk.gray(`  comando : ${restArgs.join(' ')}`));
+
+  const child = spawn(cmd, args, { cwd: spawnCwd, env, stdio: 'inherit' });
+  process.on('SIGINT', () => child.kill('SIGINT'));
+
+  return new Promise((resolve) => {
+    child.on('close', (code) => {
+      process.exit(code ?? 0);
+      resolve();
+    });
+  });
+}
+
 // Export internals for testing
 runCommand._buildJavaInjection = buildJavaInjection;
 runCommand._buildNodeEnv = buildNodeEnv;
@@ -451,5 +542,7 @@ runCommand._ensureGitignore = ensureGitignore;
 runCommand._detectPythonPrefix = detectPythonPrefix;
 runCommand._buildPythonEnv = buildPythonEnv;
 runCommand._countJsonlLines = _countJsonlLines;
+runCommand._buildGoInvocation = buildGoInvocation;
+runCommand._detectGoModulePath = detectGoModulePath;
 
 module.exports = runCommand;

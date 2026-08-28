@@ -8,9 +8,10 @@
 const fs   = require('fs');
 const path = require('path');
 const { detectPythonPrefix } = require('./python-prefix');
+const { detectGoModulePath } = require('./go-module');
 
 /**
- * Returns 'java'|'python'|'node'|'ts'|null
+ * Returns 'java'|'python'|'node'|'ts'|'go'|null
  * or string[] if multiple languages are detected.
  */
 function detectLang(cwd) {
@@ -32,6 +33,11 @@ function detectLang(cwd) {
     detected.push(has('tsconfig.json') ? 'ts' : 'node');
   }
 
+  // Go: go.mod
+  if (has('go.mod')) {
+    detected.push('go');
+  }
+
   if (detected.length === 0) return null;
   if (detected.length === 1) return detected[0];
   return detected; // multi-lang — caller prompts
@@ -44,6 +50,7 @@ function detectPackagePrefix(cwd, lang) {
   if (lang === 'java') return _javaPrefix(cwd);
   if (lang === 'python') return _pythonPrefix(cwd);
   if (lang === 'node' || lang === 'ts') return _nodePrefix(cwd);
+  if (lang === 'go') return detectGoModulePath(cwd);
   return null;
 }
 

@@ -77,6 +77,21 @@ function pythonRuntimeParent() {
 }
 
 /**
+ * capture/go — the Go module holding cmd/flowtrace-go (the driver `flowtrace
+ * run --lang go` shells out to via `go run`), flowtracert/ (the runtime
+ * source injected into the target module, byte-for-byte, per D1) and
+ * transform/ (the byte-splicing instrumenter). Unlike Java's jar, there is
+ * nothing to prebuild here — the driver is always run from source, so this
+ * just resolves the directory itself.
+ */
+function goCaptureDir() {
+  return firstExisting(
+    path.join(REPO_ROOT, 'capture', 'go'),
+    path.join(VENDOR, 'go')
+  );
+}
+
+/**
  * The shaded FlowTrace OTel extension jar.
  *
  * Located by prefix and picking the most recently modified match, never by an
@@ -183,6 +198,7 @@ module.exports = {
   nodeBootstrap,
   pythonStubDir,
   pythonRuntimeParent,
+  goCaptureDir,
   javaExtensionJar,
   findOtelAgent,
   ensureOtelAgent,

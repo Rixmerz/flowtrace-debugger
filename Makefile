@@ -5,15 +5,17 @@
 
 .PHONY: build test bench validate-schema check-golden gen-golden \
         build-java test-java build-python test-python build-node test-node \
+        build-go test-go \
         build-mcp test-mcp test-browser test-dashboard test-cli bundle-mcp check-bundle \
         bundle-dashboard clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
-	@echo "  make build            Build all v2 subprojects (build-java + build-python + build-node)"
+	@echo "  make build            Build all v2 subprojects (build-java + build-python + build-node + build-go)"
 	@echo "  make build-java       Build capture/java/flowtrace-otel-extension shaded jar"
 	@echo "  make build-python     Install capture/python flowtrace-runtime in editable mode"
 	@echo "  make build-node       Install capture/node dependencies"
+	@echo "  make build-go         go build ./... for capture/go (transform + flowtracert + driver)"
 	@echo "  make build-mcp        Install + compile mcp-server (tsc -> dist/)"
 	@echo "  make bundle-mcp       Rebuild plugin/mcp/server.bundle.js from mcp-server/src"
 	@echo "  make bundle-dashboard Rebuild flowtrace-cli/vendor/dashboard from flowtrace-dashboard/server"
@@ -22,6 +24,7 @@ help:
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make test-python      Run pytest for the Python capture module"
 	@echo "  make test-node        Run node:test suite for the Node capture module"
+	@echo "  make test-go          Run go test ./... for the Go capture module"
 	@echo "  make test-browser     Run the browser capture suite (incl. collector e2e)"
 	@echo "  make test-mcp         Build and test the MCP server"
 	@echo "  make test-dashboard   Run the dashboard analyzer tests"
@@ -54,7 +57,7 @@ gen-golden:
 
 # Top-level test aggregator. Every subproject that has tests runs here, so
 # `make test` and CI cover the same ground.
-test: validate-schema check-golden test-java test-python test-node test-browser test-mcp test-dashboard test-cli check-bundle
+test: validate-schema check-golden test-java test-python test-node test-go test-browser test-mcp test-dashboard test-cli check-bundle
 	@echo "==> test: all suites passed"
 
 # Java capture module
@@ -87,6 +90,16 @@ build-node:
 test-node:
 	@echo "==> test-node: @flowtrace/capture-node"
 	@cd capture/node && node --test test/*.mjs
+
+# Go capture module. Zero non-stdlib deps (design doc AC1), so there is no
+# separate dependency-install step the way build-node has one.
+build-go:
+	@echo "==> build-go: capture/go (transform + flowtracert + cmd/flowtrace-go)"
+	@cd capture/go && go build ./...
+
+test-go:
+	@echo "==> test-go: capture/go"
+	@cd capture/go && go test ./...
 
 # Browser capture. Its e2e test boots the dashboard collector, so this depends
 # on the dashboard's dependencies being installed.
@@ -148,7 +161,7 @@ test-cli:
 	@cd flowtrace-cli && pnpm install --silent && for t in test/*.js; do node $$t || exit 1; done
 
 # Build aggregator.
-build: build-java build-python build-node build-mcp
+build: build-java build-python build-node build-go build-mcp
 	@echo "==> build: done"
 
 # Benchmark harness — Sprint 6.

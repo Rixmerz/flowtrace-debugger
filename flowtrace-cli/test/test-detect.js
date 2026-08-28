@@ -162,7 +162,21 @@ console.log('\n[detectPackagePrefix]');
 // Unknown lang
 {
   const d = mkTmp();
-  assert(detectPackagePrefix(d, 'go') === null, 'unknown lang -> null');
+  assert(detectPackagePrefix(d, 'rust') === null, 'unknown lang -> null');
+}
+
+// Go go.mod module path
+{
+  const d = mkTmp();
+  fs.writeFileSync(path.join(d, 'go.mod'), `module github.com/acme/widget\n\ngo 1.24\n`);
+  assert(detectLang(d) === 'go', 'go.mod -> go');
+  assert(detectPackagePrefix(d, 'go') === 'github.com/acme/widget', 'go: go.mod module path extracted');
+}
+
+// Go: no go.mod -> null
+{
+  const d = mkTmp();
+  assert(detectPackagePrefix(d, 'go') === null, 'go: no go.mod -> null');
 }
 
 // ---- Summary ----

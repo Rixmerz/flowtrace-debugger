@@ -23,6 +23,9 @@ export const GOLDEN_ROOT = join(REPO_ROOT, 'examples', 'golden');
 const NODE_BOOTSTRAP = join(REPO_ROOT, 'capture', 'node', 'src', 'bootstrap.mjs');
 const PY_STUB = join(REPO_ROOT, 'capture', 'python', 'stub');
 const PY_PKG = join(REPO_ROOT, 'capture', 'python');
+const GO_CAPTURE = join(REPO_ROOT, 'capture', 'go');
+const GO_DRIVER = join(GO_CAPTURE, 'cmd', 'flowtrace-go');
+const GO_RUNTIME_SRC = join(GO_CAPTURE, 'flowtracert');
 const JAVA_MODULE = join(REPO_ROOT, 'capture', 'java', 'flowtrace-otel-extension');
 const OTEL_AGENT = join(JAVA_MODULE, 'target', 'dependency', 'opentelemetry-javaagent.jar');
 
@@ -96,6 +99,44 @@ function pythonRunner({ id, script, prefix, maxArgLength }) {
           PYTHONPATH: [PY_STUB, PY_PKG, process.env.PYTHONPATH].filter(Boolean).join(':'),
           FLOWTRACE_ENABLE: '1',
           FLOWTRACE_PACKAGE_PREFIX: prefix,
+          FLOWTRACE_OUTPUT: outPath,
+          ...(maxArgLength ? { FLOWTRACE_MAX_ARG_LENGTH: String(maxArgLength) } : {}),
+        },
+      });
+    },
+  };
+}
+
+/**
+ * Go fixture: driven through the real cmd/flowtrace-go driver, exactly as
+ * flowtrace-cli's runGo does — `go run` executed with cwd = capture/go
+ * (flowtrace-go's own module) and the fixture's directory passed through
+ * the driver's own -dir flag, because `go run` resolves the *main module*
+ * from its own working directory rather than from the package path it is
+ * given (see flowtrace-cli/lib/commands/run.js's buildGoInvocation).
+ */
+function goRunner({ id, maxArgLength }) {
+  const dir = join(GOLDEN_ROOT, id);
+  return {
+    id,
+    dir,
+    available() {
+      if (!existsSync(join(dir, 'go.mod'))) return { ok: false, reason: 'go.mod missing' };
+      if (!existsSync(GO_DRIVER)) return { ok: false, reason: 'capture/go/cmd/flowtrace-go missing' };
+      return { ok: true };
+    },
+    run(outPath) {
+      return spawnSync('go', [
+        'run', GO_DRIVER,
+        '-runtime-src', GO_RUNTIME_SRC,
+        '-dir', dir,
+        'run', '.',
+      ], {
+        cwd: GO_CAPTURE,
+        encoding: 'utf8',
+        timeout: TIMEOUT_MS,
+        env: {
+          ...process.env,
           FLOWTRACE_OUTPUT: outPath,
           ...(maxArgLength ? { FLOWTRACE_MAX_ARG_LENGTH: String(maxArgLength) } : {}),
         },
@@ -206,6 +247,7 @@ function javaSourceRunner({ id, source, maxArgLength }) {
 /** Every golden fixture that must have a committed expected.jsonl. */
 export const FIXTURES = [
   pythonRunner({ id: 'python', script: 'calculator.py', prefix: 'calculator' }),
+  goRunner({ id: 'go' }),
   nodeRunner({ id: 'node', script: 'calculator.js' }),
   nodeRunner({ id: 'ts', script: 'calculator.ts' }),
   // Express: user code inside a real framework request cycle. The prefix scopes

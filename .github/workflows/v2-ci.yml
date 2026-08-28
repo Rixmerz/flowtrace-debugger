@@ -42,11 +42,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
 
       - name: Build capture layers needed by the golden runners
-        run: make build-java build-python
+        run: make build-java build-python build-go
 
       - name: Validate fixtures against schema v2
         run: make validate-schema
@@ -138,6 +142,29 @@ jobs:
         run: node scripts/check-golden.mjs ts
         env:
           FLOWTRACE_GOLDEN_STRICT: '1'
+
+  go-tests:
+    name: Go tests (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    needs: golden
+    strategy:
+      fail-fast: false
+      matrix:
+        # Floor is 1.24, not 1.21: runtime/pprof.labelMap (the type D3's
+        # goroutine context propagation casts g.labels to) is
+        # map[string]string before 1.24 and struct{ list []label } from 1.24
+        # on — an entirely different memory layout. See D3 and "Risks
+        # accepted" in docs/changes/2026-08-27-go-capture-layer.md.
+        go-version: ['1.24', '1.25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Build and test Go capture module
+        run: make build-go test-go
 
   # The browser capture layer plus its end-to-end test, which boots the real
   # dashboard collector and asserts that browser spans land on disk as valid

@@ -2,7 +2,7 @@
  * Canonicalize a FlowTrace v2 trace so it can be committed as a golden fixture
  * and diffed byte-for-byte across runs and machines.
  *
- * Three fields are genuinely non-deterministic and are explicitly out of scope
+ * Four fields are genuinely non-deterministic and are explicitly out of scope
  * of the golden comparison (every fixture README says "modulo ts, span_id,
  * duration_ns"):
  *
@@ -12,9 +12,19 @@
  *   - ts          — wall clock. Replaced by a fixed base plus the event index,
  *     which keeps ordering observable and stays inside the schema's epoch range.
  *   - duration_ns — timing. Replaced by a constant.
+ *   - thread, but ONLY when it matches Go's `goroutine-<id>` shape — the id
+ *     is a runtime-internal number (explicitly outside Go's compatibility
+ *     promise, see docs/changes/2026-08-27-go-capture-layer.md's D3) that
+ *     measurably varies run to run depending on what else the runtime has
+ *     already spawned (GC workers, sysmon), not on anything the fixture
+ *     controls. It is renumbered in order of first appearance the same way
+ *     span_id is, so a spawned goroutine getting a *different* thread than
+ *     its parent — the actual contract — still fully asserts. Every other
+ *     language's `thread` value (a JVM thread name, "main", a Python thread
+ *     id) is deterministic already and stays verbatim.
  *
- * Everything else (event, thread, lang, module, class, method, visibility,
- * args, result, error, depth) is preserved verbatim: that is the contract the
+ * Everything else (event, lang, module, class, method, visibility, args,
+ * result, error, depth) is preserved verbatim: that is the contract the
  * capture layers must satisfy.
  */
 
@@ -37,6 +47,9 @@ const KEY_ORDER = [
 function spanIdFor(index) {
   return index.toString(16).padStart(16, '0');
 }
+
+/** Matches Go's `thread` shape only — see the header comment above. */
+const GOROUTINE_THREAD = /^goroutine-\d+$/;
 
 /**
  * Java's default Object.toString() renders as `com.foo.Bar@1b6d3586`, where the
@@ -97,6 +110,15 @@ export function normalizeEvents(events) {
     return spanMap.get(id);
   };
 
+  const threadMap = new Map();
+  const mapThread = (value) => {
+    if (typeof value !== 'string' || !GOROUTINE_THREAD.test(value)) return value;
+    if (!threadMap.has(value)) {
+      threadMap.set(value, `goroutine-${threadMap.size + 1}`);
+    }
+    return threadMap.get(value);
+  };
+
   return events.map((ev, i) => {
     const out = { ...ev };
 
@@ -104,6 +126,7 @@ export function normalizeEvents(events) {
     out.span_id = mapSpan(ev.span_id);
     out.parent_id = mapSpan(ev.parent_id);
     out.ts = TS_BASE + i / 1000;
+    if ('thread' in out) out.thread = mapThread(out.thread);
     if ('duration_ns' in out) out.duration_ns = CANONICAL_DURATION_NS;
     if ('args' in out) out.args = scrubIdentityHashes(out.args);
     if ('result' in out) out.result = scrubIdentityHashes(out.result);

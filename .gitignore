@@ -54,6 +54,12 @@ flowtrace-*.jsonl
 **/flowtrace.jsonl
 **/flowtrace-*.jsonl
 
+# The Go (and Python) runtimes' default output directory when FLOWTRACE_OUTPUT
+# isn't set (see capture/go/flowtracert/emitter.go, capture/python's
+# emitter.py) — a run artifact, never source, and would otherwise ship in the
+# npm tarball via vendor.mjs's copyDir (see that script's own filter).
+**/.flowtrace/
+
 # IDE
 .idea/
 *.iml
