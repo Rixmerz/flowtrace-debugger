@@ -134,6 +134,13 @@ func enterSpan(module, class, method, visibility string, args map[string]any) *S
 				depth = d + 1
 			}
 		}
+	} else if remote, seeded := envSeed(); seeded {
+		// No local parent, but this process was launched under a caller's
+		// traceparent (FLOWTRACE_TRACEPARENT). Adopt it so both halves of the
+		// hop land in one tree. depth stays 0: this is still the first local
+		// span, and the remote parent is not ours to emit.
+		traceID = remote.traceID
+		parentID = remote.spanID
 	} else {
 		traceID = newTraceID()
 	}
