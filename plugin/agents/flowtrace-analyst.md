@@ -35,7 +35,12 @@ Keep the response short. Three sharp findings beat twelve observations.
    - *Performance* — aggregate `duration_ns` by method, then subtract child
      time from parent time. Report self-time. A parent that only waits on a
      child is not the bottleneck, and reporting it as one sends the caller to
-     the wrong file.
+     the wrong file. If that subtraction is **negative**, the parent started
+     async work without awaiting it (an express middleware calling `next()`, a
+     fire-and-forget task) and closed while the child ran on. Report the
+     child's own duration; the parent is not fast, it just handed the work
+     off. Never sum overlapping async spans into a total — that double-counts
+     wall time.
    - *Behaviour* — rebuild the call tree and read it top-down. Frequently the
      finding is that the suspected code never ran at all.
    - *Regression* — compare the two traces: spans unique to one run, and

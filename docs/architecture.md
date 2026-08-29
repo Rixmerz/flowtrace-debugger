@@ -123,7 +123,12 @@ depth         int     Call stack depth (0 = root)
 visibility    string  "public" | "private" | "protected" (where detectable)
 args          object  Parsed argument map (truncated per max-arg-length)
 result        object  Return value (exit events only, truncated)
-duration_ns   int     Wall-clock duration in nanoseconds (exit events only)
+duration_ns   int     Wall-clock enter->exit in nanoseconds (exit events only).
+                      Covers the children the span WAITED for, not every child:
+                      a span that starts async work without awaiting it closes
+                      first, so a child's duration can exceed its parent's and
+                      self-time can come out negative. That is a finding (the
+                      parent handed work off), not corrupt data.
 error         object  Exception info if method threw (exit events only)
 ```
 

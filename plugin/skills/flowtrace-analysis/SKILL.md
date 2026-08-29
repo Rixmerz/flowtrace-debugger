@@ -32,8 +32,11 @@ Fields that carry the most weight when reading a trace:
   produces many trace_ids in one file; scope to one before drawing conclusions.
 - **`visibility`** — `private` methods are captured too. Capturing them is a
   deliberate v2 capability, and they are often where the real logic lives.
-- **`duration_ns`** — wall time for the span, inclusive of children. Subtract
-  children to get self-time before calling something "slow".
+- **`duration_ns`** — wall time from `enter` to `exit`. It covers children the
+  span actually waited for, so subtracting them gives self-time — but check the
+  arithmetic before trusting it, because a span that starts async work without
+  awaiting it returns long before that work finishes. See "Self-time and async"
+  below.
 - **`args` / `result`** — may be truncated. A value rendered as
   `<truncated:"xxx...>` hit the `max-arg-length` limit (default 512); re-run
   with a higher limit rather than reasoning about a clipped value.
@@ -76,7 +79,9 @@ wrong is usually several frames above where the exception surfaced.
 
 **For "why is this slow":** `log_aggregate` over `duration_ns` grouped by
 method. Then subtract child time from parent time before concluding — a method
-whose total is large may be doing nothing but waiting on one child.
+whose total is large may be doing nothing but waiting on one child. If that
+subtraction comes out negative, read the async note under "Reading discipline"
+before drawing any conclusion: the parent did not do the work.
 
 **For a regression:** capture a trace on the good revision and one on the bad,
 then `trace_diff`. Spans present in only one run tell you about changed control
@@ -114,7 +119,25 @@ which side of a hop is at fault.
   missing by design.
 - `enter` without a matching `exit` means the process died inside that call.
   That is a finding, not corrupt data.
-- Durations include child spans. Always.
+- **Durations cover the children a span *waited for*, not every child.** In an
+  awaited chain the arithmetic holds: a parent that `await`s a 200 ms child
+  reports ~202 ms. But a span that starts async work and returns without
+  awaiting it — an express middleware calling `next()`, a fire-and-forget task,
+  any callback-style continuation — closes while the child is still running,
+  and the child's duration can exceed the parent's:
+
+  ```
+  middleware    total=  1.82ms  children=301.50ms  self= -299.69ms
+    slowHandler total=301.50ms  children=  0.48ms  self=  301.02ms
+  ```
+
+  **A negative self-time is that signal, not corrupt data.** It means the
+  parent handed work off rather than performing it. Report the child's own
+  duration; do not report the parent as fast, and do not sum siblings into a
+  total — overlapping async spans double-count wall time.
+
+  This is specific to runtimes with async continuations (Node/TS, Python
+  `async def`). A synchronous call tree never shows it.
 - Do not infer causation from adjacency. Two spans next to each other in the
   file may be unrelated work on different threads — check `thread` and
   `trace_id`.
