@@ -417,6 +417,24 @@ function buildNodeEnv({ bootstrapPath, prefix, outPath }) {
  * the trace would come out empty. An empty trace is the single most misleading
  * failure this tool has: it reads as "my code never ran". Refuse up front with
  * the version, the same way the Go driver refuses below its floor.
+ *
+ * Node 26 runtime-deprecates module.register() as DEP0205 and points at
+ * module.registerHooks(), so a traced Node program prints a DeprecationWarning
+ * on every run there. That migration is deliberately NOT done yet, and the
+ * trigger for doing it is this floor reaching 22.15 — not the warning
+ * appearing. registerHooks landed in 22.15 and takes SYNCHRONOUS hooks, while
+ * capture/node/src/esm/loader.mjs is async by necessity (it awaits nextLoad).
+ * Supporting both therefore means two hook shapes, and the register() half —
+ * the path every user from 20.6 to 22.14 takes — cannot be exercised on a Node
+ * that has registerHooks. Shipping the more travelled path tested only through
+ * a feature flag, to remove a cosmetic warning from a still-working API, is a
+ * bad trade; that file's own comments record four separate silent failures
+ * (exit 0, no output, no events) earned by changing it.
+ *
+ * When the floor does move: keep ONE implementation. Extract the part after
+ * nextLoad — which is already fully synchronous, transform() and the cache
+ * helpers included — into a shared function, and let an async and a sync hook
+ * both call it. Two copies of that logic would rot apart.
  */
 const NODE_CAPTURE_MIN = [20, 6];
 
