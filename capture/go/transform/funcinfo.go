@@ -103,6 +103,25 @@ func paramArgsText(fd *ast.FuncDecl) string {
 	return strings.Join(parts, ", ")
 }
 
+// handlerArgsText replaces a handler's two parameters with the method and
+// path of the request.
+//
+// Serializing the parameters themselves is actively harmful here. A
+// *http.Request renders its whole header map, so tracing any authenticated
+// service writes Authorization and Cookie values into a file on disk — the
+// trace is meant to be read by an AI tool and pasted into a conversation,
+// which makes it the last place credentials should be. The ResponseWriter is
+// the other half: an opaque struct that serializes to noise.
+//
+// Method and path are what actually identify one request among thousands, so
+// this is more useful as well as safer. r.URL.Path is deliberate: RequestURI
+// and r.URL.String() carry the query string, and tokens end up in query
+// strings more often than anyone would like.
+func handlerArgsText(reqParam string) string {
+	return strconv.Quote("http.method") + ", " + reqParam + ".Method, " +
+		strconv.Quote("http.path") + ", " + reqParam + ".URL.Path"
+}
+
 // instrumentResults decides the final name for every result value - reusing
 // an existing name, renaming a blank _, or generating one for an unnamed
 // result - and returns the edits needed to make the signature match. Go

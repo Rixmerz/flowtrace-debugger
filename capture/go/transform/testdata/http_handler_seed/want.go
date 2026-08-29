@@ -4,7 +4,7 @@ import (_ftrt "flowtracetest/internal/flowtracert"; "net/http")
 
 // The net/http handler shape: seeded from the inbound traceparent so this
 // process continues the caller's trace instead of minting a new one.
-func Handle(w http.ResponseWriter, r *http.Request) {defer _ftrt.SeedFromTraceparent(r.Header.Get("traceparent"))(); _ft_s := _ftrt.Enter("flowtracetest/fixture", "", "Handle", "public", "w", w, "r", r); defer func() { if _ft_p := recover(); _ft_p != nil { _ftrt.ExitPanic(_ft_s, _ft_p); panic(_ft_p) }; _ftrt.Exit(_ft_s) }();
+func Handle(w http.ResponseWriter, r *http.Request) {defer _ftrt.SeedFromTraceparent(r.Header.Get("traceparent"))(); _ft_s := _ftrt.Enter("flowtracetest/fixture", "", "Handle", "public", "http.method", r.Method, "http.path", r.URL.Path); defer func() { if _ft_p := recover(); _ft_p != nil { _ftrt.ExitPanic(_ft_s, _ft_p); panic(_ft_p) }; _ftrt.Exit(_ft_s) }();
 	w.WriteHeader(http.StatusOK)
 }
 

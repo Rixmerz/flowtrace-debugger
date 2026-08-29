@@ -153,3 +153,57 @@ func H(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("line count changed %d -> %d; stack traces would lie", before, after)
 	}
 }
+
+// A traced handler must never write the request's headers into the trace.
+// The file is meant to be read by an AI tool and pasted into a conversation,
+// which makes it the last place an Authorization or Cookie value should be.
+func TestHandlerArgsDoNotSerializeTheRequest(t *testing.T) {
+	src := `package p
+import "net/http"
+func H(w http.ResponseWriter, r *http.Request) {}`
+	res, err := File("h.go", []byte(src), "m", "m/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Source)
+
+	// The whole point: neither parameter is passed to Enter as a value.
+	if strings.Contains(out, `"r", r`) {
+		t.Error("the *http.Request is serialized into args — every header lands in the trace file")
+	}
+	if strings.Contains(out, `"w", w`) {
+		t.Error("the ResponseWriter is serialized into args")
+	}
+
+	// What replaces them identifies the request without carrying credentials.
+	for _, want := range []string{`"http.method", r.Method`, `"http.path", r.URL.Path`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s — a handler span would be unidentifiable:\n%s", want, out)
+		}
+	}
+	// RequestURI and URL.String() carry the query string, where tokens live.
+	for _, forbidden := range []string{"RequestURI", "URL.String()", "r.Header)", `"r", `} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("handler args reference %q, which can carry secrets", forbidden)
+		}
+	}
+}
+
+// Only the handler shape is affected — ordinary functions keep their args.
+func TestNonHandlerArgsAreUnchanged(t *testing.T) {
+	src := `package p
+import "net/http"
+func NotAHandler(w http.ResponseWriter, r *http.Request) error { return nil }
+func Ordinary(a int, b string) {}`
+	res, err := File("h.go", []byte(src), "m", "m/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Source)
+	if !strings.Contains(out, `"a", a, "b", b`) {
+		t.Error("an ordinary function lost its args")
+	}
+	if !strings.Contains(out, `"w", w, "r", r`) {
+		t.Error("a non-handler with the same parameter types must keep normal arg capture")
+	}
+}

@@ -122,7 +122,15 @@ func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, modul
 		strconv.Quote(method),
 		strconv.Quote(vis),
 	}
-	if argsText := paramArgsText(fd); argsText != "" {
+	// Detected once: it decides both what the args look like and whether the
+	// inbound traceparent is adopted below.
+	reqParam := httpRequestParam(fd, netHTTPLocalName(file))
+
+	if reqParam != "" {
+		// A handler's own parameters are a credential leak, not data — see
+		// handlerArgsText.
+		enterArgs = append(enterArgs, handlerArgsText(reqParam))
+	} else if argsText := paramArgsText(fd); argsText != "" {
 		enterArgs = append(enterArgs, argsText)
 	}
 
@@ -144,7 +152,7 @@ func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, modul
 	// installs. `defer f()()` calls the seed now and defers the restore it
 	// returns, which then runs after the exit defer (LIFO) — the span closes
 	// inside the adopted context, and the goroutine is handed back unchanged.
-	if reqParam := httpRequestParam(fd, netHTTPLocalName(file)); reqParam != "" {
+	if reqParam != "" {
 		inject = fmt.Sprintf(
 			"defer %s.SeedFromTraceparent(%s.Header.Get(\"traceparent\"))(); ",
 			runtimeImportAlias, reqParam,
