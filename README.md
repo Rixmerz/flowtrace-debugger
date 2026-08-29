@@ -6,9 +6,17 @@ Trazador de llamadas multi-lenguaje sin modificar el código fuente. Genera logs
 
 **Runtimes soportados**: Java 11+ | Python 3.8+ | Node.js 20.6+ | TypeScript 5+ | Go 1.24+
 
-La lista de arriba es la única fuente de verdad sobre qué runtimes soporta
-FlowTrace. El servidor MCP la expone como el recurso `flowtrace://runtimes`,
-así que un agente puede consultarla en vez de deducirla.
+Más el **navegador**, que es una capa aparte y más angosta: sin
+`AsyncLocalStorage` no hay contexto asíncrono ambiente, así que no instrumenta
+cada función — registra HTTP, navegación y errores.
+
+```bash
+npm i @rixmerz/flowtrace-browser        # sólo el navegador; el resto va en el CLI
+```
+
+El recurso `flowtrace://runtimes` del servidor MCP es la fuente de verdad sobre
+qué soporta FlowTrace; lo de arriba lo repite. Si alguna vez se contradicen,
+manda el recurso — un agente puede consultarlo en vez de deducirlo.
 
 ---
 
@@ -83,6 +91,17 @@ adopta en vez de empezar una traza nueva. Ambas mitades quedan bajo un mismo
 
 Los cuatro leen además `FLOWTRACE_TRACEPARENT`, así que para encadenar procesos
 sin HTTP de por medio basta exportarlo antes de lanzar el hijo.
+
+El **navegador** suele ser el origen de la cadena, no un salto intermedio: el
+interceptor de Angular adjunta `traceparent` a cada request saliente, y para la
+entrada se siembra la página con un `traceparent` renderizado por el servidor
+(`initFlowtrace({ traceparent })`).
+
+> **Si el front y la API están en orígenes distintos**, `traceparent` no está en
+> la safelist de CORS: agregar el header convierte un request simple en uno con
+> preflight. La API tiene que responder
+> `Access-Control-Allow-Headers: Content-Type, traceparent` o **el request no
+> ocurre**, y prender FlowTrace parece haber roto la app.
 
 En Python hay que envolver el request a mano:
 

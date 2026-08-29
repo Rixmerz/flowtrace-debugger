@@ -6,9 +6,17 @@ Zero-source-modification multi-language call tracer. Generates structured JSONL 
 
 **Supported runtimes**: Java 11+ | Python 3.8+ | Node.js 20.6+ | TypeScript 5+ | Go 1.24+
 
-That list is the single source of truth for which runtimes FlowTrace supports.
-The MCP server serves it as the `flowtrace://runtimes` resource, so an agent
-can read it rather than infer it.
+Plus the **browser**, a separate and deliberately narrower layer: with no
+`AsyncLocalStorage` there is no ambient async context, so it does not
+instrument every function — it records HTTP, navigation and errors.
+
+```bash
+npm i @rixmerz/flowtrace-browser        # the browser only; everything else ships in the CLI
+```
+
+The MCP server's `flowtrace://runtimes` resource is the source of truth for
+what FlowTrace supports; the above restates it. Where they ever disagree the
+resource wins — an agent can read it rather than infer it.
 
 ---
 
@@ -83,6 +91,17 @@ a fresh trace. Both halves share one `trace_id` and read as a single tree.
 
 All four also read `FLOWTRACE_TRACEPARENT`, so chaining processes with no HTTP
 in between is just a matter of exporting it before launching the child.
+
+The **browser** is usually the origin of the chain rather than a hop in it: the
+Angular interceptor attaches `traceparent` to every outgoing request, and
+inbound means seeding the page with a server-rendered traceparent
+(`initFlowtrace({ traceparent })`).
+
+> **When the frontend and the API are on different origins**, `traceparent` is
+> not CORS-safelisted, so adding it turns a simple request into a preflighted
+> one. The API must answer with
+> `Access-Control-Allow-Headers: Content-Type, traceparent` or **the request
+> never happens**, and turning FlowTrace on looks like it broke the app.
 
 Python needs the request wrapped by hand:
 

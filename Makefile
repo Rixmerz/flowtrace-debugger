@@ -6,7 +6,7 @@
 .PHONY: build test bench validate-schema check-golden gen-golden \
         build-java test-java build-python test-python build-node test-node \
         build-go test-go \
-        build-mcp test-mcp test-browser test-dashboard test-cli bundle-mcp check-bundle \
+        build-mcp test-mcp test-browser test-dashboard test-cli bundle-mcp check-bundle check-docs \
         bundle-dashboard clean help
 
 help:
@@ -31,6 +31,7 @@ help:
 	@echo "  make test-cli         Run the flowtrace-cli test files"
 	@echo "  make validate-schema  Validate examples/golden/**/expected.jsonl vs schema/flowtrace-v2.json"
 	@echo "  make check-golden     Re-run every capture and diff against its committed golden fixture"
+	@echo "  make check-docs       Verify both READMEs name every supported runtime and package"
 	@echo "  make gen-golden       Regenerate the golden fixtures from the real capture layers"
 	@echo "  make bench            Benchmark harness"
 	@echo "  make clean            Remove transient build/test artifacts"
@@ -57,7 +58,7 @@ gen-golden:
 
 # Top-level test aggregator. Every subproject that has tests runs here, so
 # `make test` and CI cover the same ground.
-test: validate-schema check-golden test-java test-python test-node test-go test-browser test-mcp test-dashboard test-cli check-bundle
+test: validate-schema check-golden test-java test-python test-node test-go test-browser test-mcp test-dashboard test-cli check-docs check-bundle
 	@echo "==> test: all suites passed"
 
 # Java capture module
@@ -140,6 +141,10 @@ bundle-dashboard:
 # from. Without this, the plugin or the packaged CLI silently ships whatever
 # the bundle happened to contain the last time someone remembered to rebuild
 # it.
+check-docs: build-mcp
+	@echo "==> check-docs: READMEs restate the authoritative runtime list"
+	@node scripts/check-docs.mjs
+
 check-bundle: bundle-mcp bundle-dashboard
 	@echo "==> check-bundle: committed bundles match source"
 	@git diff --exit-code --stat -- plugin/mcp/server.bundle.js \
