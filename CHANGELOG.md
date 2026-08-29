@@ -2,6 +2,65 @@
 
 All notable changes to FlowTrace.
 
+## [3.4.0] — browser capture 2.2.0
+
+### Fixed
+
+- **The Angular interceptor broke every HttpClient call in an instrumented
+  app.** `flowtraceInterceptor` returned the Promise from `traceHttp`, but an
+  `HttpInterceptorFn` must return the Observable of `HttpEvent`s and Angular
+  subscribes to whatever comes back. Nothing observable said so: the request
+  went out, the server answered 200, the span was recorded correctly and the
+  network tab was clean — while every caller's `subscribe()` landed on its
+  error branch.
+
+  It is now `pipe(tap(...))`, which returns Angular's own Observable with its
+  identity intact. `from(promise)` would have fixed the crash and kept the
+  sibling defect: nothing tears down the inner subscription, so a request the
+  caller unsubscribed from keeps flying and every intermediate `HttpEvent` is
+  swallowed. Six tests now assert on what the *caller* receives, with real
+  rxjs — a stub Observable would have passed against the very Promise that
+  shipped the bug.
+
+  One behaviour change follows: an unsubscribed request leaves an enter with no
+  exit, this schema's existing way of saying "started, never finished". The old
+  code eventually emitted an exit for a request the caller had abandoned.
+
+### Added
+
+- **`@rixmerz/flowtrace-browser` is published on npm**, with TypeScript
+  declarations. Until now the browser layer was `private` and reachable only by
+  copying its source into the application — so the fix above could not have
+  reached anyone.
+
+  It is the one capture layer published on its own, and the split is
+  structural rather than a change of heart: every other layer is vendored
+  inside `@rixmerz/flowtrace` because the CLI launches the runtime and injects
+  the layer into it, whereas a browser layer is a build-time dependency of the
+  application's own bundle that no global CLI install can inject. Reaching it
+  through the CLI tarball was measured and rejected — 31 MB of `@swc/core`, a
+  2.3 MB Java jar and a package-manager build-script prompt, to import 60 KB.
+
+- **`traceHttpSpan(req)`** on the framework-agnostic entry point: the same span
+  as `traceHttp` but as a handle, for a caller that must hand back something
+  other than a Promise. That constraint is not Angular's — a React binding
+  wrapping fetch with an `AbortController` hits it identically.
+
+- **The TypeScript declarations duplicate Angular's shapes structurally**
+  rather than depending on `@angular/common/http`, so the package stays out of
+  the framework's dependency graph while `flowtraceInterceptor` remains
+  assignable to `HttpInterceptorFn`. Verified by building a real Angular 22 /
+  TypeScript 6 application against the packed tarball.
+
+### Documentation
+
+- **The CORS preflight requirement**, which was documented nowhere.
+  `traceparent` is not a CORS-safelisted request header, so the interceptor
+  turns a simple cross-origin request into a preflighted one. An API sending
+  `Access-Control-Allow-Headers: Content-Type` fails the preflight and the
+  request never happens — turning on FlowTrace looks like it broke the app.
+  Recorded in `BROWSER_NOTE`, so `flowtrace://runtimes` carries it.
+
 ## [3.3.0]
 
 ### Security

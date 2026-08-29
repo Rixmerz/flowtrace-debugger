@@ -1,18 +1,34 @@
 {
-  "name": "@flowtrace/capture-browser",
-  "private": true,
-  "//": "Workspace-internal. Vendored into @rixmerz/flowtrace by flowtrace-cli/scripts/vendor.mjs; never published to npm.",
-  "version": "2.1.0",
+  "name": "@rixmerz/flowtrace-browser",
+  "version": "2.2.0",
   "description": "FlowTrace v2 browser capture: HTTP, navigation and error spans shipped to the dashboard collector",
+  "//": "Published standalone, unlike every other capture layer. Those are vendored into @rixmerz/flowtrace because the CLI launches the runtime and injects them. A browser layer is a build-time dependency of the user\u2019s own bundle, which no global CLI install can inject \u2014 and reaching it through the CLI tarball would cost a frontend 31MB of @swc/core and a 2.3MB Java jar for 60KB of code.",
   "type": "module",
   "main": "src/index.js",
+  "types": "src/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./angular": "./src/angular.js"
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./angular": {
+      "types": "./src/angular.d.ts",
+      "default": "./src/angular.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "src"
+    "src",
+    "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rixmerz/flowtrace-debugger.git",
+    "directory": "capture/browser"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "node --test test/*.mjs"
   },
@@ -24,10 +40,6 @@
   ],
   "author": "Juan Pablo Diaz <jpablo@rixmerz.dev>",
   "license": "MIT",
-  "devDependencies": {
-    "ajv": "^8.17.1",
-    "rxjs": "^7.8.1"
-  },
   "peerDependencies": {
     "rxjs": "^7.4.0 || ^8.0.0"
   },
@@ -35,5 +47,9 @@
     "rxjs": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "rxjs": "^7.8.1"
   }
 }

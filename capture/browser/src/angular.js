@@ -21,7 +21,7 @@
  * ```ts
  * // app.config.ts
  * import { provideHttpClient, withInterceptors } from '@angular/common/http';
- * import { provideFlowtrace, flowtraceInterceptor } from '@flowtrace/capture-browser/angular';
+ * import { provideFlowtrace, flowtraceInterceptor } from '@rixmerz/flowtrace-browser/angular';
  *
  * export const appConfig: ApplicationConfig = {
  *   providers: [

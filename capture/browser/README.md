@@ -1,4 +1,9 @@
-# @flowtrace/capture-browser
+# @rixmerz/flowtrace-browser
+
+```bash
+npm i @rixmerz/flowtrace-browser
+```
+
 
 Browser capture for FlowTrace v2: HTTP requests, route changes and unhandled
 errors, emitted as the same schema v2 events every other capture layer produces
@@ -45,7 +50,7 @@ Traces get shared, and query strings routinely carry tokens.
 ## Setup
 
 ```js
-import { initFlowtrace } from '@flowtrace/capture-browser';
+import { initFlowtrace } from '@rixmerz/flowtrace-browser';
 
 initFlowtrace({
   endpoint: 'http://localhost:8765/api/trace',
@@ -71,7 +76,7 @@ Angular file is wiring.
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { provideAppInitializer, inject, ErrorHandler } from '@angular/core';
 import { Router } from '@angular/router';
-import { provideFlowtrace, flowtraceInterceptor } from '@flowtrace/capture-browser/angular';
+import { provideFlowtrace, flowtraceInterceptor } from '@rixmerz/flowtrace-browser/angular';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -85,7 +90,10 @@ export const appConfig: ApplicationConfig = {
 ```
 
 Angular symbols are passed in rather than imported, so this package stays
-installable — and testable — with no Angular in the dependency graph.
+installable — and testable — with no Angular in the dependency graph. The
+TypeScript declarations duplicate Angular's shapes structurally for the same
+reason: `flowtraceInterceptor` is assignable to `HttpInterceptorFn` without
+this package depending on `@angular/common/http`.
 
 The interceptor attaches `traceparent` to every outgoing request, so a call
 from the browser continues into the traced server as one trace. It never
@@ -95,6 +103,17 @@ overwrites a header the application already set.
 interceptor returns Angular's own Observable with its identity intact —
 unsubscribe still cancels the request and every `HttpEvent` still passes
 through. It is a peer dependency, already present in any Angular app.
+
+## Why this one is published and the others are not
+
+Every other capture layer is vendored inside `@rixmerz/flowtrace`, because the
+CLI launches the runtime and injects the layer into it. A browser layer cannot
+work that way: it is a build-time dependency of the application's own bundle,
+and no globally installed CLI can put a module into someone's vite graph.
+
+Reaching it through the CLI tarball was measured and rejected — it costs a
+frontend 31 MB of `@swc/core`, a 2.3 MB Java jar and a package-manager
+build-script prompt, to import 60 KB of code it can install directly.
 
 ## Cross-origin: the server must allow the header
 

@@ -104,8 +104,8 @@ test-go:
 # Browser capture. Its e2e test boots the dashboard collector, so this depends
 # on the dashboard's dependencies being installed.
 test-browser:
-	@echo "==> test-browser: @flowtrace/capture-browser"
-	@pnpm --filter @flowtrace/capture-browser --filter flowtrace-dashboard install --silent
+	@echo "==> test-browser: @rixmerz/flowtrace-browser"
+	@pnpm --filter @rixmerz/flowtrace-browser --filter flowtrace-dashboard install --silent
 	@cd capture/browser && node --test test/*.mjs
 
 # MCP server. `npm test` there already runs the build, but the aggregator

@@ -24,7 +24,7 @@
  * Run by `prepack`, so `npm pack` and `npm publish` cannot produce a tarball
  * that is missing them.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -59,6 +59,18 @@ mkdirSync(VENDOR, { recursive: true });
 // matches a checkout and assets.js needs no special case.
 copyDir(join(REPO, 'capture', 'node', 'src'), join(VENDOR, 'node', 'src'), 'node capture');
 copyDir(join(REPO, 'capture', 'browser', 'src'), join(VENDOR, 'browser', 'src'), 'browser capture');
+
+// The browser layer is ESM, and only capture/browser/package.json says so —
+// which is not copied. Without this marker Node reads the vendored .js as CJS
+// (this package declares no "type"), and a consumer importing
+// @rixmerz/flowtrace/browser gets a syntax error on the first `import`.
+writeFileSync(join(VENDOR, 'browser', 'package.json'), JSON.stringify({
+  name: 'flowtrace-browser-vendored',
+  private: true,
+  type: 'module',
+  main: 'src/index.js',
+  types: 'src/index.d.ts',
+}, null, 2) + '\n');
 
 // Python: the runtime package and the sitecustomize stub. No install needed.
 copyDir(join(REPO, 'capture', 'python', 'flowtrace_runtime'),
