@@ -34,30 +34,54 @@ function nowNs() {
  * @returns {Promise<any>} whatever `send` resolves to
  */
 export async function traceHttp(req, send) {
+  const span = traceHttpSpan(req);
+  try {
+    const res = await send(span.traceparent);
+    span.end(res);
+    return res;
+  } catch (error) {
+    span.end(null, error);
+    throw error;
+  }
+}
+
+/**
+ * The same span as `traceHttp`, as a handle rather than a wrapper.
+ *
+ * `traceHttp` suits a caller that has a Promise. A caller that has something
+ * else — an Observable it must hand back untouched, an EventSource — cannot
+ * use it: converting to a Promise to satisfy the wrapper changes what the
+ * caller returns, and that is how the Angular interceptor silently broke every
+ * HttpClient call in an instrumented app. So the primitive is the handle, and
+ * `traceHttp` is one caller of it.
+ *
+ * Shaped like `traceRoute`: emit on construction, `end` once, later ends
+ * ignored. A handle that is never ended leaves an enter with no exit, which is
+ * this schema's existing way of saying "started, never finished" — the honest
+ * record for a request the caller cancelled.
+ *
+ * @param {{method: string, url: string}} req
+ * @returns {{traceparent: string, end: (res?: {status?: number}|null, error?: unknown) => void}}
+ */
+export function traceHttpSpan(req) {
   const ctx = startSpan();
   emit(httpEnter(ctx, req));
   const started = nowNs();
-  const traceparent = formatTraceparent(ctx);
+  let ended = false;
 
-  try {
-    const res = await send(traceparent);
-    emit(httpExit(ctx, {
-      ...req,
-      status: typeof res?.status === 'number' ? res.status : 200,
-      durationNs: nowNs() - started,
-    }));
-    return res;
-  } catch (error) {
-    // An HTTP error carries a status too (Angular's HttpErrorResponse does),
-    // and losing it would make a 404 indistinguishable from a network failure.
-    emit(httpExit(ctx, {
-      ...req,
-      status: typeof error?.status === 'number' ? error.status : 0,
-      durationNs: nowNs() - started,
-      error,
-    }));
-    throw error;
-  }
+  return {
+    traceparent: formatTraceparent(ctx),
+    end(res, error) {
+      if (ended) return;
+      ended = true;
+      // An HTTP error carries a status too (Angular's HttpErrorResponse does),
+      // and losing it would make a 404 indistinguishable from a network failure.
+      const status = error
+        ? (typeof error?.status === 'number' ? error.status : 0)
+        : (typeof res?.status === 'number' ? res.status : 200);
+      emit(httpExit(ctx, { ...req, status, durationNs: nowNs() - started, error }));
+    },
+  };
 }
 
 /**

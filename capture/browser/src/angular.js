@@ -37,7 +37,9 @@
  * the trace. HTTP, navigation and errors are where the questions actually are.
  */
 
-import { traceHttp, traceRoute, reportError, initFlowtrace } from './api.js';
+import { tap } from 'rxjs';
+
+import { traceHttpSpan, traceRoute, reportError, initFlowtrace } from './api.js';
 import { flush } from './emitter.js';
 
 /**
@@ -47,25 +49,45 @@ import { flush } from './emitter.js';
  * Angular's HttpRequest is immutable, so the traceparent goes on via clone().
  * An existing header is left alone, matching the Node propagation rule: an app
  * doing its own propagation wins.
+ *
+ * ## The contract this must not break
+ *
+ * An HttpInterceptorFn must return the Observable of HttpEvents, and Angular
+ * subscribes to whatever comes back. An earlier version converted that
+ * Observable to a Promise so it could `await` inside `traceHttp`. The request
+ * still went out, the server still answered 200 and the span was still
+ * recorded — but every caller's `subscribe()` landed on its error branch.
+ * Instrumenting an app broke every HttpClient call in it while the network tab
+ * said everything was fine.
+ *
+ * So: `pipe(tap(...))`. Not `from(promise)`, which fixes the crash but keeps
+ * the sibling defect — nothing tears down the inner subscription, so a request
+ * the caller unsubscribed from (a typeahead's switchMap) keeps flying, and
+ * every intermediate HttpEvent is swallowed. `pipe` returns the same
+ * Observable with the same identity: unsubscribe propagates, progress events
+ * pass through, and this layer observes without altering.
+ *
+ * `tap` comes from rxjs, which is a hard peer dependency of Angular — it costs
+ * an Angular app nothing it does not already have. It is the one framework
+ * import in this file, and it is here because the alternative is reaching for
+ * the Observable constructor off `next()`'s return value, which the interceptor
+ * chain does not guarantee.
+ *
+ * The response is duck-typed on `.status` rather than `instanceof
+ * HttpResponse`, to keep `@angular/common/http` out of this module's imports.
  */
 export const flowtraceInterceptor = (req, next) => {
-  return traceHttp({ method: req.method, url: req.url }, (traceparent) => {
-    const outbound = traceparent && !req.headers.has('traceparent')
-      ? req.clone({ setHeaders: { traceparent } })
-      : req;
+  const span = traceHttpSpan({ method: req.method, url: req.url });
+  const outbound = span.traceparent && !req.headers.has('traceparent')
+    ? req.clone({ setHeaders: { traceparent: span.traceparent } })
+    : req;
 
-    // HttpClient hands back a cold Observable; traceHttp wants a Promise it can
-    // await. Converting here rather than subscribing twice matters — a second
-    // subscription would issue a second HTTP request.
-    return new Promise((resolve, reject) => {
-      let last;
-      next(outbound).subscribe({
-        next: (event) => { last = event; },
-        error: reject,
-        complete: () => resolve(last),
-      });
-    });
-  });
+  let last = null;
+  return next(outbound).pipe(tap({
+    next: (event) => { if (typeof event?.status === 'number') last = event; },
+    error: (error) => span.end(null, error),
+    complete: () => span.end(last),
+  }));
 };
 
 /**

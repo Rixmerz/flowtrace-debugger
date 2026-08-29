@@ -25,6 +25,15 @@
   "author": "Juan Pablo Diaz <jpablo@rixmerz.dev>",
   "license": "MIT",
   "devDependencies": {
-    "ajv": "^8.17.1"
+    "ajv": "^8.17.1",
+    "rxjs": "^7.8.1"
+  },
+  "peerDependencies": {
+    "rxjs": "^7.4.0"
+  },
+  "peerDependenciesMeta": {
+    "rxjs": {
+      "optional": true
+    }
   }
 }
