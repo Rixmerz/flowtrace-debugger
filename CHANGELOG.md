@@ -2,7 +2,7 @@
 
 All notable changes to FlowTrace.
 
-## [3.2.0]
+## [3.3.0]
 
 ### Security
 
@@ -21,6 +21,21 @@ All notable changes to FlowTrace.
   query strings more often than anyone would like. Only the exact handler shape
   is affected; a function with the same parameter types but a result keeps
   ordinary argument capture.
+
+### Fixed
+
+- **"Durations include child spans. Always." was wrong for async code**, and
+  the skill said it twice. It holds for an awaited chain — a parent awaiting a
+  200 ms child reports ~202 ms, measured. It does not hold when a span starts
+  async work without awaiting it, which is what an express middleware calling
+  `next()` does: the parent closes in ~2 ms while the child runs 300 ms, so
+  subtracting children yields a **negative** self-time. The guidance to
+  "subtract children before calling something slow" therefore produced a
+  nonsense number precisely where someone would be reasoning about latency.
+  Documented as the signal it is — the parent handed the work off — along with
+  the warning not to sum overlapping async spans into a total.
+
+## [3.2.0]
 
 ### Added
 
@@ -55,17 +70,6 @@ All notable changes to FlowTrace.
   path is still a manual `remote_context` call.
 
 ### Fixed
-
-- **"Durations include child spans. Always." was wrong for async code**, and
-  the skill said it twice. It holds for an awaited chain — a parent awaiting a
-  200 ms child reports ~202 ms, measured. It does not hold when a span starts
-  async work without awaiting it, which is what an express middleware calling
-  `next()` does: the parent closes in ~2 ms while the child runs 300 ms, so
-  subtracting children yields a **negative** self-time. The guidance to
-  "subtract children before calling something slow" therefore produced a
-  nonsense number precisely where someone would be reasoning about latency.
-  Documented as the signal it is — the parent handed the work off — along with
-  the warning not to sum overlapping async spans into a total.
 
 - **That matrix was itself wrong on first writing**, and is corrected here.
   It claimed Node and Python adopt an inbound HTTP `traceparent`
