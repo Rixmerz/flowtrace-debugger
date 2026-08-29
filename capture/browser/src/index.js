@@ -33,4 +33,4 @@ export {
   toErrorObj,
   scrubUrl,
 } from './events.js';
-export { traceHttp, traceRoute, reportError, initFlowtrace } from './api.js';
+export { traceHttp, traceHttpSpan, traceRoute, reportError, initFlowtrace } from './api.js';
