@@ -91,6 +91,25 @@ The interceptor attaches `traceparent` to every outgoing request, so a call
 from the browser continues into the traced server as one trace. It never
 overwrites a header the application already set.
 
+`rxjs` is the one framework import in `angular.js`, used for `tap` so the
+interceptor returns Angular's own Observable with its identity intact —
+unsubscribe still cancels the request and every `HttpEvent` still passes
+through. It is a peer dependency, already present in any Angular app.
+
+## Cross-origin: the server must allow the header
+
+`traceparent` is not a CORS-safelisted request header, so adding it makes a
+request that used to be simple into a preflighted one. If the browser and the
+API are on different origins, the API must name it:
+
+```
+Access-Control-Allow-Headers: Content-Type, traceparent
+```
+
+Without that the preflight fails and **the request never happens** — turning on
+FlowTrace breaks the call. This is the first thing to check when enabling the
+browser layer turns working requests into CORS errors.
+
 ## Tests
 
 ```bash
