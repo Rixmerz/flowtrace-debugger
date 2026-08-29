@@ -12,6 +12,12 @@
  * that the surrounding sentence is accurate. A name that is missing is a
  * provable defect; a sentence that is subtly wrong is a review problem, and
  * pretending a script can catch it would be worse than not trying.
+ *
+ * The one exception is a claim that *counts*. Both READMEs went on saying
+ * `@rixmerz/flowtrace` was the only published package in the same screen that
+ * told the reader to install a second one — the presence check above passed,
+ * because the name was there. A countable claim can be checked against the
+ * count, so those are listed in CONTRADICTED below.
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -45,10 +51,32 @@ const REQUIRED = [
 
 const DOCS = ['README.md', 'README.en.md'];
 
+/**
+ * Phrases the published-package count makes false. Only add a phrase here when
+ * a script can actually decide it — the point is to catch claims that contradict
+ * data this script already holds, not to lint prose.
+ */
+const PUBLISHED = REQUIRED.filter(({ what }) => what.startsWith('@rixmerz/'));
+const CONTRADICTED = PUBLISHED.length > 1
+  ? ['único paquete publicado', 'only published package']
+  : [];
+
 let failed = 0;
 for (const doc of DOCS) {
   const text = readFileSync(join(REPO, doc), 'utf8');
   const missing = REQUIRED.filter(({ what }) => !text.includes(what));
+
+  // Emphasis markers sit inside the claim ("the **only** published package"),
+  // so a naive substring match misses it — which is how it shipped.
+  const plain = text.replace(/[*_`]/g, '');
+  for (const phrase of CONTRADICTED.filter((p) => plain.includes(p))) {
+    failed += 1;
+    console.error(
+      `  ${doc}: says "${phrase}", but ${PUBLISHED.length} packages are published ` +
+      `(${PUBLISHED.map((p) => p.what).join(', ')})`
+    );
+  }
+
   if (missing.length === 0) {
     console.log(`  ${doc}: names all ${REQUIRED.length} supported things`);
     continue;
@@ -61,8 +89,8 @@ for (const doc of DOCS) {
 
 if (failed > 0) {
   console.error(
-    '\ncheck-docs: the READMEs restate mcp-server/src/runtimes.ts. Something\n' +
-    'shipped that they do not name — add it there, or remove it from runtimes.ts.'
+    '\ncheck-docs: the READMEs restate mcp-server/src/runtimes.ts, and have\n' +
+    'drifted from it — fix the prose, or change what is actually supported.'
   );
   process.exit(1);
 }

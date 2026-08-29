@@ -32,10 +32,11 @@ Or without installing anything:
 npx @rixmerz/flowtrace run -- python myapp.py
 ```
 
-`@rixmerz/flowtrace` is the **only** published package. It carries all five
-capture layers inside the tarball: no Maven, no pip, and no
+`@rixmerz/flowtrace` is the **only** package you need for the five runtimes.
+It carries the capture layers inside the tarball: no Maven, no pip, and no
 `@flowtrace/capture-node` (that name does not exist on npm — it is a
-workspace-internal package the CLI already vendors).
+workspace-internal package the CLI already vendors). The browser is the
+exception: it installs separately, above.
 
 ---
 

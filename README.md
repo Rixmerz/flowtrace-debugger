@@ -32,10 +32,11 @@ O sin instalar nada:
 npx @rixmerz/flowtrace run -- python miapp.py
 ```
 
-`@rixmerz/flowtrace` es el **único** paquete publicado. Trae dentro las capas
-de captura de los cinco runtimes: no hace falta Maven, ni pip, ni instalar
-`@flowtrace/capture-node` (ese nombre no existe en npm — es un paquete interno
-del workspace, y la CLI ya lo lleva vendorizado).
+`@rixmerz/flowtrace` es el **único** paquete que hace falta para los cinco
+runtimes. Trae dentro las capas de captura: no hace falta Maven, ni pip, ni
+instalar `@flowtrace/capture-node` (ese nombre no existe en npm — es un paquete
+interno del workspace, y la CLI ya lo lleva vendorizado). El navegador es la
+excepción: se instala aparte, arriba.
 
 ---
 
