@@ -67,9 +67,13 @@ if os.environ.get("FLOWTRACE_ENABLE") == "1":
                 # Prevent Python from running the original script again.
                 # Replace argv[0] with a no-op so the interpreter has nothing to run.
                 sys.argv[0] = ""
-                # os._exit(0) skips atexit; emitter.emit() flushes per-line so no data loss.
-                # Adding buffered I/O to emitter would require switching to sys.exit() +
-                # handling site module SystemExit interception.
+                # os._exit(0) skips atexit; emitter.emit() flushes per-line so no data loss
+                # there, but stdout/stderr are the *traced program's own* output, block-
+                # buffered whenever it isn't a tty (any pipe, redirect, or subprocess
+                # capture) — os._exit() would drop whatever is still sitting in that
+                # buffer, silently truncating the program's real output.
+                sys.stdout.flush()
+                sys.stderr.flush()
                 import os as _os
                 _os._exit(0)
 
