@@ -33,7 +33,10 @@ public class Bench {
         runHotLoop();
         long end = System.nanoTime();
 
-        long elapsedMs = (end - start) / 1_000_000;
-        System.out.println("BENCH_RESULT_MS=" + elapsedMs);
+        // Microseconds, not milliseconds: this loop runs in well under 1 ms
+        // once the JIT has warmed up, so truncating to ms reported a baseline
+        // of 0 and the harness — correctly — refused to divide by it.
+        long elapsedUs = (end - start) / 1_000;
+        System.out.println("BENCH_RESULT_US=" + elapsedUs);
     }
 }

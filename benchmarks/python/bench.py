@@ -31,8 +31,10 @@ def main() -> None:
     runHotLoop()
     end = time.perf_counter()
 
-    elapsed_ms = int((end - start) * 1000)
-    print(f"BENCH_RESULT_MS={elapsed_ms}")
+    # Microseconds: see the note in Bench.java — a millisecond is coarser
+    # than the thing being measured.
+    elapsed_us = int((end - start) * 1_000_000)
+    print(f"BENCH_RESULT_US={elapsed_us}")
 
 
 if __name__ == "__main__":

@@ -28,5 +28,7 @@ const start = process.hrtime.bigint();
 runHotLoop();
 const end = process.hrtime.bigint();
 
-const elapsedMs = Number((end - start) / 1_000_000n);
-console.log(`BENCH_RESULT_MS=${elapsedMs}`);
+// Microseconds: see the note in Bench.java — a millisecond is coarser than
+// the thing being measured.
+const elapsedUs = Number((end - start) / 1_000n);
+console.log(`BENCH_RESULT_US=${elapsedUs}`);

@@ -336,12 +336,18 @@ jobs:
         with:
           python-version: '3.11'
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
-      - name: Install Python capture module
-        run: make build-python
+      # All three layers, not just Python: without the Java agent jar and the
+      # Node capture module the harness measures the baseline against itself
+      # and reports 0% overhead for a run that never instrumented anything.
+      - name: Build the capture layers being measured
+        run: make build-java build-python build-node
 
       - name: Run bench
         run: make bench
