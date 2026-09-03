@@ -116,12 +116,41 @@ function isRedactedKey(name) {
  * @returns {*} JSON-safe value
  */
 /**
- * Objects visited per value before the rest is elided as "[Object]". An
- * Express `req` reaches the socket, the server and the parser; walking all of
- * it on every handler call would cost more than the handler, and truncation
- * only applies after the walk. Well above anything a 512-char limit can show.
+ * Objects visited per value before the rest is elided as "[Object]". Deep
+ * user data is still walked whole; the cap only stops a pathological object
+ * graph from costing more than the function being traced, since truncation
+ * applies after the walk, not during it.
  */
 const MAX_NODES = 500;
+
+/**
+ * A stable label for a value whose internals belong to the runtime rather
+ * than to the program being traced, or null when the value should be walked.
+ *
+ * Walking an EventEmitter serializes Node's own private state. An Express
+ * `req` serializes as `{"_events":{},"_readableState":{"highWaterMark":...`,
+ * and `highWaterMark` alone went from 16384 to 65536 between Node majors.
+ * None of that describes what the handler was called with, all of it spends
+ * the argument budget before anything useful appears, and pinning it in a
+ * golden fixture makes the fixture assert the Node version instead of the
+ * capture. The constructor name is both stable and what a reader wants:
+ * `<IncomingMessage>`.
+ *
+ * The duck-type is deliberately narrow (three EventEmitter methods) so that
+ * an ordinary domain object still gets serialized in full.
+ *
+ * @param {object} v
+ * @returns {string|null}
+ */
+function opaqueTag(v) {
+  if (typeof v.on !== 'function'
+    || typeof v.emit !== 'function'
+    || typeof v.removeListener !== 'function') {
+    return null;
+  }
+  const name = v.constructor && v.constructor.name;
+  return `<${name || 'EventEmitter'}>`;
+}
 
 function toJsonSafe(value) {
   const seen = new WeakSet();
@@ -130,6 +159,8 @@ function toJsonSafe(value) {
     if (key !== '' && isRedactedKey(key)) return REDACTED;
     if (typeof v === 'bigint') return v.toString();
     if (v !== null && typeof v === 'object') {
+      const tag = opaqueTag(v);
+      if (tag !== null) return tag;
       if (seen.has(v)) return '[Circular]';
       if (++nodes > MAX_NODES) return Array.isArray(v) ? '[Array]' : '[Object]';
       seen.add(v);

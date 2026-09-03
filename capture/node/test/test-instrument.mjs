@@ -10,6 +10,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createServer } from 'node:http';
+
 import { init } from '../src/runtime/emitter.js';
 
 let counter = 0;
@@ -117,6 +119,51 @@ test('values JSON cannot carry do not lose the whole argument', async () => {
     assert.equal('fn' in enter.args, false, 'functions vanish like they do in JSON');
     assert.equal('sym' in enter.args, false);
     assert.deepEqual(exit.result, { value: { n: '5' } });
+  } finally { h.done(); }
+});
+
+test('an EventEmitter is tagged by class, not walked into Node internals', async () => {
+  const h = await harness({ FLOWTRACE_MAX_ARG_LENGTH: undefined, FLOWTRACE_REDACT_KEYS: undefined });
+  try {
+    const { EventEmitter } = await import('node:events');
+    class Bus extends EventEmitter {}
+    const server = createServer(() => {});
+    call(h.mod, ['bus', 'srv', 'anon'], [new Bus(), server, new EventEmitter()], undefined);
+    server.close();
+    const [enter] = h.events();
+    assert.equal(enter.args.bus, '<Bus>');
+    assert.equal(enter.args.srv, '<Server>');
+    assert.equal(enter.args.anon, '<EventEmitter>');
+  } finally { h.done(); }
+});
+
+test('an http request and response are tagged, so args do not pin the Node version', async () => {
+  const h = await harness({ FLOWTRACE_MAX_ARG_LENGTH: undefined, FLOWTRACE_REDACT_KEYS: undefined });
+  const server = createServer((req, res) => {
+    call(h.mod, ['req', 'res'], [req, res], undefined);
+    res.end('ok');
+  });
+  try {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    await fetch(`http://127.0.0.1:${server.address().port}/orders/7`);
+    const [enter] = h.events();
+    // Not `<truncated:{"_events":{},"_readableState":{"highWaterMark":16384...`,
+    // which differs between Node majors and says nothing about the handler.
+    assert.equal(enter.args.req, '<IncomingMessage>');
+    assert.equal(enter.args.res, '<ServerResponse>');
+  } finally {
+    await new Promise((r) => server.close(r));
+    h.done();
+  }
+});
+
+test('an ordinary object with an "on" property is still serialized in full', async () => {
+  const h = await harness({ FLOWTRACE_MAX_ARG_LENGTH: undefined, FLOWTRACE_REDACT_KEYS: undefined });
+  try {
+    // The duck-type needs all three EventEmitter methods; a domain object that
+    // happens to carry one must not disappear behind a tag.
+    call(h.mod, ['cfg'], [{ on: () => {}, retries: 3 }], undefined);
+    assert.deepEqual(h.events()[0].args.cfg, { retries: 3 });
   } finally { h.done(); }
 });
 
