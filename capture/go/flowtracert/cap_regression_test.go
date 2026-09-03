@@ -1,10 +1,6 @@
 package flowtracert
 
-import (
-	"os"
-	"strconv"
-	"testing"
-)
+import "testing"
 
 // TestCapNeverOrphansAnEnterOrExit is the regression test for the bug where
 // FLOWTRACE_MAX_EVENTS could leave a span's "exit" unpaired with its
@@ -29,23 +25,17 @@ func TestCapNeverOrphansAnEnterOrExit(t *testing.T) {
 	runtime_setProfLabel(nil)
 	offset := snapshotOffset(t)
 
-	origCap, hadCap := os.LookupEnv("FLOWTRACE_MAX_EVENTS")
-	defer func() {
-		if hadCap {
-			os.Setenv("FLOWTRACE_MAX_EVENTS", origCap)
-		} else {
-			os.Unsetenv("FLOWTRACE_MAX_EVENTS")
-		}
-	}()
-
 	e := getEmitter()
 	e.mu.Lock()
 	already := e.count
 	e.mu.Unlock()
 	// Exactly one more "enter" fits before the cap trips — deliberately
 	// landing the cap right between the parent's enter and its own exit,
-	// the boundary the original bug got wrong.
-	os.Setenv("FLOWTRACE_MAX_EVENTS", strconv.Itoa(already+1))
+	// the boundary the original bug got wrong. Pinned through the test
+	// hook rather than the env var: the cap is resolved once per emitter,
+	// so an env change after the singleton's first write is (correctly)
+	// never seen.
+	t.Cleanup(e.setMaxEventsForTest(already + 1))
 
 	parent := Enter("myapp/cap", "", "Parent", "public")
 	if !parent.entered {
@@ -81,21 +71,12 @@ func TestCapNeverOrphansAPanicExit(t *testing.T) {
 	runtime_setProfLabel(nil)
 	offset := snapshotOffset(t)
 
-	origCap, hadCap := os.LookupEnv("FLOWTRACE_MAX_EVENTS")
-	defer func() {
-		if hadCap {
-			os.Setenv("FLOWTRACE_MAX_EVENTS", origCap)
-		} else {
-			os.Unsetenv("FLOWTRACE_MAX_EVENTS")
-		}
-	}()
-
 	e := getEmitter()
 	e.mu.Lock()
 	already := e.count
 	e.mu.Unlock()
 	// The cap is already exhausted — the very next enter must be refused.
-	os.Setenv("FLOWTRACE_MAX_EVENTS", strconv.Itoa(already))
+	t.Cleanup(e.setMaxEventsForTest(already))
 
 	s := Enter("myapp/cap", "", "NeverEntered", "public")
 	if s.entered {

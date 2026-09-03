@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,17 @@ import (
 // spawned; validSubcommands is the second line of defense if it is invoked
 // directly.
 var validSubcommands = map[string]bool{"run": true, "build": true, "test": true}
+
+// workDirPerm/workFilePerm apply to everything staged under the scratch work
+// dir: a verbatim copy of the user's source, rewritten. os.MkdirTemp already
+// makes the root 0700; the directories and files under it used to be
+// 0755/0644, which left the copy world-readable on a shared machine for as
+// long as the build ran — for no reason, since only this user's `go`
+// process ever reads them.
+const (
+	workDirPerm  = 0o700
+	workFilePerm = 0o600
+)
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -149,13 +161,23 @@ func run(argv []string) int {
 
 	overlay := map[string]string{}
 
-	instrumented, err := instrumentPackages(pkgs, moduleDir, modulePath, workDir, overlay)
+	prefixes := parsePackagePrefixes(os.Getenv("FLOWTRACE_PACKAGE_PREFIX"))
+	selected := selectPackages(pkgs, prefixes)
+	reportSelection(os.Stderr, selected, pkgs, modulePath, prefixes)
+
+	report, err := instrumentPackages(selected, moduleDir, modulePath, workDir, overlay)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[flowtrace-go] %v\n", err)
 		return 1
 	}
-	if instrumented == 0 {
-		fmt.Fprintln(os.Stderr, "[flowtrace-go] WARNING: no functions were instrumented (no non-test, non-cgo .go file under the module had a function body) — the trace will be empty.")
+	if report.cgoFilesSkipped > 0 {
+		// One summary line, not one warning per file: cgo files are never
+		// instrumented (transform.File refuses them by design — see AC5),
+		// so this is expected, not a problem to fix per file.
+		fmt.Fprintf(os.Stderr, "[flowtrace-go] note: %d cgo file(s) left uninstrumented — files that import \"C\" are never rewritten; the rest of their packages still are.\n", report.cgoFilesSkipped)
+	}
+	if report.instrumentedFiles == 0 {
+		fmt.Fprintln(os.Stderr, "[flowtrace-go] WARNING: no functions were instrumented (no non-test, non-cgo .go file in the selected packages had a function body) — the trace will be empty.")
 	}
 
 	if err := synthesizeRuntime(*runtimeSrc, moduleDir, workDir, overlay); err != nil {
@@ -391,34 +413,110 @@ func checkNoCollision(moduleDir string) error {
 // instrumentation
 // ---------------------------------------------------------------------------
 
-// instrumentPackages transforms every candidate file in every package and
-// stages the changed ones under workDir/overlay, mirroring the module's own
-// directory layout so paths stay legible. Returns the count of files that
-// were actually instrumented (changed), which the caller uses to warn on a
-// module with nothing to trace.
-func instrumentPackages(pkgs []goPackage, moduleDir, modulePath, workDir string, overlay map[string]string) (int, error) {
-	instrumented := 0
+// parsePackagePrefixes splits FLOWTRACE_PACKAGE_PREFIX into the import-path
+// prefixes to instrument. Comma-separated; whitespace and a trailing "/"
+// are tolerated on each entry; empty entries are dropped. An unset or
+// empty variable yields nil, which selectPackages reads as "every package
+// of the main module" — the behaviour before the prefix existed, and what
+// the CLI's default (the module path itself) resolves to as well.
+func parsePackagePrefixes(raw string) []string {
+	var prefixes []string
+	for _, part := range strings.Split(raw, ",") {
+		p := strings.TrimSuffix(strings.TrimSpace(part), "/")
+		if p != "" {
+			prefixes = append(prefixes, p)
+		}
+	}
+	return prefixes
+}
+
+// matchesPackagePrefix reports whether importPath is selected by prefixes:
+// an exact match, or a package nested under one (prefix + "/"). A bare
+// string prefix would be wrong here — "example.com/app" must not select
+// "example.com/apparel". No prefixes at all selects everything.
+func matchesPackagePrefix(importPath string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, p := range prefixes {
+		if importPath == p || strings.HasPrefix(importPath, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// selectPackages narrows pkgs to the main module's packages that match
+// prefixes (every FlowTrace layer scopes to the user's own code; a
+// dependency is never instrumented, prefix or not — under `./...` none
+// should appear, but this is where that rule is enforced).
+func selectPackages(pkgs []goPackage, prefixes []string) []goPackage {
+	var out []goPackage
 	for _, pkg := range pkgs {
 		if pkg.Module == nil || !pkg.Module.Main {
-			// Out of the user's own module (shouldn't happen under `./...`,
-			// but never instrument a dependency — every FlowTrace layer
-			// scopes to the user's own code).
 			continue
 		}
-		var files []string
-		files = append(files, pkg.GoFiles...)
-		files = append(files, pkg.CgoFiles...)
+		if matchesPackagePrefix(pkg.ImportPath, prefixes) {
+			out = append(out, pkg)
+		}
+	}
+	return out
+}
 
-		for _, name := range files {
+// reportSelection prints the one line that says what will be instrumented,
+// so a too-narrow prefix is visible before the run rather than discovered
+// as an inexplicably thin trace afterwards.
+func reportSelection(w io.Writer, selected, all []goPackage, modulePath string, prefixes []string) {
+	if len(prefixes) == 0 {
+		fmt.Fprintf(w, "[flowtrace-go] instrumenting all %d package(s) of module %s (FLOWTRACE_PACKAGE_PREFIX unset)\n", len(selected), modulePath)
+		return
+	}
+	fmt.Fprintf(w, "[flowtrace-go] instrumenting %d of %d package(s) in module %s (FLOWTRACE_PACKAGE_PREFIX=%s)\n",
+		len(selected), len(all), modulePath, strings.Join(prefixes, ","))
+	if len(selected) == 0 {
+		fmt.Fprintf(w, "[flowtrace-go] WARNING: no package matched FLOWTRACE_PACKAGE_PREFIX — the trace will be empty. Prefixes are import paths (the module path is %s); a package matches when its import path equals a prefix or sits under prefix + \"/\".\n", modulePath)
+	}
+}
+
+// instrumentReport is what instrumentPackages found and did, for the
+// caller's stderr summary.
+type instrumentReport struct {
+	instrumentedFiles int // files that actually changed and were staged in the overlay
+	cgoFilesSkipped   int // pkg.CgoFiles never instrumented; reported once, in aggregate
+}
+
+// instrumentPackages transforms every candidate file in every package and
+// stages the changed ones under workDir/overlay, mirroring the module's own
+// directory layout so paths stay legible. pkgs is expected to be the output
+// of selectPackages. Returns the count of files that were actually
+// instrumented (changed), which the caller uses to warn on a module with
+// nothing to trace, and the count of cgo files it deliberately left alone.
+//
+// Only pkg.GoFiles are candidates. pkg.CgoFiles are counted but not read:
+// transform.File would only refuse them (a file importing "C" is never
+// rewritten — its preamble comment must stay attached to the import), so
+// feeding them through just to collect one WARNING per file was noise.
+// Test files never appear in GoFiles at all, and the transformer's own
+// skip path (kept as a WARNING) is left for what remains: a file `go list`
+// accepted but go/parser cannot parse.
+func instrumentPackages(pkgs []goPackage, moduleDir, modulePath, workDir string, overlay map[string]string) (instrumentReport, error) {
+	var report instrumentReport
+	for _, pkg := range pkgs {
+		if pkg.Module == nil || !pkg.Module.Main {
+			continue // never instrument a dependency, whatever the caller passed
+		}
+		report.cgoFilesSkipped += len(pkg.CgoFiles)
+
+		for _, name := range pkg.GoFiles {
 			abs := filepath.Join(pkg.Dir, name)
 			src, err := os.ReadFile(abs)
 			if err != nil {
-				return 0, fmt.Errorf("reading %s: %w", abs, err)
+				return report, fmt.Errorf("reading %s: %w", abs, err)
 			}
 
 			res, err := transform.File(abs, src, modulePath, pkg.ImportPath)
 			if err != nil {
-				return 0, fmt.Errorf("instrumenting %s: %w", abs, err)
+				return report, fmt.Errorf("instrumenting %s: %w", abs, err)
 			}
 			if res.Skipped {
 				fmt.Fprintf(os.Stderr, "[flowtrace-go] WARNING: skipping %s: %s\n", abs, res.Reason)
@@ -430,20 +528,20 @@ func instrumentPackages(pkgs []goPackage, moduleDir, modulePath, workDir string,
 
 			rel, err := filepath.Rel(moduleDir, abs)
 			if err != nil {
-				return 0, fmt.Errorf("computing relative path for %s: %w", abs, err)
+				return report, fmt.Errorf("computing relative path for %s: %w", abs, err)
 			}
 			dest := filepath.Join(workDir, "overlay", rel)
-			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-				return 0, fmt.Errorf("creating %s: %w", filepath.Dir(dest), err)
+			if err := os.MkdirAll(filepath.Dir(dest), workDirPerm); err != nil {
+				return report, fmt.Errorf("creating %s: %w", filepath.Dir(dest), err)
 			}
-			if err := os.WriteFile(dest, res.Source, 0o644); err != nil {
-				return 0, fmt.Errorf("writing %s: %w", dest, err)
+			if err := os.WriteFile(dest, res.Source, workFilePerm); err != nil {
+				return report, fmt.Errorf("writing %s: %w", dest, err)
 			}
 			overlay[abs] = dest
-			instrumented++
+			report.instrumentedFiles++
 		}
 	}
-	return instrumented, nil
+	return report, nil
 }
 
 // synthesizeRuntime copies every non-test .go file out of runtimeSrc
@@ -460,7 +558,7 @@ func synthesizeRuntime(runtimeSrc, moduleDir, workDir string, overlay map[string
 	}
 
 	destDir := filepath.Join(workDir, "overlay", "internal", "flowtracert")
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
+	if err := os.MkdirAll(destDir, workDirPerm); err != nil {
 		return fmt.Errorf("creating %s: %w", destDir, err)
 	}
 
@@ -478,7 +576,7 @@ func synthesizeRuntime(runtimeSrc, moduleDir, workDir string, overlay map[string
 			return fmt.Errorf("reading runtime source %s: %w", name, err)
 		}
 		dest := filepath.Join(destDir, name)
-		if err := os.WriteFile(dest, data, 0o644); err != nil {
+		if err := os.WriteFile(dest, data, workFilePerm); err != nil {
 			return fmt.Errorf("writing %s: %w", dest, err)
 		}
 		overlay[filepath.Join(moduleDir, "internal", "flowtracert", name)] = dest
@@ -574,7 +672,7 @@ func writeOverlay(workDir string, replace map[string]string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(workDir, "overlay.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, workFilePerm); err != nil {
 		return "", err
 	}
 	return path, nil

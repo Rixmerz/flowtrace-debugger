@@ -138,6 +138,11 @@ function goRunner({ id, maxArgLength }) {
         env: {
           ...process.env,
           FLOWTRACE_OUTPUT: outPath,
+          // Unset means "every package of the main module" — the fixture
+          // modules are a single package, so the driver's default is exactly
+          // right. Pinned to '' so a prefix inherited from the shell cannot
+          // silently narrow the fixture to nothing.
+          FLOWTRACE_PACKAGE_PREFIX: '',
           ...(maxArgLength ? { FLOWTRACE_MAX_ARG_LENGTH: String(maxArgLength) } : {}),
         },
       });
@@ -268,6 +273,10 @@ export const FIXTURES = [
   }),
   nodeRunner({ id: 'truncation/node', script: 'longArgFixture.js', maxArgLength: 64 }),
   javaSourceRunner({ id: 'truncation/java', source: 'LongArgFixture.java', maxArgLength: 64 }),
+  // Go adds a long *result* to the same scenario: the limit applies to args
+  // and result independently, and until this existed no fixture pinned the
+  // result half in any language.
+  goRunner({ id: 'truncation/go', maxArgLength: 64 }),
   // Error path. Until these existed no fixture in any language exercised a
   // failing call, so the `error` field went unverified everywhere — which is
   // how Java and Node came to emit exit events missing the required `result`,
@@ -275,6 +284,9 @@ export const FIXTURES = [
   pythonRunner({ id: 'error/python', script: 'error_fixture.py', prefix: 'error_fixture' }),
   nodeRunner({ id: 'error/node', script: 'errorFixture.js' }),
   javaSourceRunner({ id: 'error/java', source: 'ErrorFixture.java' }),
+  // Go has two failure shapes, a returned error and a recovered panic; this
+  // fixture pins both, plus named-result keys on the error branch.
+  goRunner({ id: 'error/go' }),
 ];
 
 export const FIXTURE_IDS = FIXTURES.map((f) => f.id);

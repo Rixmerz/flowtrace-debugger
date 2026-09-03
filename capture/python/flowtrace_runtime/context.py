@@ -33,11 +33,21 @@ def enter_span(trace_id: str, span_id: str) -> Tuple[Token[str], Token[str], Tok
 
 
 def exit_span(tokens: Tuple[Token[str], Token[str], Token[int]]) -> None:
-    """Restore context vars to the values they held before :func:`enter_span`."""
+    """Restore context vars to the values they held before :func:`enter_span`.
+
+    A generator created in one context and resumed in another (a coroutine
+    driven by a different task, a generator handed across threads) makes
+    ``ContextVar.reset`` raise ``ValueError: Token was created in a different
+    Context``. That is a bookkeeping failure of ours, not the program's, and
+    it used to escape from the injected ``finally`` straight into user code.
+    The values are simply left as they are in that context.
+    """
     tok_trace, tok_span, tok_depth = tokens
-    current_depth.reset(tok_depth)
-    current_span_id.reset(tok_span)
-    current_trace_id.reset(tok_trace)
+    for var, tok in ((current_depth, tok_depth), (current_span_id, tok_span), (current_trace_id, tok_trace)):
+        try:
+            var.reset(tok)
+        except (ValueError, RuntimeError):
+            pass
 
 
 @contextmanager

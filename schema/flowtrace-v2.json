@@ -24,7 +24,7 @@
     },
     "lang": {
       "type": "string",
-      "enum": ["java", "python", "node", "ts", "go"]
+      "enum": ["java", "python", "node", "ts", "go", "browser"]
     },
     "visibility": {
       "type": "string",

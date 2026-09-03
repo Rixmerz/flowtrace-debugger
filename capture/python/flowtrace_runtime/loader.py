@@ -1,7 +1,7 @@
 """Custom SourceFileLoader that applies the FlowTrace AST transformer.
 
 Overrides source_to_code() to:
-  1. Check a bytecode cache (keyed on SHA-256 of source + versions).
+  1. Check a bytecode cache (keyed on SHA-256 of source + versions + transform).
   2. Parse + transform the AST.
   3. Compile and cache the result.
 
@@ -15,22 +15,60 @@ import hashlib
 import importlib.machinery
 import marshal
 import os
+import stat
 import sys
 import types
 from pathlib import Path
 
 from .transformer import FlowtraceTransformer
 
-_CAPTURE_VERSION = "2.1.0"
 _PY_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 
-def _cache_path(source: bytes, path: str) -> Path:
-    key = source + _CAPTURE_VERSION.encode() + _PY_VERSION.encode() + path.encode()
-    digest = hashlib.sha256(key).hexdigest()
+def _transform_fingerprint() -> str:
+    """Hash of the transform's own source, so a cached module is invalidated
+    the moment the instrumentation that produced it changes. A hardcoded
+    version string was here before and was not bumped when the transform
+    changed, which served stale instrumented bytecode to anyone with a warm
+    cache."""
+    h = hashlib.sha256()
+    here = Path(__file__).parent
+    for name in ("transformer.py", "runtime.py"):
+        try:
+            h.update((here / name).read_bytes())
+        except OSError:
+            h.update(f"missing:{name}".encode())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+_CAPTURE_FINGERPRINT = _transform_fingerprint()
+
+
+def _cache_dir() -> Path:
+    # The cache holds instrumented copies of the user's code and is loaded
+    # with marshal, which trusts its input completely. Nobody else on the
+    # machine gets to read it, and nobody else gets to write it.
     cache_dir = Path.home() / ".flowtrace" / "cache" / "py"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"{digest}.pyc"
+    cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        if stat.S_IMODE(cache_dir.stat().st_mode) != 0o700:
+            os.chmod(cache_dir, 0o700)
+    except OSError:
+        pass
+    return cache_dir
+
+
+def _cache_path(source: bytes, path: str) -> Path:
+    key = source + _CAPTURE_FINGERPRINT.encode() + _PY_VERSION.encode() + path.encode()
+    digest = hashlib.sha256(key).hexdigest()
+    return _cache_dir() / f"{digest}.pyc"
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
 
 
 class FlowtraceSourceLoader(importlib.machinery.SourceFileLoader):
@@ -64,7 +102,7 @@ class FlowtraceSourceLoader(importlib.machinery.SourceFileLoader):
         code = compile(transformed, path, "exec", dont_inherit=True)
 
         try:
-            cache_file.write_bytes(marshal.dumps(code))
+            _write_private(cache_file, marshal.dumps(code))
         except Exception:
             pass  # Cache write failure is non-fatal.
 

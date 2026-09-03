@@ -7,6 +7,80 @@ If FLOWTRACE_ENABLE=1, installs the import hook and instruments the main script.
 import os
 import sys
 
+
+def _script_matches_prefix(script_path, prefixes):
+    """Whether the main script belongs to the traced package.
+
+    The script's basename is matched first (``python calculator.py`` with
+    prefix ``calculator``). A project entry point rarely carries the package
+    name, though: ``python src/myapp/main.py`` with prefix ``myapp`` used to
+    leave main.py un-instrumented while everything it imported was traced —
+    the single most misleading trace, because the top of the tree is missing.
+    So a directory on the script's path equal to the prefix's first component
+    matches too.
+    """
+    if not prefixes:
+        return True
+    module_name = os.path.splitext(os.path.basename(script_path))[0]
+    parts = os.path.normpath(os.path.dirname(script_path)).split(os.sep)
+    for p in prefixes:
+        if module_name == p or module_name.startswith(p + "."):
+            return True
+        if p.split(".", 1)[0] in parts:
+            return True
+    return False
+
+
+def _finish(status):
+    """Leave the interpreter the way `python script.py` would have.
+
+    The script has already run inside exec(); returning would let the
+    interpreter run it a second time, so the process has to end here — but
+    it must end the way the program expects:
+
+      * non-daemon threads are joined (threading._shutdown), as the
+        interpreter does before finalizing;
+      * atexit handlers run — logging.shutdown, coverage.py's data write, the
+        emitter's flush, whatever the program registered;
+      * stdout/stderr are flushed, because they are the traced program's own
+        output and are block-buffered whenever they are not a tty;
+      * the exit status is the program's, not a constant 0.
+    """
+    import atexit
+    try:
+        import threading
+        threading._shutdown()
+    except Exception:
+        pass
+    try:
+        atexit._run_exitfuncs()
+    except Exception:
+        pass
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(status)
+
+
+def _exit_status(exc):
+    """The status `python script.py` would exit with for SystemExit `exc`."""
+    code = exc.code
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code & 0xFF if code >= 0 else code
+    try:
+        print(code, file=sys.stderr)
+    except Exception:
+        pass
+    return 1
+
+
 if os.environ.get("FLOWTRACE_ENABLE") == "1":
     try:
         import flowtrace_runtime
@@ -14,7 +88,7 @@ if os.environ.get("FLOWTRACE_ENABLE") == "1":
 
         # The MetaPathFinder only intercepts `import` statements — it does NOT
         # intercept the main script executed as `__main__`. We handle that here
-        # by wrapping execution via runpy.run_path with our transformed loader.
+        # by executing the transformed script ourselves.
         #
         # We do this only when Python is invoked as `python script.py` (i.e.
         # sys.argv[0] is a .py file, not -c / -m / interactive).
@@ -31,8 +105,6 @@ if os.environ.get("FLOWTRACE_ENABLE") == "1":
         if _argv0.endswith(".py") and os.path.isfile(_argv0):
             from flowtrace_runtime.loader import FlowtraceSourceLoader
             from flowtrace_runtime.runtime import HELPERS
-            import runpy
-            import types
 
             _script_path = os.path.abspath(_argv0)
             _module_name = os.path.splitext(os.path.basename(_script_path))[0]
@@ -40,12 +112,8 @@ if os.environ.get("FLOWTRACE_ENABLE") == "1":
             # Check prefix filter.
             _prefix = os.environ.get("FLOWTRACE_PACKAGE_PREFIX", "")
             _prefixes = [p.strip() for p in _prefix.split(",") if p.strip()]
-            _matches = not _prefixes or any(
-                _module_name == p or _module_name.startswith(p + ".")
-                for p in _prefixes
-            )
 
-            if _matches:
+            if _script_matches_prefix(_script_path, _prefixes):
                 # Load source, transform, compile.
                 _loader = FlowtraceSourceLoader(_module_name, _script_path)
                 with open(_script_path, "rb") as _f:
@@ -62,20 +130,22 @@ if os.environ.get("FLOWTRACE_ENABLE") == "1":
                 }
                 _globs.update(HELPERS)
 
-                # Replace sys.argv[0] path so tracebacks are correct.
-                exec(_code, _globs)  # noqa: S102
-                # Prevent Python from running the original script again.
-                # Replace argv[0] with a no-op so the interpreter has nothing to run.
-                sys.argv[0] = ""
-                # os._exit(0) skips atexit; emitter.emit() flushes per-line so no data loss
-                # there, but stdout/stderr are the *traced program's own* output, block-
-                # buffered whenever it isn't a tty (any pipe, redirect, or subprocess
-                # capture) — os._exit() would drop whatever is still sitting in that
-                # buffer, silently truncating the program's real output.
-                sys.stdout.flush()
-                sys.stderr.flush()
-                import os as _os
-                _os._exit(0)
+                # Run the program, then end the interpreter the way it would
+                # have ended on its own — see _finish.
+                _status = 0
+                try:
+                    exec(_code, _globs)  # noqa: S102
+                except SystemExit as _se:
+                    _status = _exit_status(_se)
+                except KeyboardInterrupt:
+                    import traceback
+                    traceback.print_exc()
+                    _status = 130
+                except BaseException:
+                    import traceback
+                    traceback.print_exc()
+                    _status = 1
+                _finish(_status)
 
     except SystemExit:
         raise

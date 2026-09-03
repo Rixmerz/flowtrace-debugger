@@ -110,7 +110,7 @@ func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, modul
 	spanVar := uniqueName("_ft_s", used)
 	panicVar := uniqueName("_ft_p", used)
 
-	resultNames, edits := instrumentResults(fset, fd, used)
+	results, edits := instrumentResults(fset, fd, used)
 
 	class := receiverClass(fd)
 	method := fd.Name.Name
@@ -134,9 +134,12 @@ func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, modul
 		enterArgs = append(enterArgs, argsText)
 	}
 
+	// Results travel to Exit the same way parameters travel to Enter: as
+	// name/value pairs, so a named result keeps its declared name in the
+	// trace (see resultBinding).
 	exitArgs := spanVar
-	if len(resultNames) > 0 {
-		exitArgs = spanVar + ", " + strings.Join(resultNames, ", ")
+	if len(results) > 0 {
+		exitArgs = spanVar + ", " + resultArgsText(results)
 	}
 
 	inject := fmt.Sprintf(

@@ -65,9 +65,31 @@ function closeOutput() {
   fd = null;
 }
 
+/*
+ * Diagnostics are rate-limited to one line per cause. A systematic problem —
+ * an unwritable FLOWTRACE_OUTPUT, ids that never validate — used to produce one
+ * stderr line per traced call, interleaved with the program's own output, for
+ * the lifetime of the process. The first occurrence says what is wrong; the
+ * count at exit says how much was lost.
+ */
+const warned = new Set();
+let dropped = 0;
+
+function warnOnce(cause, message) {
+  dropped += 1;
+  if (warned.has(cause)) return;
+  warned.add(cause);
+  process.stderr.write(`[flowtrace] ${message} (further occurrences are counted, not printed)\n`);
+}
+
+/** Events that could not be written, for tests and the exit summary. */
+export function droppedCount() {
+  return dropped;
+}
+
 /**
  * Validates and writes a trace event line.
- * Invalid events are dropped; a diagnostic is written to stderr.
+ * Invalid events are dropped; a diagnostic is written to stderr once per cause.
  *
  * @param {object} event
  */
@@ -75,17 +97,15 @@ export function emit(event) {
   const { trace_id, span_id, event: evtType } = event;
 
   if (!TRACE_ID_RE.test(trace_id)) {
-    process.stderr.write(`[flowtrace] dropped event: invalid trace_id "${trace_id}"\n`);
+    warnOnce('trace_id', `dropped event: invalid trace_id "${trace_id}"`);
     return;
   }
   if (!SPAN_ID_RE.test(span_id)) {
-    process.stderr.write(`[flowtrace] dropped event: invalid span_id "${span_id}"\n`);
+    warnOnce('span_id', `dropped event: invalid span_id "${span_id}"`);
     return;
   }
   if (evtType !== 'enter' && evtType !== 'exit') {
-    process.stderr.write(
-      `[flowtrace] dropped event: event must be "enter" or "exit", got "${evtType}"\n`
-    );
+    warnOnce('event', `dropped event: event must be "enter" or "exit", got "${evtType}"`);
     return;
   }
 
@@ -96,7 +116,7 @@ export function emit(event) {
     ensureOpen();
     writeSync(fd, line);
   } catch (e) {
-    process.stderr.write(`[flowtrace] failed to write event: ${e.message}\n`);
+    warnOnce('write', `failed to write event: ${e.message}`);
   }
 }
 
@@ -113,4 +133,9 @@ export function flush() {
 // complete. Deliberately no 'uncaughtException' / 'unhandledRejection' hooks —
 // merely registering a listener for those suppresses Node's default crash
 // behaviour, which would change how the traced application itself behaves.
-process.on('exit', closeOutput);
+process.on('exit', () => {
+  if (dropped > 0) {
+    process.stderr.write(`[flowtrace] ${dropped} event(s) were dropped; the trace has holes\n`);
+  }
+  closeOutput();
+});

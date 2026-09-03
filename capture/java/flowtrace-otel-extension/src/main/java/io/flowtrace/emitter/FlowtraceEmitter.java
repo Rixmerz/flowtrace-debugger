@@ -2,14 +2,16 @@ package io.flowtrace.emitter;
 
 import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileWriter;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 /**
@@ -19,10 +21,14 @@ import java.util.regex.Pattern;
  * class by the OTel extension. It must have <strong>zero external
  * dependencies</strong> — Jackson is not available in that classloader context.
  * JSONL serialization is therefore done with a hand-rolled builder that covers
- * exactly the {@link TraceEvent} schema.
+ * exactly the {@link TraceEvent} schema; {@code args} and {@code result}
+ * values go through {@link ValueSerializer}, which owns the structural,
+ * redaction and truncation rules shared with the other capture layers.
  *
  * <p>Thread-safe: all writes go through a single synchronized
- * {@link BufferedWriter}.
+ * {@link BufferedWriter}, flushed per line so a crash loses nothing. The
+ * file is always UTF-8 regardless of {@code file.encoding}, and a JVM
+ * shutdown hook closes the writer.
  *
  * <p>Output path (first wins):
  * <ol>
@@ -69,8 +75,8 @@ public final class FlowtraceEmitter {
                 writer.newLine();
                 writer.flush();
             }
-        } catch (IOException e) {
-            System.err.println("[flowtrace] emit error: " + e.getMessage());
+        } catch (IOException | RuntimeException e) {
+            System.err.println("[flowtrace] emit error: " + e);
         }
     }
 
@@ -101,7 +107,7 @@ public final class FlowtraceEmitter {
         }
         if (e.getResult() != null) {
             sb.append(',');
-            appendValue(sb, "result", e.getResult());
+            appendMap(sb, "result", e.getResult());
         }
         if (e.getError() != null) {
             sb.append(',');
@@ -124,16 +130,29 @@ public final class FlowtraceEmitter {
     }
 
     private static void appendDouble(StringBuilder sb, String key, double val) {
-        // Use plain decimal format (no scientific notation) to match schema expectations.
-        // Locale.ROOT is load-bearing, not defensive. String.format without an
+        // Plain decimal, six fraction digits (microseconds), never localized.
+        // Locale is load-bearing, not defensive: String.format without an
         // explicit locale uses the JVM default, and the default in Chile — or
         // most of Europe and Latin America — renders a comma as the decimal
         // separator: `"ts":1785481163,844`. That is not merely ugly, it is
         // invalid JSON, so every line of a Java trace becomes unparseable for
         // every consumer. CI runs under an English locale, which is why no
-        // test ever saw it.
-        sb.append('"').append(escapeJson(key)).append("\":")
-          .append(String.format(Locale.ROOT, "%.3f", val));
+        // test ever saw it. Formatting by hand from a long sidesteps the
+        // locale machinery entirely and is cheaper than String.format on a
+        // path that runs twice per traced call.
+        sb.append('"').append(escapeJson(key)).append("\":");
+        if (Double.isNaN(val) || Double.isInfinite(val)) val = 0d;
+        long micros = Math.round(val * 1_000_000d);
+        if (micros < 0) {
+            sb.append('-');
+            micros = -micros;
+        }
+        long seconds = micros / 1_000_000L;
+        long fraction = micros % 1_000_000L;
+        sb.append(seconds).append('.');
+        String frac = Long.toString(fraction);
+        for (int i = frac.length(); i < 6; i++) sb.append('0');
+        sb.append(frac);
     }
 
     @SuppressWarnings("unchecked")
@@ -151,31 +170,18 @@ public final class FlowtraceEmitter {
         sb.append('}');
     }
 
-    @SuppressWarnings("unchecked")
-    private static void appendValue(StringBuilder sb, String key, Object val) {
-        sb.append('"').append(escapeJson(key)).append("\":");
-        appendRawValue(sb, val);
-    }
-
+    /**
+     * One {@code args} / {@code result} value. Already-rendered fragments are
+     * written verbatim — re-measuring them would truncate a truncation marker.
+     * Anything else goes through the full structural + truncation rule, so an
+     * event built directly (tests, future callers) gets the same treatment as
+     * one built by the advice.
+     */
     private static void appendRawValue(StringBuilder sb, Object val) {
-        if (val == null) {
-            sb.append("null");
-        } else if (val instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> m = (Map<String, Object>) val;
-            sb.append('{');
-            boolean first = true;
-            for (Map.Entry<String, Object> entry : m.entrySet()) {
-                if (!first) sb.append(',');
-                first = false;
-                sb.append('"').append(escapeJson(entry.getKey())).append("\":");
-                appendRawValue(sb, entry.getValue());
-            }
-            sb.append('}');
-        } else if (val instanceof Number || val instanceof Boolean) {
-            sb.append(val);
+        if (val instanceof JsonFragment) {
+            sb.append(((JsonFragment) val).json());
         } else {
-            sb.append('"').append(escapeJson(val.toString())).append('"');
+            sb.append(ValueSerializer.serializeValue(val).json());
         }
     }
 
@@ -195,25 +201,7 @@ public final class FlowtraceEmitter {
     }
 
     private static String escapeJson(String s) {
-        if (s == null) return "";
-        StringBuilder sb = new StringBuilder(s.length());
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"':  sb.append("\\\""); break;
-                case '\\': sb.append("\\\\"); break;
-                case '\n': sb.append("\\n");  break;
-                case '\r': sb.append("\\r");  break;
-                case '\t': sb.append("\\t");  break;
-                default:
-                    if (c < 0x20) {
-                        sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-            }
-        }
-        return sb.toString();
+        return ValueSerializer.escapeJson(s);
     }
 
     // ---- ID validation ----
@@ -250,7 +238,35 @@ public final class FlowtraceEmitter {
             dir.mkdirs();
             outFile = new File(dir, TS_FMT.format(Instant.now()) + ".jsonl");
         }
-        writer = new BufferedWriter(new FileWriter(outFile, true));
+        // Explicit UTF-8: FileWriter used the platform default charset, so a
+        // JVM started with -Dfile.encoding=ISO-8859-1 (or any pre-JEP-400
+        // JDK on a non-UTF-8 locale) wrote non-Latin-1 arguments as '?'.
+        // Every consumer reads the file as UTF-8.
+        writer = new BufferedWriter(new OutputStreamWriter(
+                new FileOutputStream(outFile, true), StandardCharsets.UTF_8));
+        registerShutdownHook();
+    }
+
+    private static final AtomicBoolean HOOK_REGISTERED = new AtomicBoolean();
+
+    /**
+     * Closes the writer when the JVM exits. Every line is flushed as it is
+     * written, so this loses nothing if it never runs (SIGKILL); it exists so
+     * the file descriptor is released cleanly and the last buffered bytes of a
+     * partial write are not stranded. Registered once per JVM, not per
+     * instance: {@link #resetForTesting()} creates many instances.
+     */
+    private static void registerShutdownHook() {
+        if (!HOOK_REGISTERED.compareAndSet(false, true)) return;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                FlowtraceEmitter current = INSTANCE;
+                if (current != null) current.close();
+            }, "flowtrace-emitter-close"));
+        } catch (Throwable t) {
+            // Already shutting down, or a SecurityManager said no: per-line
+            // flush makes this a no-op loss.
+        }
     }
 
     public synchronized void close() {

@@ -23,6 +23,10 @@ const SELF_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // of whether capture-node is installed as a package or used from source.
 const RUNTIME_PATH = fileURLToPath(new URL('../runtime/instrument.js', import.meta.url));
 
+/** Same list as esm/loader.mjs — the two hooks used to disagree on .mts/.cts. */
+const INSTRUMENTED_EXTENSIONS = new Set(['.js', '.cjs', '.mjs', '.ts', '.tsx', '.mts', '.cts']);
+const NODE_MODULES_RE = /[\\/]node_modules[\\/]/;
+
 /**
  * Returns true if the given filename should be instrumented.
  * Filtering is driven by FLOWTRACE_PACKAGE_PREFIX env var:
@@ -34,13 +38,13 @@ const RUNTIME_PATH = fileURLToPath(new URL('../runtime/instrument.js', import.me
  * @returns {boolean}
  */
 function shouldInstrument(filename) {
-  if (filename.includes('/node_modules/')) return false;
+  // Either separator: a Windows path never contains '/node_modules/', and a
+  // check that only knew the POSIX form instrumented every dependency there.
+  if (NODE_MODULES_RE.test(filename)) return false;
   // Never instrument FlowTrace's own runtime — see SELF_ROOT in esm/loader.mjs
   // for why '/node_modules/' alone was not enough.
   if (filename.startsWith(SELF_ROOT)) return false;
-  if (!filename.endsWith('.js') && !filename.endsWith('.cjs') &&
-      !filename.endsWith('.mjs') && !filename.endsWith('.ts') &&
-      !filename.endsWith('.tsx')) return false;
+  if (!INSTRUMENTED_EXTENSIONS.has(extname(filename))) return false;
 
   const prefix = process.env.FLOWTRACE_PACKAGE_PREFIX;
   if (!prefix) {

@@ -11,8 +11,7 @@ import { createRequire } from 'node:module';
 
 const _require = createRequire(import.meta.url);
 
-const CAPTURE_VERSION = '2.0.0-alpha.1';
-const NODE_VERSION    = process.versions.node;
+const NODE_VERSION = process.versions.node;
 
 // Babel version (approximate — read from package.json).
 let BABEL_VERSION = 'unknown';
@@ -21,11 +20,47 @@ try {
   BABEL_VERSION = pkg.version ?? 'unknown';
 } catch { /* ignore */ }
 
+/**
+ * What the transform itself is, as a fingerprint.
+ *
+ * This used to be a hardcoded version string, and it was never bumped: it
+ * still read `2.0.0-alpha.1` at package version 2.1.0. Every change to the
+ * transform since then produced output the cache key could not tell apart from
+ * the old output, so a user who had traced anything with an older build kept
+ * being served the stale instrumented code — forever, or until they found
+ * ~/.flowtrace/cache by accident.
+ *
+ * Hashing the transform's own source files makes the key change exactly when
+ * the emitted code can change. The package version is included as well so a
+ * release line is visible in the fingerprint, but it is the hash that carries
+ * the guarantee.
+ */
+function transformFingerprint() {
+  const hash = createHash('sha256');
+  for (const rel of ['../transform/swc.js', '../runtime/instrument.js']) {
+    try {
+      hash.update(readFileSync(new URL(rel, import.meta.url)));
+    } catch {
+      hash.update(`missing:${rel}`);
+    }
+    hash.update('\x00');
+  }
+  let version = 'unknown';
+  try {
+    version = _require('../../package.json').version ?? 'unknown';
+  } catch { /* ignore */ }
+  return `${version}:${hash.digest('hex')}`;
+}
+
+export const CAPTURE_FINGERPRINT = transformFingerprint();
+
 const CACHE_DIR = join(homedir(), '.flowtrace', 'cache', 'node');
 
 function ensureCacheDir() {
   if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+    // The cache holds instrumented copies of the user's source and is loaded
+    // as code: nobody else on the machine needs to read or write it.
+    mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
   }
 }
 
@@ -52,7 +87,7 @@ export function cacheKey(source, opts = {}) {
   return createHash('sha256')
     .update(source)
     .update('\x00')
-    .update(CAPTURE_VERSION)
+    .update(CAPTURE_FINGERPRINT)
     .update('\x00')
     .update(NODE_VERSION)
     .update('\x00')
@@ -91,9 +126,9 @@ export function cacheGet(key) {
 export function cachePut(key, code, map) {
   try {
     ensureCacheDir();
-    writeFileSync(join(CACHE_DIR, `${key}.js`), code, 'utf8');
+    writeFileSync(join(CACHE_DIR, `${key}.js`), code, { encoding: 'utf8', mode: 0o600 });
     if (map) {
-      writeFileSync(join(CACHE_DIR, `${key}.map`), JSON.stringify(map), 'utf8');
+      writeFileSync(join(CACHE_DIR, `${key}.map`), JSON.stringify(map), { encoding: 'utf8', mode: 0o600 });
     }
   } catch (e) {
     process.stderr.write(`[flowtrace] cache write failed: ${e.message}\n`);

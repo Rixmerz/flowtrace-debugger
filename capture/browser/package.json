@@ -1,6 +1,6 @@
 {
   "name": "@rixmerz/flowtrace-browser",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "FlowTrace v2 browser capture: HTTP, navigation and error spans shipped to the dashboard collector",
   "//": "Published standalone, unlike every other capture layer. Those are vendored into @rixmerz/flowtrace because the CLI launches the runtime and injects them. A browser layer is a build-time dependency of the user\u2019s own bundle, which no global CLI install can inject \u2014 and reaching it through the CLI tarball would cost a frontend 31MB of @swc/core and a 2.3MB Java jar for 60KB of code.",
   "type": "module",

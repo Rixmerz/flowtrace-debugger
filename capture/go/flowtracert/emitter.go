@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // JSONL v2 emitter — singleton, thread-safe, zero non-stdlib dependencies.
 // Mirrors capture/python/flowtrace_runtime/emitter.py: same output-path
 // resolution, same required-fields-per-event-type and W3C ID validation,
@@ -8,7 +10,13 @@
 //
 // Output path resolution (first match wins):
 //  1. FLOWTRACE_OUTPUT env var
-//  2. .flowtrace/<timestamp>.jsonl (created relative to cwd at first emit)
+//  2. .flowtrace/<timestamp>.<ms>-<pid>.jsonl (created relative to cwd at
+//     first emit; see defaultOutputPath for why the name carries both)
+//
+// Volume: FLOWTRACE_MAX_EVENTS caps how many "enter" events one process
+// writes (default maxEventsDefault; 0 or negative disables the cap). It is
+// read once, on the first event, and the cap is announced on stderr the
+// moment it is hit — see maxEventsDefault and (*emitterT).write.
 package flowtracert
 
 import (
@@ -60,7 +68,12 @@ var exitRequired = []string{
 // the analyst only reads the JSONL, never the stderr warning.
 const maxEventsDefault = 100_000
 
-func maxEvents() int {
+// maxEventsFromEnv resolves FLOWTRACE_MAX_EVENTS. Called exactly once per
+// emitter (see emitterT.limitSet) — never per event: the earlier shape
+// re-read the environment and re-parsed it under e.mu for every single
+// event, which put a Getenv + Atoi on the hot path of every traced call
+// for a value that cannot change once the process has started.
+func maxEventsFromEnv() int {
 	raw := os.Getenv("FLOWTRACE_MAX_EVENTS")
 	if raw == "" {
 		return maxEventsDefault
@@ -80,7 +93,36 @@ type emitterT struct {
 	mu           sync.Mutex
 	file         *os.File
 	count        int
+	limit        int  // resolved from FLOWTRACE_MAX_EVENTS on first write; <= 0 means uncapped
+	limitSet     bool // whether limit has been resolved — once per emitter, under mu
 	cappedWarned bool
+}
+
+// maxEvents returns this emitter's event cap, resolving it from the
+// environment the first time it is asked. Must be called under e.mu —
+// which write already holds — so the once-only resolution needs no
+// synchronization of its own.
+func (e *emitterT) maxEvents() int {
+	if !e.limitSet {
+		e.limit = maxEventsFromEnv()
+		e.limitSet = true
+	}
+	return e.limit
+}
+
+// setMaxEventsForTest pins the cap without touching the environment, and
+// returns a func that un-pins it (the next write resolves from the
+// environment again). Tests only; production code resolves once and never
+// changes it.
+func (e *emitterT) setMaxEventsForTest(limit int) (restore func()) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.limit, e.limitSet = limit, true
+	return func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.limitSet = false
+	}
 }
 
 var (
@@ -152,12 +194,16 @@ func (e *emitterT) write(event map[string]any, bypassCap bool) bool {
 	defer e.mu.Unlock()
 
 	if !bypassCap {
-		if limit := maxEvents(); limit > 0 && e.count >= limit {
+		if limit := e.maxEvents(); limit > 0 && e.count >= limit {
 			if !e.cappedWarned {
+				// One line, once: the count is what a reader needs to know
+				// how much of the run the file covers, and there is no
+				// process-exit hook a copied-in stdlib-only package could
+				// use to say anything later.
 				e.cappedWarned = true
 				fmt.Fprintf(os.Stderr,
-					"[flowtrace] WARNING: reached the %d-event cap (FLOWTRACE_MAX_EVENTS) — no further calls are entered into the trace for the rest of this process. Calls already open when the cap was hit still get their exit recorded, so 'enter' without 'exit' keeps meaning what it means elsewhere in FlowTrace: this call did not return. Raise the cap, or set it to 0 to disable it, if you need the full trace.\n",
-					limit)
+					"[flowtrace] WARNING: FLOWTRACE_MAX_EVENTS cap reached after %d events — no further calls are entered into the trace for the rest of this process; calls already open still get their exit recorded, so 'enter' without 'exit' keeps meaning 'this call did not return'. Raise FLOWTRACE_MAX_EVENTS, or set it to 0 to disable the cap, for the full trace.\n",
+					e.count)
 			}
 			return false
 		}
@@ -197,9 +243,18 @@ func (e *emitterT) ensureOpen() error {
 	return nil
 }
 
+// defaultOutputPath names the trace file when FLOWTRACE_OUTPUT is unset:
+// .flowtrace/<local-time timestamp to the millisecond>-<pid>.jsonl.
+// Second resolution alone was not enough — a `go test ./...` or any
+// program that forks children starts several instrumented processes within
+// the same second, and with O_APPEND they all wrote into one file,
+// interleaving unrelated traces. Milliseconds narrow the window and the pid
+// closes it: two live processes never share one. Nothing downstream parses
+// the name; the CLI always sets FLOWTRACE_OUTPUT, and the only contract
+// consumers rely on is the .flowtrace/ directory and the .jsonl suffix.
 func defaultOutputPath() string {
-	ts := time.Now().Format("20060102T150405")
-	return filepath.Join(".flowtrace", ts+".jsonl")
+	ts := time.Now().Format("20060102T150405.000")
+	return filepath.Join(".flowtrace", ts+"-"+strconv.Itoa(os.Getpid())+".jsonl")
 }
 
 // validateEvent returns an error message, or "" if the event is valid.

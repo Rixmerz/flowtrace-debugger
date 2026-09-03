@@ -13,7 +13,7 @@
  */
 
 import { register } from 'node:module';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 // ── 1. CJS hook ──────────────────────────────────────────────
 import { install } from './cjs/hook.js';
@@ -36,21 +36,17 @@ register(loaderUrl, import.meta.url);
 import { seedFromEnvironment } from './runtime/context.js';
 import { installOutgoingPropagation } from './runtime/propagate.js';
 import { installSubprocessPropagation } from './runtime/subprocess.js';
+import { installWorkerPropagation } from './runtime/workers.js';
+import { buildNodeOptions } from './runtime/node-options.js';
 
 seedFromEnvironment();
 installOutgoingPropagation();
 installSubprocessPropagation();
+installWorkerPropagation();
 
-// ── 4. Worker propagation ────────────────────────────────────
-const bootstrapAbsPath = fileURLToPath(import.meta.url);
-const bootstrapFlag    = `--import file://${bootstrapAbsPath}`;
-
-const existing = process.env.NODE_OPTIONS ?? '';
-if (!existing.includes(bootstrapFlag)) {
-  process.env.NODE_OPTIONS = existing
-    ? `${existing} ${bootstrapFlag} --enable-source-maps`
-    : `${bootstrapFlag} --enable-source-maps`;
-}
+// ── 4. Worker / child inheritance ────────────────────────────
+// See runtime/node-options.js for why this is a file: URL and not a path.
+process.env.NODE_OPTIONS = buildNodeOptions(process.env.NODE_OPTIONS, fileURLToPath(import.meta.url));
 
 // ── 5. Init marker ───────────────────────────────────────────
 process.env.FLOWTRACE_INITED = '1';

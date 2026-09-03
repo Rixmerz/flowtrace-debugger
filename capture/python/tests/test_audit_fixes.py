@@ -74,7 +74,9 @@ def test_dict_result_with_non_serializable_value_does_not_crash(tmp_path):
     exits = [e for e in events if e["event"] == "exit" and e["method"] == "make_thing"]
     assert len(exits) == 1
     result = exits[0]["result"]
-    assert result["x"] == "SomeObject()", f"expected json-safe repr, got {result!r}"
+    # A dict return is wrapped like every other value ({"value": ...}), the
+    # same shape Node and Java emit; it used to be emitted unwrapped.
+    assert result["value"]["x"] == "SomeObject()", f"expected json-safe repr, got {result!r}"
 
 
 # -- AC2: a fresh stdlib __pycache__ must not silently disable instrumentation

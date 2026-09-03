@@ -7,7 +7,7 @@
 
   <groupId>io.flowtrace</groupId>
   <artifactId>flowtrace-otel-extension</artifactId>
-  <version>2.1.0</version>
+  <version>2.2.0</version>
   <packaging>jar</packaging>
 
   <name>FlowTrace OTel Extension</name>
@@ -75,14 +75,18 @@
       <scope>provided</scope>
     </dependency>
 
-    <!-- Jackson — compile + shaded to avoid user classpath collision -->
+    <!-- Test -->
+    <!-- Jackson is used only by the tests, to parse the emitted JSONL back.
+         The emitter is hand-rolled (it runs in the bootstrap/agent
+         classloader where nothing else is available), so shipping Jackson in
+         the extension jar added ~2 MB and a relocated copy of a library the
+         runtime never touched. -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
+      <scope>test</scope>
     </dependency>
-
-    <!-- Test -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -108,6 +112,25 @@
                than merely stated. -->
           <release>${java.version}</release>
         </configuration>
+        <executions>
+          <execution>
+            <!-- Test sources only. The advice keys args by real parameter
+                 name when the JVM exposes one, which requires the
+                 MethodParameters attribute that only -parameters emits. The
+                 test fixtures (Calculator, the arg-name tests) are compiled
+                 with it so the named path is exercised end to end; the golden
+                 truncation/error fixtures are compiled by bare javac and pin
+                 the argN fallback. Main sources stay without it: the JDK does
+                 not need our parameter names, and it keeps a compiled-without
+                 -parameters method available to the tests. -->
+            <id>default-testCompile</id>
+            <configuration>
+              <compilerArgs>
+                <arg>-parameters</arg>
+              </compilerArgs>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <!-- Surefire — JUnit 5 -->
@@ -157,7 +180,11 @@
         </executions>
       </plugin>
 
-      <!-- Shade — uber-jar with relocated Jackson -->
+      <!-- Shade — single extension jar. There are no compile-scope
+           dependencies left to bundle (OTel/ByteBuddy are provided by the
+           agent, Jackson is test-only); this stays so the jar the CLI ships
+           is produced the same way it always was, and so that a dependency
+           added by mistake is bundled rather than missing at runtime. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
@@ -180,16 +207,10 @@
                 </filter>
               </filters>
               <transformers>
-                <!-- Merges META-INF/services files from all jars so our SPI
-                     entries survive alongside Jackson's entries. -->
+                <!-- Merges META-INF/services files so our SPI entries survive
+                     alongside those of anything bundled. -->
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
               </transformers>
-              <relocations>
-                <relocation>
-                  <pattern>com.fasterxml.jackson</pattern>
-                  <shadedPattern>io.flowtrace.shaded.jackson</shadedPattern>
-                </relocation>
-              </relocations>
             </configuration>
           </execution>
         </executions>

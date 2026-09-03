@@ -79,7 +79,7 @@ func TestEnterNeverDeadlocksThroughPublicAPI(t *testing.T) {
 		if s == nil {
 			t.Fatal("Enter returned nil Span")
 		}
-		Exit(s, nil)
+		Exit(s, "r0", nil)
 	case <-time.After(deadlockTestTimeout):
 		t.Fatal("Enter deadlocked serializing an argument whose MarshalJSON takes a held lock — AC4 violated")
 	}

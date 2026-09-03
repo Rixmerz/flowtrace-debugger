@@ -152,10 +152,26 @@ class FlowtraceTransformer(ast.NodeTransformer):
             node.body = self._rewrite_returns(node.body, ref)
         original_body = node.body
 
+        # A docstring is only a docstring while it is the first statement of
+        # the function. Wrapping the body in try/finally moved it inside the
+        # try, so every instrumented function lost its __doc__ — which broke
+        # doctest, help(), click/typer help text, FastAPI descriptions and
+        # anything else that reads it. Keep it in front of the wrapper.
+        docstring: list[ast.stmt] = []
+        if (
+            original_body
+            and isinstance(original_body[0], ast.Expr)
+            and isinstance(original_body[0].value, ast.Constant)
+            and isinstance(original_body[0].value.value, str)
+        ):
+            docstring = [original_body[0]]
+            original_body = original_body[1:] or [ast.copy_location(ast.Pass(), ref)]
+
         if is_generator:
-            node.body = self._wrap_generator_body(ctx_assign, result_default, original_body, ref)
+            wrapped = self._wrap_generator_body(ctx_assign, result_default, original_body, ref)
         else:
-            node.body = self._wrap_normal_body(ctx_assign, result_default, original_body, ref)
+            wrapped = self._wrap_normal_body(ctx_assign, result_default, original_body, ref)
+        node.body = docstring + wrapped
 
         ast.fix_missing_locations(node)
         return node

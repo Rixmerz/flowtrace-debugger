@@ -11,7 +11,9 @@
 import { startSpan, withSpan, seedFromRemote } from './context.js';
 import { formatTraceparent, parseTraceparent } from './traceparent.js';
 import { configure, emit, flush, installUnloadFlush } from './emitter.js';
-import { httpEnter, httpExit, routeEnter, routeExit, errorPair } from './events.js';
+import { httpEnter, httpExit, routeEnter, routeExit, errorPair, setRedactKeys } from './events.js';
+
+let globalErrorsInstalled = false;
 
 /** Monotonic nanoseconds where available, wall clock otherwise. */
 function nowNs() {
@@ -124,17 +126,30 @@ export function reportError(err, where = 'unhandled') {
  * @param {string} [options.traceparent] server-rendered traceparent, so the
  *   document request and everything the page does share one trace
  * @param {boolean} [options.captureGlobalErrors] hook window error events
+ * @param {string[]} [options.redactKeys] extra key substrings to redact, on top
+ *   of the shared default list
+ *
+ * Safe to call more than once (hydration, HMR, a re-mounted root): listeners
+ * are installed a single time, so one unhandled error is one span, not two.
  */
 export function initFlowtrace(options = {}) {
   configure(options);
+  setRedactKeys(options.redactKeys ?? []);
   if (options.traceparent) seedFromRemote(parseTraceparent(options.traceparent));
   installUnloadFlush();
 
-  if (options.captureGlobalErrors !== false && typeof addEventListener === 'function') {
+  if (options.captureGlobalErrors !== false && typeof addEventListener === 'function'
+      && !globalErrorsInstalled) {
+    globalErrorsInstalled = true;
     addEventListener('error', (e) => reportError(e.error ?? e.message, 'window.onerror'));
     addEventListener('unhandledrejection', (e) => reportError(e.reason, 'unhandledrejection'));
   }
   return { flush };
+}
+
+/** Test seam: forget that listeners were installed. */
+export function _resetInitForTests() {
+  globalErrorsInstalled = false;
 }
 
 export { withSpan };

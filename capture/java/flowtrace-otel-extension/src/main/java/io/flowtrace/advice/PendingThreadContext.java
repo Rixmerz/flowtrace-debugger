@@ -2,8 +2,9 @@ package io.flowtrace.advice;
 
 import io.opentelemetry.context.Context;
 
+import java.util.Collections;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.WeakHashMap;
 
 /**
  * Carries an OTel {@link Context} from a thread that calls {@code start()} to
@@ -27,12 +28,22 @@ import java.util.concurrent.ConcurrentHashMap;
  * counterpart to {@link TraceparentSeed}, which does the same job across a
  * process boundary using a serialized W3C traceparent instead of a live
  * {@link Context} object.
+ *
+ * <p>Weakly keyed: an entry is normally removed by {@link #take} when the
+ * thread's {@code run()} begins, but a thread whose {@code run()} the advice
+ * never sees — one that terminated first, or was started through a path that
+ * is not instrumented — would otherwise pin the {@link Thread} and its
+ * {@link Context} for the life of the JVM. {@link Thread} uses identity
+ * equality, which is exactly what {@link WeakHashMap} needs. Synchronized
+ * rather than concurrent because {@link WeakHashMap} has no concurrent
+ * variant; the critical section is one map operation.
  */
 public final class PendingThreadContext {
 
     private PendingThreadContext() {}
 
-    private static final Map<Thread, Context> PENDING = new ConcurrentHashMap<>();
+    private static final Map<Thread, Context> PENDING =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     /** Stashes {@code context} for the thread that will run it. */
     public static void put(Thread thread, Context context) {
@@ -46,7 +57,10 @@ public final class PendingThreadContext {
         return thread != null ? PENDING.remove(thread) : null;
     }
 
-    /** Number of stashed entries. Test-only: asserts nothing leaks past a failed {@code start()}. */
+    /**
+     * Number of stashed entries whose thread is still reachable. Test-only:
+     * asserts nothing leaks past a failed {@code start()} or a collected thread.
+     */
     static int sizeForTesting() {
         return PENDING.size();
     }

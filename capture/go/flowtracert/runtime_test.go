@@ -84,7 +84,7 @@ func TestEnterExitFieldMapping(t *testing.T) {
 	offset := snapshotOffset(t)
 
 	s := Enter("myapp/service", "Calc", "Add", "public", "a", 1, "b", 2)
-	Exit(s, 3, error(nil))
+	Exit(s, "r0", 3, "r1", error(nil))
 
 	events := readEventsSince(t, offset)
 	if len(events) != 2 {
@@ -135,7 +135,7 @@ func TestExitPackageLevelFunctionHasEmptyClass(t *testing.T) {
 	offset := snapshotOffset(t)
 
 	s := Enter("myapp/util", "", "Sum", "public", "n", 5)
-	Exit(s, 5)
+	Exit(s, "r0", 5)
 
 	events := readEventsSince(t, offset)
 	enter := events[0]
@@ -149,7 +149,7 @@ func TestExitCapturesNonNilReturnedError(t *testing.T) {
 	offset := snapshotOffset(t)
 
 	s := Enter("myapp/service", "Repo", "Find", "public", "id", 7)
-	Exit(s, nil, errors.New("not found"))
+	Exit(s, "r0", nil, "r1", errors.New("not found"))
 
 	events := readEventsSince(t, offset)
 	exit := events[1]

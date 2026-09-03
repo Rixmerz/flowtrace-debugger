@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -237,5 +240,88 @@ func TestConcurrentEmitNoInterleaving(t *testing.T) {
 		if err := json.Unmarshal(line, &obj); err != nil {
 			t.Fatalf("line %d not valid JSON: %v — %q", i, err, line)
 		}
+	}
+}
+
+func TestDefaultOutputPathIsUniquePerProcessAndMillisecond(t *testing.T) {
+	got := defaultOutputPath()
+	if filepath.Dir(got) != ".flowtrace" {
+		t.Errorf("default output dir = %q, want .flowtrace", filepath.Dir(got))
+	}
+	// <yyyymmdd>T<hhmmss>.<mmm>-<pid>.jsonl
+	pattern := regexp.MustCompile(`^\d{8}T\d{6}\.\d{3}-` + strconv.Itoa(os.Getpid()) + `\.jsonl$`)
+	if !pattern.MatchString(filepath.Base(got)) {
+		t.Errorf("default output name = %q, want <ts>.<ms>-<pid>.jsonl", filepath.Base(got))
+	}
+}
+
+func TestMaxEventsResolvedOncePerEmitter(t *testing.T) {
+	dir := t.TempDir()
+	orig, had := os.LookupEnv("FLOWTRACE_OUTPUT")
+	os.Setenv("FLOWTRACE_OUTPUT", filepath.Join(dir, "trace.jsonl"))
+	origCap, hadCap := os.LookupEnv("FLOWTRACE_MAX_EVENTS")
+	t.Cleanup(func() {
+		if had {
+			os.Setenv("FLOWTRACE_OUTPUT", orig)
+		} else {
+			os.Unsetenv("FLOWTRACE_OUTPUT")
+		}
+		if hadCap {
+			os.Setenv("FLOWTRACE_MAX_EVENTS", origCap)
+		} else {
+			os.Unsetenv("FLOWTRACE_MAX_EVENTS")
+		}
+	})
+
+	os.Setenv("FLOWTRACE_MAX_EVENTS", "2")
+	e := &emitterT{}
+	if !e.emit(makeEnterEvent()) {
+		t.Fatal("first enter should be written")
+	}
+	// Changing the environment after the first write must have no effect:
+	// the cap is read once, not on every event.
+	os.Setenv("FLOWTRACE_MAX_EVENTS", "1000")
+	if !e.emit(makeEnterEvent()) {
+		t.Fatal("second enter should still fit under the cap of 2")
+	}
+	var stderr string
+	var third bool
+	stderr = captureStderr(t, func() { third = e.emit(makeEnterEvent()) })
+	if third {
+		t.Fatal("third enter should have been refused: the cap of 2 was resolved once and must stick")
+	}
+	if !strings.Contains(stderr, "FLOWTRACE_MAX_EVENTS") || !strings.Contains(stderr, "after 2 events") {
+		t.Errorf("cap warning should name the env var and the count, got %q", stderr)
+	}
+	if strings.Count(strings.TrimSpace(stderr), "\n") != 0 {
+		t.Errorf("cap warning must be a single stderr line, got %q", stderr)
+	}
+	// And only once.
+	again := captureStderr(t, func() { e.emit(makeEnterEvent()) })
+	if again != "" {
+		t.Errorf("cap warning must not repeat, got %q", again)
+	}
+}
+
+func TestMaxEventsInvalidOrUnsetFallsBackToDefault(t *testing.T) {
+	origCap, hadCap := os.LookupEnv("FLOWTRACE_MAX_EVENTS")
+	t.Cleanup(func() {
+		if hadCap {
+			os.Setenv("FLOWTRACE_MAX_EVENTS", origCap)
+		} else {
+			os.Unsetenv("FLOWTRACE_MAX_EVENTS")
+		}
+	})
+	os.Unsetenv("FLOWTRACE_MAX_EVENTS")
+	if got := maxEventsFromEnv(); got != maxEventsDefault {
+		t.Errorf("unset: got %d, want %d", got, maxEventsDefault)
+	}
+	os.Setenv("FLOWTRACE_MAX_EVENTS", "lots")
+	if got := maxEventsFromEnv(); got != maxEventsDefault {
+		t.Errorf("invalid: got %d, want %d", got, maxEventsDefault)
+	}
+	os.Setenv("FLOWTRACE_MAX_EVENTS", "0")
+	if got := maxEventsFromEnv(); got != 0 {
+		t.Errorf("zero: got %d, want 0 (uncapped)", got)
 	}
 }

@@ -11,9 +11,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,6 +44,7 @@ class FlowtraceEmitterTest {
     void tearDown() {
         FlowtraceEmitter.resetForTesting();
         System.clearProperty("flowtrace.output");
+        System.clearProperty("flowtrace.max-arg-length");
     }
 
     // -------------------------------------------------------------------------
@@ -178,6 +182,129 @@ class FlowtraceEmitterTest {
             JsonNode node = mapper.readTree(line);
             assertNotNull(node.get("event"), "Every line must have an 'event' field");
         }
+    }
+
+
+    // -------------------------------------------------------------------------
+    // 4. args / result values: structural JSON, per-value truncation, never drop
+    // -------------------------------------------------------------------------
+
+    @Test
+    void structuralValuesInArgsAndResultAreProperJson() throws Exception {
+        FlowtraceEmitter emitter = FlowtraceEmitter.getInstance();
+        TraceEvent e = buildExit("aabbccddeeff00112233445566778899", "0011223344556677", null, 1L);
+
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("list", Arrays.asList(1, "two", null));
+        args.put("ints", new int[]{1, 2});
+        Map<Object, Object> intKeys = new LinkedHashMap<>();
+        intKeys.put(7, "seven");
+        args.put("map", intKeys);
+        args.put("nan", Double.NaN);
+        args.put("chr", 'x');
+        args.put("enum", java.time.DayOfWeek.MONDAY);
+        args.put("opt", Optional.of(3));
+        args.put("none", Optional.empty());
+        args.put("obj", new StringBuilder("sb"));
+        e.setArgs(args);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("items", Arrays.asList("a", "b"));
+        payload.put("token", "secret-value");
+        result.put("value", payload);
+        e.setResult(result);
+
+        emitter.emit(e);
+        emitter.close();
+
+        JsonNode node = mapper.readTree(Files.readAllLines(outFile).get(0));
+        JsonNode a = node.get("args");
+        assertEquals("two", a.get("list").get(1).asText());
+        assertTrue(a.get("list").get(2).isNull());
+        assertEquals(2, a.get("ints").get(1).asInt());
+        assertEquals("seven", a.get("map").get("7").asText());
+        assertTrue(a.get("nan").isNull(), "NaN must become null, not a bare NaN token");
+        assertEquals("x", a.get("chr").asText());
+        assertEquals("MONDAY", a.get("enum").asText());
+        assertEquals(3, a.get("opt").asInt());
+        assertTrue(a.get("none").isNull());
+        assertEquals("sb", a.get("obj").asText());
+
+        JsonNode r = node.get("result").get("value");
+        assertEquals("b", r.get("items").get(1).asText());
+        assertEquals("<redacted>", r.get("token").asText(), "map keys inside result are redacted too");
+    }
+
+    @Test
+    void resultValueIsTruncatedIndependentlyOfTheWrapper() throws Exception {
+        System.setProperty("flowtrace.max-arg-length", "20");
+        FlowtraceEmitter emitter = FlowtraceEmitter.getInstance();
+        TraceEvent e = buildExit("aabbccddeeff00112233445566778899", "0011223344556677", null, 1L);
+        e.setResult(Map.of("value", "y".repeat(100)));
+        emitter.emit(e);
+        emitter.close();
+
+        JsonNode node = mapper.readTree(Files.readAllLines(outFile).get(0));
+        String value = node.get("result").get("value").asText();
+        assertEquals("<truncated:\"" + "y".repeat(19) + "...>", value);
+        assertTrue(node.get("result").isObject(), "the {\"value\": ...} wrapper itself is never truncated");
+    }
+
+    @Test
+    void oneUnserializableValueDoesNotDropTheEvent() throws Exception {
+        FlowtraceEmitter emitter = FlowtraceEmitter.getInstance();
+        TraceEvent e = buildEnter("aabbccddeeff00112233445566778899", "0011223344556677", null);
+        Object bomb = new Object() {
+            @Override public String toString() { throw new IllegalStateException("nope"); }
+        };
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("arg0", bomb);
+        args.put("arg1", "fine");
+        e.setArgs(args);
+        emitter.emit(e);
+        emitter.close();
+
+        List<String> lines = Files.readAllLines(outFile);
+        assertEquals(1, lines.size(), "the event must still be written");
+        JsonNode node = mapper.readTree(lines.get(0));
+        assertEquals("<unserializable: " + bomb.getClass().getName() + ">", node.get("args").get("arg0").asText());
+        assertEquals("fine", node.get("args").get("arg1").asText());
+    }
+
+    @Test
+    void preRenderedFragmentsAreWrittenVerbatim() throws Exception {
+        FlowtraceEmitter emitter = FlowtraceEmitter.getInstance();
+        TraceEvent e = buildEnter("aabbccddeeff00112233445566778899", "0011223344556677", null);
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("arg0", new JsonFragment("{\"pre\":[1,2]}"));
+        e.setArgs(args);
+        emitter.emit(e);
+        emitter.close();
+
+        String line = Files.readAllLines(outFile).get(0);
+        assertTrue(line.contains("\"args\":{\"arg0\":{\"pre\":[1,2]}}"), line);
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. ts: microsecond precision, plain decimal
+    // -------------------------------------------------------------------------
+
+    @Test
+    void tsHasSixFractionDigitsAndNoExponent() throws Exception {
+        FlowtraceEmitter emitter = FlowtraceEmitter.getInstance();
+        TraceEvent e = buildEnter("aabbccddeeff00112233445566778899", "0011223344556677", null);
+        e.setTs(1785481163.000123);
+        emitter.emit(e);
+        TraceEvent whole = buildEnter("aabbccddeeff00112233445566778899", "0011223344556677", null);
+        whole.setTs(1785481163d);
+        emitter.emit(whole);
+        emitter.close();
+
+        List<String> lines = Files.readAllLines(outFile);
+        assertTrue(lines.get(0).contains("\"ts\":1785481163.000123,"), lines.get(0));
+        assertTrue(lines.get(1).contains("\"ts\":1785481163.000000,"), lines.get(1));
+        assertEquals(1785481163.000123, mapper.readTree(lines.get(0)).get("ts").asDouble(), 1e-6);
     }
 
     // -------------------------------------------------------------------------

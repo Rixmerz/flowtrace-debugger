@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package flowtracert is FlowTrace's Go v2 capture runtime.
 //
 // This package is copied byte-for-byte into the target module during an

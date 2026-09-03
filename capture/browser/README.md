@@ -43,9 +43,24 @@ nothing is invented. Browser work is expressed with the fields that exist:
 
 A trace mixing browser and server spans therefore reads uniformly, and
 `trace_tree`, `trace_find_error` and the dashboard work on it unchanged.
+Events carry `lang: "browser"` (the schema enum has that value for this layer;
+earlier releases emitted `"node"`).
 
 **URLs are scrubbed of query strings and fragments before being recorded.**
-Traces get shared, and query strings routinely carry tokens.
+Traces get shared, and query strings routinely carry tokens. Path segments are
+recorded verbatim, so a path that embeds a token (`/reset/<token>`) lands in
+the trace as-is. Other `args` keys go through the same redaction rule as every
+capture layer (`password`, `secret`, `token`, `authorization`, `api_key`,
+`dsn`, `connection_string`, `email`, plus `initFlowtrace({ redactKeys })`);
+the URL-valued keys `url`, `from` and `to` are exempt because the scrubbed URL
+is the point of the span.
+
+**The collector is reached over HTTP, and losses are counted.** A batch the
+collector never acknowledged (unreachable, non-2xx) is dropped, added to
+`droppedCount()`, and reported once on the console. An `https:` page with the
+default `http://localhost:8765` endpoint is blocked as mixed content by the
+browser; `initFlowtrace` warns about that at setup rather than letting every
+flush fail silently.
 
 ## Setup
 
@@ -58,6 +73,7 @@ initFlowtrace({
   // everything the page then does land in one trace.
   traceparent: document.querySelector('meta[name=traceparent]')?.content,
 });
+// Safe to call again (hydration, HMR): listeners are installed once.
 ```
 
 Start the collector with `cd flowtrace-dashboard && pnpm start`.

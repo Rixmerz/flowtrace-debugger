@@ -62,6 +62,10 @@ const TS_FORMATS = {
 
 const TS_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'];
 
+/** Same list as cjs/hook.js — the two hooks used to disagree on .mts/.cts. */
+const INSTRUMENTED_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', ...TS_EXTENSIONS]);
+const NODE_MODULES_RE = /[\\/]node_modules[\\/]/;
+
 function isTypeScript(path) {
   return TS_EXTENSIONS.includes(extname(path));
 }
@@ -94,11 +98,10 @@ function fallbackFormat() {
 function shouldInstrument(url) {
   if (!url.startsWith('file://')) return false;
   const path = fileURLToPath(url);
-  if (path.includes('/node_modules/')) return false;
+  if (NODE_MODULES_RE.test(path)) return false;
   if (path.startsWith(SELF_ROOT)) return false;
 
-  const ext = extname(path);
-  if (!['.js', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'].includes(ext)) return false;
+  if (!INSTRUMENTED_EXTENSIONS.has(extname(path))) return false;
 
   const prefix = process.env.FLOWTRACE_PACKAGE_PREFIX;
   if (!prefix) {

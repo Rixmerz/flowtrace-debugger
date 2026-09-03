@@ -122,12 +122,32 @@ func handlerArgsText(reqParam string) string {
 		strconv.Quote("http.path") + ", " + reqParam + ".URL.Path"
 }
 
+// resultBinding is one result value as the injected Exit call reports it:
+// ident is the identifier the generated code reads inside the function
+// body, key is the name it is emitted under in the exit event's `result`
+// object. They differ exactly when the user did not name the result: a
+// declared name (`(quotient int, err error)`) is kept as the key, so the
+// trace reads the way the signature does, while an unnamed result
+// (`(int, error)`) or a blank one (`(v int, _ error)`) is keyed
+// positionally as r0, r1, ... — the only stable name it has.
+type resultBinding struct {
+	key   string
+	ident string
+}
+
+// positionalResultKey is the key an unnamed or blank result is emitted
+// under: its zero-based position in the result list.
+func positionalResultKey(i int) string {
+	return "r" + strconv.Itoa(i)
+}
+
 // instrumentResults decides the final name for every result value - reusing
 // an existing name, renaming a blank _, or generating one for an unnamed
 // result - and returns the edits needed to make the signature match. Go
 // requires results to be either all-named or all-unnamed (never mixed), so
-// there are exactly two shapes to handle.
-func instrumentResults(fset *token.FileSet, fd *ast.FuncDecl, used map[string]struct{}) ([]string, []edit) {
+// there are exactly two shapes to handle. The returned bindings carry both
+// the identifier to read and the key to emit it under (see resultBinding).
+func instrumentResults(fset *token.FileSet, fd *ast.FuncDecl, used map[string]struct{}) ([]resultBinding, []edit) {
 	res := fd.Type.Results
 	if res == nil {
 		return nil, nil
@@ -135,26 +155,27 @@ func instrumentResults(fset *token.FileSet, fd *ast.FuncDecl, used map[string]st
 
 	anyNamed := len(res.List) > 0 && len(res.List[0].Names) > 0
 
-	var names []string
+	var bindings []resultBinding
 	var edits []edit
 
 	if anyNamed {
 		for _, field := range res.List {
 			for _, name := range field.Names {
+				i := len(bindings)
 				if name.Name != "_" {
-					names = append(names, name.Name)
+					bindings = append(bindings, resultBinding{key: name.Name, ident: name.Name})
 					continue
 				}
-				newName := uniqueName(fmt.Sprintf("_ft_r%d", len(names)), used)
+				newName := uniqueName(fmt.Sprintf("_ft_r%d", i), used)
 				edits = append(edits, edit{
 					start: fset.Position(name.Pos()).Offset,
 					end:   fset.Position(name.End()).Offset,
 					text:  newName,
 				})
-				names = append(names, newName)
+				bindings = append(bindings, resultBinding{key: positionalResultKey(i), ident: newName})
 			}
 		}
-		return names, edits
+		return bindings, edits
 	}
 
 	// Unnamed results: a single unnamed result may have no parens at all
@@ -162,7 +183,7 @@ func instrumentResults(fset *token.FileSet, fd *ast.FuncDecl, used map[string]st
 	needsParens := !res.Opening.IsValid()
 	for i, field := range res.List {
 		newName := uniqueName(fmt.Sprintf("_ft_r%d", i), used)
-		names = append(names, newName)
+		bindings = append(bindings, resultBinding{key: positionalResultKey(i), ident: newName})
 
 		prefix := newName + " "
 		if needsParens && i == 0 {
@@ -176,7 +197,18 @@ func instrumentResults(fset *token.FileSet, fd *ast.FuncDecl, used map[string]st
 		endPos := fset.Position(last.Type.End()).Offset
 		edits = append(edits, edit{start: endPos, end: endPos, text: ")"})
 	}
-	return names, edits
+	return bindings, edits
+}
+
+// resultArgsText builds the `"key", ident, "other", other` fragment passed
+// to Exit, mirroring paramArgsText's shape for Enter: name, value, name,
+// value, in declaration order.
+func resultArgsText(bindings []resultBinding) string {
+	parts := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		parts = append(parts, strconv.Quote(b.key)+", "+b.ident)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // netHTTPLocalName returns the identifier this file binds to "net/http", or

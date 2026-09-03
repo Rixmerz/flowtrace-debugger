@@ -1,8 +1,13 @@
-"""JSONL v2 emitter — singleton, thread-safe, zero runtime dependencies.
+"""JSONL v2 emitter — singleton, thread-safe, fork-safe, zero runtime dependencies.
 
 Output path resolution (first match wins):
   1. FLOWTRACE_OUTPUT env var
-  2. .flowtrace/<ISO-timestamp>.jsonl  (created relative to cwd at first emit)
+  2. .flowtrace/<timestamp>.<ms>-<pid>.jsonl  (created relative to cwd at first emit)
+
+The emitter never raises into the traced program. A write that fails — an
+unwritable path, a full disk, FLOWTRACE_OUTPUT pointing at a directory — is
+reported once on stderr and counted; the count is printed at exit so the hole
+in the trace is visible.
 """
 
 from __future__ import annotations
@@ -36,10 +41,14 @@ _EXIT_REQUIRED = frozenset({
 
 
 def _default_output_path() -> Path:
-    ts = time.strftime("%Y%m%dT%H%M%S")
+    # Millisecond + pid suffix: two processes started in the same second used
+    # to append to one file (the Go layer had the same defect).
+    now = time.time()
+    ts = time.strftime("%Y%m%dT%H%M%S", time.localtime(now))
+    ms = int((now - int(now)) * 1000)
     out_dir = Path(".flowtrace")
     out_dir.mkdir(exist_ok=True)
-    return out_dir / f"{ts}.jsonl"
+    return out_dir / f"{ts}.{ms:03d}-{os.getpid()}.jsonl"
 
 
 class Emitter:
@@ -52,7 +61,16 @@ class Emitter:
         self._lock = threading.Lock()
         self._file = None
         self._path: Optional[Path] = None
-        atexit.register(self._flush)
+        self._dropped = 0
+        self._warned: set[str] = set()
+        atexit.register(self._at_exit)
+        # A forked child inherits a lock that may be held by another thread of
+        # the parent (deadlock on first emit) and the parent's open descriptor
+        # (both processes appending to one file through one buffer). Start the
+        # child with a fresh lock and no file; _ensure_open reopens in append
+        # mode, so the child lands in the same file without sharing state.
+        if hasattr(os, "register_at_fork"):
+            os.register_at_fork(after_in_child=self._after_fork_in_child)
 
     # ------------------------------------------------------------------
     # Singleton access
@@ -73,25 +91,47 @@ class Emitter:
     def emit(self, event: dict) -> None:
         """Validate and append one v2 event as a JSON line.
 
-        Drops malformed events with a warning to stderr — never raises.
+        Drops malformed and unwritable events with a warning to stderr — never
+        raises.
         """
         error = self._validate(event)
         if error:
-            print(f"[flowtrace] WARNING: dropping malformed event — {error}", file=sys.stderr)
+            self._drop("malformed", f"dropping malformed event — {error}")
             return
-        line = json.dumps(event, separators=(",", ":"))
-        with self._lock:
-            self._ensure_open()
-            self._file.write(line + "\n")
-            self._file.flush()
+        try:
+            line = json.dumps(event, separators=(",", ":"))
+        except Exception as e:  # a value _to_json_safe did not catch
+            self._drop("serialize", f"dropping event that cannot be serialized — {e}")
+            return
+        try:
+            with self._lock:
+                self._ensure_open()
+                self._file.write(line + "\n")
+                self._file.flush()
+        except Exception as e:
+            self._drop("write", f"failed to write event ({e}); the trace has holes")
 
     def path(self) -> Optional[Path]:
         """Return the output file path (None until first emit)."""
         return self._path
 
+    def dropped_count(self) -> int:
+        """Events that were not written: malformed, unserializable, or write failure."""
+        return self._dropped
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _drop(self, cause: str, message: str) -> None:
+        self._dropped += 1
+        if cause in self._warned:
+            return
+        self._warned.add(cause)
+        print(
+            f"[flowtrace] WARNING: {message} (further occurrences are counted, not printed)",
+            file=sys.stderr,
+        )
 
     def _ensure_open(self) -> None:
         """Open the output file lazily (called under self._lock)."""
@@ -102,6 +142,12 @@ class Emitter:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(self._path, "a", encoding="utf-8")  # noqa: SIM115
 
+    def _after_fork_in_child(self) -> None:
+        self._lock = threading.Lock()
+        self._file = None
+        self._warned = set()
+        self._dropped = 0
+
     def _flush(self) -> None:
         with self._lock:
             if self._file is not None:
@@ -109,6 +155,14 @@ class Emitter:
                     self._file.flush()
                 except Exception:
                     pass
+
+    def _at_exit(self) -> None:
+        self._flush()
+        if self._dropped:
+            print(
+                f"[flowtrace] {self._dropped} event(s) were dropped; the trace has holes",
+                file=sys.stderr,
+            )
 
     def _validate(self, event: dict) -> str:
         """Return an error message string, or empty string if valid."""

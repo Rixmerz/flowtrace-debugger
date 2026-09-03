@@ -51,13 +51,22 @@ class TraceparentSeedTest {
                 .getTraceFlags().isSampled());
     }
 
+    /**
+     * The spec mandates lowercase hex, and the Node/Python/Go parsers reject
+     * uppercase and surrounding whitespace outright. Java used to normalize
+     * both, so a carrier three runtimes refused was silently joined by the
+     * fourth — the asymmetric kind of bug nothing but a parity table catches.
+     */
     @Test
-    void normalizesCaseAndWhitespace() {
-        SpanContext sc = TraceparentSeed.parse(
-                "  00-" + TRACE.toUpperCase() + "-" + SPAN.toUpperCase() + "-01  ");
-        assertNotNull(sc);
-        assertEquals(TRACE, sc.getTraceId());
-        assertEquals(SPAN, sc.getSpanId());
+    void rejectsUppercaseAndWhitespaceLikeTheOtherRuntimes() {
+        assertNull(TraceparentSeed.parse(
+                "00-" + TRACE.toUpperCase() + "-" + SPAN.toUpperCase() + "-01"), "uppercase");
+        assertNull(TraceparentSeed.parse("00-" + TRACE + "-" + SPAN + "-01 "), "trailing space");
+        assertNull(TraceparentSeed.parse(" 00-" + TRACE + "-" + SPAN + "-01"), "leading space");
+        assertNull(TraceparentSeed.parse("  " + VALID + "  "), "surrounding whitespace");
+        assertNull(TraceparentSeed.parse(VALID + "\n"), "trailing newline");
+        // Lowercase, unpadded: still accepted, so this test is not just "rejects everything".
+        assertNotNull(TraceparentSeed.parse(VALID));
     }
 
     @Test
@@ -69,6 +78,8 @@ class TraceparentSeedTest {
                 "00-" + TRACE + "-" + SPAN,              // missing flags
                 "00-" + TRACE,                            // missing span
                 "00-" + TRACE + "-" + SPAN + "-01-extra", // v00 must have 4 fields
+                "00-" + TRACE + "-" + SPAN + "-01-",      // trailing empty field is a 5th field
+                "-00-" + TRACE + "-" + SPAN + "-01",      // leading empty field shifts everything
                 "zz-" + TRACE + "-" + SPAN + "-01",       // non-hex version
                 "ff-" + TRACE + "-" + SPAN + "-01",       // version ff is forbidden
                 "00-" + TRACE.substring(0, 31) + "-" + SPAN + "-01",  // short trace

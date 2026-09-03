@@ -86,8 +86,14 @@ public final class TraceparentSeed {
      */
     static SpanContext parse(String value) {
         if (value == null) return null;
-        String trimmed = value.trim().toLowerCase();
-        String[] parts = trimmed.split("-");
+        // No trim, no case folding: the spec says lowercase hex, and the Node,
+        // Python and Go parsers reject uppercase and surrounding whitespace.
+        // Java used to normalize both, so a carrier that three runtimes
+        // refused was silently joined by the fourth. The limit of -1 keeps a
+        // trailing empty field (`00-<32>-<16>-01-`), which String.split drops
+        // by default — the other layers count it and reject a v00 carrier
+        // with five fields.
+        String[] parts = value.split("-", -1);
         // version, trace_id, span_id, flags. Future versions may append more.
         if (parts.length < 4) return null;
 

@@ -3,6 +3,7 @@ package io.flowtrace.advice;
 import io.flowtrace.emitter.ErrorInfo;
 import io.flowtrace.emitter.FlowtraceEmitter;
 import io.flowtrace.emitter.TraceEvent;
+import io.flowtrace.emitter.ValueSerializer;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
@@ -14,6 +15,7 @@ import net.bytebuddy.implementation.bytecode.assign.Assigner;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,18 +32,20 @@ import java.util.stream.Collectors;
  *   <li>A new OTel Span is started per method call so trace_id / span_id /
  *       parent_id form a correct tree. The enclosing span context is captured
  *       before {@code makeCurrent()} so parent_id is correct.</li>
- *   <li>Args keyed {@code arg0}, {@code arg1}, … Primitive wrapper types are
- *       stored as their actual value; others via {@code toString()} truncated to
- *       {@code flowtrace.max-arg-length} (default 512).</li>
- *   <li>Result is wrapped as {@code {"value": result}} to match golden fixture;
- *       void returns emit an empty object.</li>
+ *   <li>Args are keyed by parameter name when the class was compiled with
+ *       {@code -parameters} (the only case in which the JVM exposes real
+ *       names), otherwise {@code arg0}, {@code arg1}, … Values are rendered by
+ *       {@link ValueSerializer} — redaction, structural JSON, truncation —
+ *       <em>once</em>, at entry, and carried to the exit event through an
+ *       {@code @Advice.Local}, so both events carry identical {@code args}
+ *       even if the method mutates its arguments.</li>
+ *   <li>Result is wrapped as {@code {"value": result}}; void, {@code null} and
+ *       throwing calls emit an empty object.</li>
  *   <li>Modifiers are read from {@code @Advice.Origin Method} — the only
  *       reliable way to get them without reflection on the class loader.</li>
  * </ul>
  */
 public class FlowtraceAdvice {
-
-    private static final int DEFAULT_MAX_ARG_LENGTH = 512;
 
     // Baseline for sub-ms precision ts: compute once at class-load time.
     // ts = (BASELINE_MS / 1000.0) + (nanoTime() - BASELINE_NS) / 1e9
@@ -62,7 +66,8 @@ public class FlowtraceAdvice {
             @Advice.Local("flowtraceDepth")   int    depth,
             @Advice.Local("flowtraceParent")  String parentId,
             @Advice.Local("flowtraceTraceId") String traceId,
-            @Advice.Local("flowtraceSpanId")  String spanId
+            @Advice.Local("flowtraceSpanId")  String spanId,
+            @Advice.Local("flowtraceArgs")    Map<String, Object> args
     ) {
         try {
             depth = DepthTracker.enterAndGet();
@@ -112,7 +117,8 @@ public class FlowtraceAdvice {
             event.setClassName(extractSimpleClass(className));
             event.setMethod(methodName);
             event.setVisibility(visibilityFromModifiers(modifiers));
-            event.setArgs(buildArgs(allArgs));
+            args = buildArgs(originMethod, allArgs);
+            event.setArgs(args);
             event.setDepth(depth);
 
             FlowtraceEmitter.getInstance().emit(event);
@@ -126,7 +132,6 @@ public class FlowtraceAdvice {
             @Advice.Origin("#t") String className,
             @Advice.Origin("#m") String methodName,
             @Advice.Origin Method  originMethod,
-            @Advice.AllArguments  Object[] allArgs,
             @Advice.Return(typing = Assigner.Typing.DYNAMIC) Object result,
             @Advice.Thrown Throwable thrown,
             @Advice.Local("flowtraceSpan")    Span   span,
@@ -135,7 +140,8 @@ public class FlowtraceAdvice {
             @Advice.Local("flowtraceDepth")   int    depth,
             @Advice.Local("flowtraceParent")  String parentId,
             @Advice.Local("flowtraceTraceId") String traceId,
-            @Advice.Local("flowtraceSpanId")  String spanId
+            @Advice.Local("flowtraceSpanId")  String spanId,
+            @Advice.Local("flowtraceArgs")    Map<String, Object> args
     ) {
         try {
             long durationNs = System.nanoTime() - startNanos;
@@ -154,7 +160,8 @@ public class FlowtraceAdvice {
             event.setClassName(extractSimpleClass(className));
             event.setMethod(methodName);
             event.setVisibility(visibilityFromModifiers(modifiers));
-            event.setArgs(buildArgs(allArgs));
+            // Serialized at entry; null only if onEnter failed before reaching it.
+            event.setArgs(args != null ? args : new LinkedHashMap<>());
             event.setDepth(exitDepth);
             event.setDurationNs(durationNs);
 
@@ -176,7 +183,7 @@ public class FlowtraceAdvice {
             } else {
                 if (result != null) {
                     Map<String, Object> resultMap = new LinkedHashMap<>();
-                    resultMap.put("value", result);
+                    resultMap.put("value", ValueSerializer.serializeValue(result));
                     event.setResult(resultMap);
                 } else {
                     // void return — emit empty object to match golden
@@ -211,33 +218,68 @@ public class FlowtraceAdvice {
         return "internal"; // protected and package-private
     }
 
-    public static Map<String, Object> buildArgs(Object[] args) {
+    /**
+     * Renders the call's arguments once, keyed by parameter name where the
+     * JVM knows it, {@code argN} otherwise. Each value goes through
+     * {@link ValueSerializer#serializeNamed} independently, so one hostile
+     * argument costs exactly one {@code <unserializable: ...>} entry.
+     */
+    public static Map<String, Object> buildArgs(Method method, Object[] args) {
         Map<String, Object> map = new LinkedHashMap<>();
         if (args == null) return map;
-        int maxLen = maxArgLength();
+        String[] names = parameterNames(method, args.length);
         for (int i = 0; i < args.length; i++) {
-            Object arg = args[i];
-            if (arg == null) {
-                map.put("arg" + i, null);
-            } else if (arg instanceof Number || arg instanceof Boolean || arg instanceof Character) {
-                map.put("arg" + i, arg);
-            } else {
-                String s = arg.toString();
-                if (maxLen > 0 && s.length() > maxLen) {
-                    s = s.substring(0, maxLen) + "...[truncated]";
-                }
-                map.put("arg" + i, s);
+            String name = names != null ? names[i] : "arg" + i;
+            Object rendered;
+            try {
+                rendered = ValueSerializer.serializeNamed(name, args[i]);
+            } catch (Throwable t) {
+                // serializeNamed already never throws; this is belt and braces
+                // for the one place where a failure would drop the event.
+                rendered = "<unserializable: " + (args[i] == null ? "null" : args[i].getClass().getName()) + ">";
             }
+            map.put(name, rendered);
         }
         return map;
     }
 
-    public static int maxArgLength() {
-        String prop = System.getProperty("flowtrace.max-arg-length");
-        if (prop != null) {
-            try { return Integer.parseInt(prop); } catch (NumberFormatException ignored) {}
+    /** {@code argN} keys only — kept for callers without an origin method. */
+    public static Map<String, Object> buildArgs(Object[] args) {
+        return buildArgs(null, args);
+    }
+
+    /**
+     * Real parameter names, or {@code null} to fall back to {@code argN}.
+     *
+     * <p>The JVM only carries names when the class was compiled with
+     * {@code -parameters} (the {@code MethodParameters} attribute) —
+     * {@link Parameter#isNamePresent()} says so. ByteBuddy's own
+     * {@code MethodDescription} sees exactly the same attribute at weave time
+     * (the OTel agent parses class files in FAST mode, which skips the debug
+     * {@code LocalVariableTable}), so reflection here costs nothing in
+     * coverage and keeps the advice testable without weaving. Spring Boot's
+     * parent POM turns {@code -parameters} on, so this is the common case in
+     * practice; plain {@code javac} defaults are the {@code argN} case.
+     */
+    public static String[] parameterNames(Method method, int count) {
+        if (method == null) return null;
+        try {
+            Parameter[] params = method.getParameters();
+            if (params.length != count) return null;
+            String[] names = new String[params.length];
+            for (int i = 0; i < params.length; i++) {
+                names[i] = params[i].isNamePresent() ? params[i].getName() : "arg" + i;
+            }
+            return names;
+        } catch (Throwable t) {
+            // MalformedParametersException, or anything else: argN is always safe.
+            return null;
         }
-        return DEFAULT_MAX_ARG_LENGTH;
+    }
+
+    /** @see ValueSerializer#maxArgLength() */
+    public static int maxArgLength() {
+        return ValueSerializer.maxArgLength();
     }
 
     public static String extractModule(String fqcn) {

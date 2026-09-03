@@ -32,5 +32,7 @@ export {
   errorPair,
   toErrorObj,
   scrubUrl,
+  redact,
+  setRedactKeys,
 } from './events.js';
 export { traceHttp, traceHttpSpan, traceRoute, reportError, initFlowtrace } from './api.js';

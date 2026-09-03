@@ -32,10 +32,34 @@ let config = { ...DEFAULTS };
 let queue = [];
 let timer = null;
 let dropped = 0;
+let unloadInstalled = false;
+const warned = new Set();
+
+/**
+ * One line per cause, ever. The collector being unreachable is a steady state
+ * on a laptop; a console.warn per batch would be noise, and silence was the
+ * previous behaviour — a page could run for an hour with the collector down
+ * and nothing said so.
+ */
+function warnOnce(cause, message) {
+  if (warned.has(cause)) return;
+  warned.add(cause);
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn(`[flowtrace] ${message}`);
+  }
+}
 
 /** @param {Partial<typeof DEFAULTS>} options */
 export function configure(options = {}) {
   config = { ...DEFAULTS, ...options };
+  // Browsers block plaintext requests from an https page (mixed content), and
+  // they do it before the request leaves — every flush would fail and the
+  // failure path below is the only thing that would ever mention it.
+  if (typeof location !== 'undefined' && location.protocol === 'https:'
+      && String(config.endpoint).startsWith('http:')) {
+    warnOnce('mixed-content',
+      `endpoint ${config.endpoint} is plaintext but the page is https: the browser will block every flush as mixed content. Use an https collector endpoint.`);
+  }
 }
 
 /** Queues one event, flushing if the batch is full. */
@@ -57,7 +81,7 @@ export function emit(event) {
   }
 }
 
-/** How many events were dropped for exceeding maxQueue. */
+/** How many events were dropped: queue overflow, or a batch the collector never got. */
 export function droppedCount() {
   return dropped;
 }
@@ -91,16 +115,24 @@ export async function flush({ beacon = false } = {}) {
   }
 
   try {
-    await fetch(config.endpoint, {
+    const res = await fetch(config.endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body,
       keepalive: true,
     });
+    if (res && res.ok === false) {
+      dropped += batch.length;
+      warnOnce('rejected', `collector ${config.endpoint} answered ${res.status}; that batch of ${batch.length} event(s) is lost`);
+    }
     return true;
-  } catch {
+  } catch (e) {
     // The collector being down must never break the traced application, and
-    // must never retry into an unbounded buffer either. The batch is gone.
+    // must never retry into an unbounded buffer either. The batch is gone —
+    // but counted, and said once: a trace with a hole nobody knows about is
+    // worse than one that says it has a hole.
+    dropped += batch.length;
+    warnOnce('unreachable', `collector ${config.endpoint} unreachable (${e?.message ?? e}); events are being dropped`);
     return true;
   }
 }
@@ -115,6 +147,10 @@ export async function flush({ beacon = false } = {}) {
  */
 export function installUnloadFlush() {
   if (typeof document === 'undefined' || typeof addEventListener !== 'function') return false;
+  // Idempotent: a second initFlowtrace (hydration, HMR, a re-mounted root)
+  // must not flush twice per unload.
+  if (unloadInstalled) return true;
+  unloadInstalled = true;
   const send = () => { void flush({ beacon: true }); };
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') send();
@@ -129,4 +165,6 @@ export function resetEmitter() {
   queue = [];
   dropped = 0;
   config = { ...DEFAULTS };
+  unloadInstalled = false;
+  warned.clear();
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Public API injected into every instrumented function/method (AC1). The
 // transformer generates one call to Enter, followed by a deferred closure
 // that calls either ExitPanic (on a recovered panic, re-raised immediately
@@ -72,13 +74,23 @@ func Enter(module, class, method, visibility string, argPairs ...any) *Span {
 }
 
 // Exit is called when an instrumented function's body returns normally.
-// results holds the function's named results' values, in declaration order
-// — a returned non-nil error is ordinary Go control flow rather than an
-// exception, so the first one found among results populates the event's
-// `error` field the same way a panic does (AC3): a returned error is
-// exactly what a Go developer is debugging, and it is what makes
+// resultPairs alternates result name, value, name, value, ... in declaration
+// order — the same shape Enter receives its parameters in. The transformer
+// passes a result's declared name when the function names its results
+// (`func Divide() (quotient int, err error)` reports
+// {"quotient": ..., "err": ...}) and a positional "r0", "r1", ... key when it
+// does not (`(int, error)` reports {"r0": ..., "r1": ...}); a blank `_`
+// result inside a named list is positional too, since it has no name to
+// keep. Redaction and truncation apply to each result by that key exactly
+// as they apply to an argument by its name, so a result named `password` is
+// emitted as "<redacted>".
+//
+// A returned non-nil error is ordinary Go control flow rather than an
+// exception, so the first one found among the results populates the
+// event's `error` field the same way a panic does (AC3): a returned error
+// is exactly what a Go developer is debugging, and it is what makes
 // trace_find_error useful for Go traces.
-func Exit(s *Span, results ...any) {
+func Exit(s *Span, resultPairs ...any) {
 	if s == nil {
 		return
 	}
@@ -94,10 +106,11 @@ func Exit(s *Span, results ...any) {
 	keys := redactKeys()
 	maxLen := maxArgLength()
 
-	result := make(map[string]any, len(results))
+	result := make(map[string]any, len(resultPairs)/2)
 	var errObj map[string]any
-	for i, r := range results {
-		key := "r" + strconv.Itoa(i)
+	for i := 0; i+1 < len(resultPairs); i += 2 {
+		key, _ := resultPairs[i].(string)
+		r := resultPairs[i+1]
 		result[key] = serializeNamed(key, r, keys, maxLen)
 		if errObj == nil {
 			if e := asNonNilError(r); e != nil {
@@ -306,10 +319,18 @@ func safeErrorMessage(e error) string {
 		done <- e.Error()
 	}()
 
+	// time.NewTimer + Stop, not time.After: this runs once per
+	// error-returning call, and time.After's timer cannot be released
+	// before it fires, so on the common path (Error() returns instantly)
+	// every traced error would leave a timer alive for the full
+	// errorMessageTimeout — a hot loop returning errors would pile them up.
+	timer := time.NewTimer(errorMessageTimeout)
+	defer timer.Stop()
+
 	select {
 	case msg := <-done:
 		return msg
-	case <-time.After(errorMessageTimeout):
+	case <-timer.C:
 		errorMessageCircuitTripped.Store(typeName, true)
 		return fmt.Sprintf("<Error() on type %s did not return within %s — likely blocked on a lock the caller already holds>", typeName, errorMessageTimeout)
 	}
@@ -466,6 +487,20 @@ func truncateIfNeeded(v any, maxLen int) any {
 // falls back to its type name. It never calls a method on the user's
 // value — no String(), no Error(), no MarshalJSON — so it cannot be made to
 // take a lock the traced function already holds (AC4).
+//
+// One hazard it cannot defend against: a map argument that another
+// goroutine writes to while this goroutine is still inside the call. Go
+// reports "concurrent map iteration and map write" as a fatal runtime
+// error, not a panic — it is thrown with runtime.throw, so no recover, in
+// this package or in the user's, ever sees it, and the process dies with
+// that message. serializeMap ranges over the map exactly as user code
+// would, so tracing a function does not create the race, it only widens
+// the window in which an existing one gets caught; a program that hits it
+// under FlowTrace was already racy, and the fix belongs in the program (or
+// in its `go test -race` run), not here. There is deliberately no attempt
+// at heroics — no copying under a lock we do not own, no snapshotting via
+// unsafe — because any of that would need the same synchronization the
+// program is missing.
 func serializeValue(v reflect.Value, depth int, keys []string) any {
 	if !v.IsValid() {
 		return nil
