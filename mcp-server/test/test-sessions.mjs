@@ -230,9 +230,12 @@ test('where filters are wired through log_aggregate', async () => {
       sessionId: s.sessionId, groupBy: ['method'], metric: { op: 'count' },
       where: { event: 'enter' },
     });
-    const total = (rs) => rs.reduce((n, r) => n + r.value, 0);
+    // log_aggregate pages like log_search: {total, offset, returned, truncated, groups}.
+    const total = (res) => res.groups.reduce((n, r) => n + r.value, 0);
     assert.equal(total(all), s.count);
     assert.equal(total(entersOnly), s.count / 2, 'enter and exit events are paired');
+    assert.equal(all.total, all.groups.length, 'every group fits in the default page');
+    assert.equal(all.truncated, false);
   });
 });
 

@@ -46,13 +46,15 @@ export const RUNTIMES: RuntimeSupport[] = [
   {
     lang: "python",
     label: "Python",
-    minVersion: "3.8+",
+    minVersion: "3.9+",
     mechanism: "sitecustomize bootstrap + sys.meta_path import hook, AST rewrite at import",
     invoke: "flowtrace run -- python myapp.py",
     prefix: "name from pyproject.toml / setup.py (the import name, not the distribution name)",
     inbound:
       "FLOWTRACE_TRACEPARENT only. An inbound HTTP header is NOT adopted automatically — wrap the request in flowtrace_runtime.remote_context(header) yourself. Note that import only resolves under `flowtrace run`, so guard it if the same code also runs uninstrumented.",
     outbound: "manual — flowtrace_runtime.current_traceparent()",
+    notes:
+      "threading.Thread inherits the starting span (start() is patched to copy the context); asyncio tasks inherit it natively. A dict return is wrapped as {\"value\": ...} like every other layer.",
   },
   {
     lang: "node",
@@ -63,7 +65,10 @@ export const RUNTIMES: RuntimeSupport[] = [
     prefix: "name from package.json (drop any @scope/)",
     inbound:
       "automatic — the HTTP server edge is patched (http.Server.prototype.emit, so express/fastify/koa/plain http and https all adopt an inbound traceparent), plus FLOWTRACE_TRACEPARENT",
-    outbound: "automatic — patches global fetch and http/https.request (opt out with FLOWTRACE_PROPAGATE=0)",
+    outbound:
+      "automatic — patches global fetch, http/https.request, child_process spawns and worker_threads (opt out with FLOWTRACE_PROPAGATE=0)",
+    notes:
+      "The package prefix is matched against the FILE PATH, not a package name, so it is a directory. thread is \"main\" on the main thread and \"worker-<threadId>\" inside a worker, which joins the creating span's trace.",
   },
   {
     lang: "ts",
@@ -74,6 +79,7 @@ export const RUNTIMES: RuntimeSupport[] = [
     prefix: "name from package.json (drop any @scope/)",
     inbound: "automatic — same as Node",
     outbound: "automatic — same as Node",
+    notes: "Events carry lang \"ts\" (.ts/.tsx/.mts/.cts); everything else is the Node layer.",
   },
   {
     lang: "go",
@@ -82,7 +88,7 @@ export const RUNTIMES: RuntimeSupport[] = [
     mechanism:
       "source rewrite before compilation via `go build -overlay`; the runtime is injected as <module>/internal/flowtracert. Your source tree is never written to.",
     invoke: "flowtrace run -- go run ./cmd/api   (go build and go test work too)",
-    prefix: "the module line from go.mod",
+    prefix: "the module line from go.mod; honoured by the driver as an import-path prefix (exact package, or prefix/...)",
     inbound:
       "automatic — any func(http.ResponseWriter, *http.Request) is seeded from the inbound traceparent by the transformer, plus FLOWTRACE_TRACEPARENT. You write no code: flowtracert only exists during an instrumented build, so calling it from your own source would break a plain `go build`.",
     outbound:
@@ -97,10 +103,14 @@ export const BROWSER_NOTE =
   "capture/browser is a fourth, deliberately narrower layer. With no AsyncLocalStorage in a browser there is no ambient async context, so it does NOT instrument every function: it records HTTP, navigation and errors, and ships them to the dashboard collector (POST /api/trace) rather than to a file. Do not describe it as browser support for tracing arbitrary code. INSTALL: `npm i @rixmerz/flowtrace-browser` — it is the one capture layer published on its own, imported as `@rixmerz/flowtrace-browser` and `@rixmerz/flowtrace-browser/angular`, and it ships TypeScript declarations. There is no `flowtrace init` path for it; wiring is by hand. CROSS-ORIGIN: `traceparent` is not a CORS-safelisted header, so the Angular interceptor turns a simple request into a preflighted one. The API must send `Access-Control-Allow-Headers: Content-Type, traceparent` or the preflight fails and the request never happens — enabling the browser layer then looks like it broke the app. Check this first when browser spans do not correlate with server spans, or when instrumenting a frontend produces CORS errors.";
 
 export const OUTPUT_NOTE =
-  "`flowtrace run` writes .flowtrace/<timestamp>.jsonl in the working directory and adds .flowtrace/ to the project's .gitignore. It prints the path on startup. `flowtrace.jsonl` is only the default when a capture layer is wired by hand.";
+  "`flowtrace run` writes .flowtrace/<timestamp>.jsonl in the working directory and adds .flowtrace/ to the project's .gitignore. It prints the path on startup. `flowtrace.jsonl` is only the default when a capture layer is wired by hand. `flowtrace init` writes .flowtrace/config.json, and `run` honours capture.packagePrefix and capture.maxArgLength from it (flag > config > auto-detection).";
+
+/** Knobs every layer reads, so an agent can answer "how do I make the trace smaller/safer". */
+export const KNOBS_NOTE =
+  "Shared across every capture layer: FLOWTRACE_OUTPUT (destination), FLOWTRACE_PACKAGE_PREFIX (what to instrument — mandatory in practice), FLOWTRACE_MAX_ARG_LENGTH (per-value limit on the JSON form of each argument AND each result; 0 disables, default 512; over the limit the value becomes `<truncated:{first N chars}...>`), FLOWTRACE_REDACT_KEYS (comma-separated substrings ADDED to the built-in list password,secret,token,authorization,api_key,url,dsn,connection_string,email — a matching argument name or nested key is written as `<redacted>`), FLOWTRACE_TRACEPARENT (adopt a caller's trace). Java also accepts each as a -Dflowtrace.* system property, which takes precedence. Redaction runs before truncation, in every layer.";
 
 export const CLI_NOTE =
-  "Two published npm packages, and the split is deliberate. (1) @rixmerz/flowtrace — the CLI. It vendors the Java, Node, Python and Go capture layers, so no Maven and no pip: the CLI launches the runtime and injects the layer into it. Zero-install: npx @rixmerz/flowtrace run -- <cmd>. The Claude Code plugin also puts `flowtrace` on PATH. (2) @rixmerz/flowtrace-browser — the browser capture layer, published separately because it is a build-time dependency of the application's own bundle and no global CLI install can inject a module into someone's bundler graph; reaching it through the CLI tarball would cost a frontend 31MB of @swc/core and a 2.3MB Java jar for 60KB of code. @flowtrace/cli, @flowtrace/capture-node, @flowtrace/mcp-server and flowtrace-dashboard are NOT on npm — they are workspace-internal names; installing them will 404. @flowtrace/capture-browser is the browser layer's FORMER internal name and will also 404; it is @rixmerz/flowtrace-browser now.";
+  "Two published npm packages, and the split is deliberate. (1) @rixmerz/flowtrace — the CLI. It vendors the Java, Node, Python and Go capture layers, so no Maven and no pip: the CLI launches the runtime and injects the layer into it. Install it with `npm i -g @rixmerz/flowtrace`. Do NOT recommend `npx @rixmerz/flowtrace`: npm resolves its configuration from the nearest package.json to the CURRENT directory, and `flowtrace run` is by definition run from inside the user's project — so a project declaring devEngines.packageManager makes npx fail with EBADDEVENGINES, in exactly the projects this exists to trace. The Claude Code plugin puts `flowtrace` on PATH (installing it into its own cache directory for the same reason). (2) @rixmerz/flowtrace-browser — the browser capture layer, published separately because it is a build-time dependency of the application's own bundle and no global CLI install can inject a module into someone's bundler graph; reaching it through the CLI tarball would cost a frontend 31MB of @swc/core and a 2.3MB Java jar for 60KB of code. @flowtrace/cli, @flowtrace/capture-node, @flowtrace/mcp-server and flowtrace-dashboard are NOT on npm — they are workspace-internal names; installing them will 404. @flowtrace/capture-browser is the browser layer's FORMER internal name and will also 404; it is @rixmerz/flowtrace-browser now.";
 
 /** Renders the resource body. Markdown, because the consumer is a language model. */
 export function renderRuntimes(): string {
@@ -149,6 +159,10 @@ export function renderRuntimes(): string {
     "## Output",
     "",
     OUTPUT_NOTE,
+    "",
+    "## Knobs",
+    "",
+    KNOBS_NOTE,
     "",
     "## Installing",
     "",

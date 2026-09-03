@@ -21152,6 +21152,7 @@ var StdioServerTransport = class {
 
 // src/server.ts
 var import_node_fs2 = __toESM(require("node:fs"));
+var import_node_crypto = require("node:crypto");
 
 // src/lib/jsonl.ts
 var import_node_fs = __toESM(require("node:fs"));
@@ -21457,12 +21458,13 @@ var RUNTIMES = [
   {
     lang: "python",
     label: "Python",
-    minVersion: "3.8+",
+    minVersion: "3.9+",
     mechanism: "sitecustomize bootstrap + sys.meta_path import hook, AST rewrite at import",
     invoke: "flowtrace run -- python myapp.py",
     prefix: "name from pyproject.toml / setup.py (the import name, not the distribution name)",
     inbound: "FLOWTRACE_TRACEPARENT only. An inbound HTTP header is NOT adopted automatically \u2014 wrap the request in flowtrace_runtime.remote_context(header) yourself. Note that import only resolves under `flowtrace run`, so guard it if the same code also runs uninstrumented.",
-    outbound: "manual \u2014 flowtrace_runtime.current_traceparent()"
+    outbound: "manual \u2014 flowtrace_runtime.current_traceparent()",
+    notes: 'threading.Thread inherits the starting span (start() is patched to copy the context); asyncio tasks inherit it natively. A dict return is wrapped as {"value": ...} like every other layer.'
   },
   {
     lang: "node",
@@ -21472,7 +21474,8 @@ var RUNTIMES = [
     invoke: "flowtrace run -- node myapp.js",
     prefix: "name from package.json (drop any @scope/)",
     inbound: "automatic \u2014 the HTTP server edge is patched (http.Server.prototype.emit, so express/fastify/koa/plain http and https all adopt an inbound traceparent), plus FLOWTRACE_TRACEPARENT",
-    outbound: "automatic \u2014 patches global fetch and http/https.request (opt out with FLOWTRACE_PROPAGATE=0)"
+    outbound: "automatic \u2014 patches global fetch, http/https.request, child_process spawns and worker_threads (opt out with FLOWTRACE_PROPAGATE=0)",
+    notes: `The package prefix is matched against the FILE PATH, not a package name, so it is a directory. thread is "main" on the main thread and "worker-<threadId>" inside a worker, which joins the creating span's trace.`
   },
   {
     lang: "ts",
@@ -21482,7 +21485,8 @@ var RUNTIMES = [
     invoke: "flowtrace run -- ts-node myapp.ts",
     prefix: "name from package.json (drop any @scope/)",
     inbound: "automatic \u2014 same as Node",
-    outbound: "automatic \u2014 same as Node"
+    outbound: "automatic \u2014 same as Node",
+    notes: 'Events carry lang "ts" (.ts/.tsx/.mts/.cts); everything else is the Node layer.'
   },
   {
     lang: "go",
@@ -21490,15 +21494,16 @@ var RUNTIMES = [
     minVersion: "1.24+",
     mechanism: "source rewrite before compilation via `go build -overlay`; the runtime is injected as <module>/internal/flowtracert. Your source tree is never written to.",
     invoke: "flowtrace run -- go run ./cmd/api   (go build and go test work too)",
-    prefix: "the module line from go.mod",
+    prefix: "the module line from go.mod; honoured by the driver as an import-path prefix (exact package, or prefix/...)",
     inbound: "automatic \u2014 any func(http.ResponseWriter, *http.Request) is seeded from the inbound traceparent by the transformer, plus FLOWTRACE_TRACEPARENT. You write no code: flowtracert only exists during an instrumented build, so calling it from your own source would break a plain `go build`.",
     outbound: "manual, and only from code that is itself instrumented \u2014 there is no seam to patch, since net/http resolves at compile time",
     notes: "The target module's own `go` directive must be 1.24+ as well; FlowTrace refuses before touching anything otherwise. Go has no seam for automatic outbound propagation: net/http resolves at compile time."
   }
 ];
 var BROWSER_NOTE = "capture/browser is a fourth, deliberately narrower layer. With no AsyncLocalStorage in a browser there is no ambient async context, so it does NOT instrument every function: it records HTTP, navigation and errors, and ships them to the dashboard collector (POST /api/trace) rather than to a file. Do not describe it as browser support for tracing arbitrary code. INSTALL: `npm i @rixmerz/flowtrace-browser` \u2014 it is the one capture layer published on its own, imported as `@rixmerz/flowtrace-browser` and `@rixmerz/flowtrace-browser/angular`, and it ships TypeScript declarations. There is no `flowtrace init` path for it; wiring is by hand. CROSS-ORIGIN: `traceparent` is not a CORS-safelisted header, so the Angular interceptor turns a simple request into a preflighted one. The API must send `Access-Control-Allow-Headers: Content-Type, traceparent` or the preflight fails and the request never happens \u2014 enabling the browser layer then looks like it broke the app. Check this first when browser spans do not correlate with server spans, or when instrumenting a frontend produces CORS errors.";
-var OUTPUT_NOTE = "`flowtrace run` writes .flowtrace/<timestamp>.jsonl in the working directory and adds .flowtrace/ to the project's .gitignore. It prints the path on startup. `flowtrace.jsonl` is only the default when a capture layer is wired by hand.";
-var CLI_NOTE = "Two published npm packages, and the split is deliberate. (1) @rixmerz/flowtrace \u2014 the CLI. It vendors the Java, Node, Python and Go capture layers, so no Maven and no pip: the CLI launches the runtime and injects the layer into it. Zero-install: npx @rixmerz/flowtrace run -- <cmd>. The Claude Code plugin also puts `flowtrace` on PATH. (2) @rixmerz/flowtrace-browser \u2014 the browser capture layer, published separately because it is a build-time dependency of the application's own bundle and no global CLI install can inject a module into someone's bundler graph; reaching it through the CLI tarball would cost a frontend 31MB of @swc/core and a 2.3MB Java jar for 60KB of code. @flowtrace/cli, @flowtrace/capture-node, @flowtrace/mcp-server and flowtrace-dashboard are NOT on npm \u2014 they are workspace-internal names; installing them will 404. @flowtrace/capture-browser is the browser layer's FORMER internal name and will also 404; it is @rixmerz/flowtrace-browser now.";
+var OUTPUT_NOTE = "`flowtrace run` writes .flowtrace/<timestamp>.jsonl in the working directory and adds .flowtrace/ to the project's .gitignore. It prints the path on startup. `flowtrace.jsonl` is only the default when a capture layer is wired by hand. `flowtrace init` writes .flowtrace/config.json, and `run` honours capture.packagePrefix and capture.maxArgLength from it (flag > config > auto-detection).";
+var KNOBS_NOTE = "Shared across every capture layer: FLOWTRACE_OUTPUT (destination), FLOWTRACE_PACKAGE_PREFIX (what to instrument \u2014 mandatory in practice), FLOWTRACE_MAX_ARG_LENGTH (per-value limit on the JSON form of each argument AND each result; 0 disables, default 512; over the limit the value becomes `<truncated:{first N chars}...>`), FLOWTRACE_REDACT_KEYS (comma-separated substrings ADDED to the built-in list password,secret,token,authorization,api_key,url,dsn,connection_string,email \u2014 a matching argument name or nested key is written as `<redacted>`), FLOWTRACE_TRACEPARENT (adopt a caller's trace). Java also accepts each as a -Dflowtrace.* system property, which takes precedence. Redaction runs before truncation, in every layer.";
+var CLI_NOTE = "Two published npm packages, and the split is deliberate. (1) @rixmerz/flowtrace \u2014 the CLI. It vendors the Java, Node, Python and Go capture layers, so no Maven and no pip: the CLI launches the runtime and injects the layer into it. Install it with `npm i -g @rixmerz/flowtrace`. Do NOT recommend `npx @rixmerz/flowtrace`: npm resolves its configuration from the nearest package.json to the CURRENT directory, and `flowtrace run` is by definition run from inside the user's project \u2014 so a project declaring devEngines.packageManager makes npx fail with EBADDEVENGINES, in exactly the projects this exists to trace. The Claude Code plugin puts `flowtrace` on PATH (installing it into its own cache directory for the same reason). (2) @rixmerz/flowtrace-browser \u2014 the browser capture layer, published separately because it is a build-time dependency of the application's own bundle and no global CLI install can inject a module into someone's bundler graph; reaching it through the CLI tarball would cost a frontend 31MB of @swc/core and a 2.3MB Java jar for 60KB of code. @flowtrace/cli, @flowtrace/capture-node, @flowtrace/mcp-server and flowtrace-dashboard are NOT on npm \u2014 they are workspace-internal names; installing them will 404. @flowtrace/capture-browser is the browser layer's FORMER internal name and will also 404; it is @rixmerz/flowtrace-browser now.";
 function renderRuntimes() {
   const lines = [
     "# FlowTrace \u2014 supported runtimes",
@@ -21543,6 +21548,10 @@ function renderRuntimes() {
     "",
     OUTPUT_NOTE,
     "",
+    "## Knobs",
+    "",
+    KNOBS_NOTE,
+    "",
     "## Installing",
     "",
     CLI_NOTE,
@@ -21556,16 +21565,54 @@ function renderRuntimes() {
 }
 
 // src/server.ts
-var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
+var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.2.0" });
 var sessions = /* @__PURE__ */ new Map();
-var evicted = /* @__PURE__ */ new Set();
-var closed = /* @__PURE__ */ new Set();
+var MAX_REMEMBERED_IDS = 1e3;
+var RecentIds = class {
+  ids = /* @__PURE__ */ new Set();
+  add(id) {
+    this.ids.add(id);
+    while (this.ids.size > MAX_REMEMBERED_IDS) {
+      const oldest = this.ids.values().next().value;
+      if (oldest === void 0) break;
+      this.ids.delete(oldest);
+    }
+  }
+  has(id) {
+    return this.ids.has(id);
+  }
+  delete(id) {
+    return this.ids.delete(id);
+  }
+};
+var evicted = new RecentIds();
+var closed = new RecentIds();
 var MAX_SESSIONS = (() => {
   const raw = Number(process.env.FLOWTRACE_MCP_MAX_SESSIONS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
 })();
+var MAX_BYTES = (() => {
+  const raw = Number(process.env.FLOWTRACE_MCP_MAX_BYTES);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 512 * 1024 * 1024;
+})();
 function genId() {
-  return Math.random().toString(36).slice(2);
+  return (0, import_node_crypto.randomUUID)();
+}
+function assertKnownFields(s, names, what) {
+  const known = Object.keys(s.fields);
+  const unknown2 = names.filter((n) => !(n in s.fields));
+  if (unknown2.length === 0) return;
+  const near = (bad) => {
+    const b = bad.toLowerCase();
+    return known.filter((k) => k.toLowerCase().includes(b) || b.includes(k.toLowerCase())).slice(0, 5);
+  };
+  const details = unknown2.map((u) => {
+    const suggestions = near(u);
+    return suggestions.length ? `${u} (did you mean ${suggestions.join(", ")}?)` : u;
+  }).join("; ");
+  throw new Error(
+    `Unknown ${what}: ${details}. This log has: ${known.join(", ")}`
+  );
 }
 function evictOverCap() {
   const dropped = [];
@@ -21609,7 +21656,23 @@ mcp.tool(
   "Open a v2 JSONL trace log and return a session id",
   { path: external_exports.string().describe("Absolute path to the JSONL log file") },
   async ({ path }) => {
-    if (!import_node_fs2.default.existsSync(path)) throw new Error(`File not found: ${path}`);
+    let stat;
+    try {
+      stat = import_node_fs2.default.statSync(path);
+    } catch {
+      throw new Error(`File not found: ${path}`);
+    }
+    if (stat.isDirectory()) {
+      throw new Error(
+        `${path} is a directory, not a trace file. Point log_open at a .jsonl file inside it.`
+      );
+    }
+    if (!stat.isFile()) throw new Error(`${path} is not a regular file`);
+    if (stat.size > MAX_BYTES) {
+      throw new Error(
+        `${path} is ${stat.size} bytes, over the ${MAX_BYTES}-byte limit \u2014 the whole log is held in memory. Raise FLOWTRACE_MCP_MAX_BYTES to load it anyway, or narrow the capture (a package prefix usually shrinks a trace by an order of magnitude).`
+      );
+    }
     const { rows, fields, schemaVersion, malformed } = await loadJsonl(path);
     const id = genId();
     sessions.set(id, {
@@ -21625,6 +21688,8 @@ mcp.tool(
     return ok({
       sessionId: id,
       count: rows.length,
+      bytes: stat.size,
+      fields: Object.keys(fields),
       schemaVersion,
       malformed,
       // Reported rather than silent: a caller holding an older id needs to know
@@ -21689,6 +21754,7 @@ mcp.tool(
   },
   async ({ sessionId, where, filter, fields, limit = 200, offset = 0 }) => {
     const s = getSession(sessionId);
+    if (fields?.length) assertKnownFields(s, fields, "field name(s)");
     const matched = applyFilters(s.rows, where, filter);
     const page = matched.slice(offset, offset + limit);
     let rows = page;
@@ -21719,31 +21785,50 @@ mcp.tool(
       field: external_exports.string().optional().describe("Numeric field for sum/avg/max/min")
     }),
     where: whereSchema.optional().describe("Field-level filters applied before aggregation"),
-    filter: external_exports.string().optional().describe("Optional substring filter applied before aggregation")
+    filter: external_exports.string().optional().describe("Optional substring filter applied before aggregation"),
+    limit: external_exports.number().int().positive().optional().describe("Max groups (default 200)"),
+    offset: external_exports.number().int().nonnegative().optional().describe("Groups to skip, for paging")
   },
-  async ({ sessionId, groupBy, metric, where, filter }) => {
+  async ({ sessionId, groupBy, metric, where, filter, limit = 200, offset = 0 }) => {
     const s = getSession(sessionId);
+    assertKnownFields(s, groupBy, "groupBy field(s)");
+    if (metric.field) assertKnownFields(s, [metric.field], "metric field");
     const rows = applyFilters(s.rows, where, filter);
     const grouped = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const rec = r;
       const key = groupBy.map((k) => String(rec[k] ?? "")).join("|");
-      const v = metric.field ? Number(rec[metric.field]) : 1;
-      const arr = grouped.get(key) ?? [];
-      arr.push(Number.isFinite(v) ? v : 0);
-      grouped.set(key, arr);
+      const raw = metric.field ? Number(rec[metric.field]) : 1;
+      const v = Number.isFinite(raw) ? raw : 0;
+      let acc = grouped.get(key);
+      if (!acc) {
+        acc = { n: 0, sum: 0, max: -Infinity, min: Infinity };
+        grouped.set(key, acc);
+      }
+      acc.n += 1;
+      acc.sum += v;
+      if (v > acc.max) acc.max = v;
+      if (v < acc.min) acc.min = v;
     }
-    const out = [];
-    for (const [key, vals] of grouped) {
+    const all = [];
+    for (const [key, acc] of grouped) {
       let value = 0;
-      if (metric.op === "count") value = vals.length;
-      else if (metric.op === "sum") value = vals.reduce((a, b) => a + b, 0);
-      else if (metric.op === "avg") value = vals.reduce((a, b) => a + b, 0) / vals.length;
-      else if (metric.op === "max") value = Math.max(...vals);
-      else if (metric.op === "min") value = Math.min(...vals);
-      out.push({ key, value, n: vals.length });
+      if (metric.op === "count") value = acc.n;
+      else if (metric.op === "sum") value = acc.sum;
+      else if (metric.op === "avg") value = acc.sum / acc.n;
+      else if (metric.op === "max") value = acc.n ? acc.max : 0;
+      else if (metric.op === "min") value = acc.n ? acc.min : 0;
+      all.push({ key, value, n: acc.n });
     }
-    return ok(out);
+    all.sort((a, b) => b.value - a.value || a.key.localeCompare(b.key));
+    const groups = all.slice(offset, offset + limit);
+    return ok({
+      total: all.length,
+      offset,
+      returned: groups.length,
+      truncated: offset + groups.length < all.length,
+      groups
+    });
   }
 );
 mcp.tool(

@@ -13,8 +13,8 @@
  * inlines every dependency.
  *
  * The output is a committed build artifact, which is normally a smell — it can
- * silently go stale against the source it was built from. The `mcp-bundle-current`
- * CI job is the guard: it rebuilds and fails if the result differs from what is
+ * silently go stale against the source it was built from. The `plugin`
+ * CI job (.github/workflows/v2-ci.yml) is the guard: it rebuilds and fails if the result differs from what is
  * committed. esbuild is pinned to an exact version so that comparison is
  * meaningful; a caret range would make the bundle differ on a patch release and
  * turn the guard into noise.

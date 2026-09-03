@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { loadJsonl } from "./lib/jsonl";
 import { applyFilters } from "./filter";
 import type { OpenSession, TraceEvent } from "./types";
@@ -17,7 +18,7 @@ import {
 } from "./trace-tools";
 import { renderRuntimes } from "./runtimes";
 
-const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
+const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.2.0" });
 
 /**
  * Open sessions, newest-touched last.
@@ -28,19 +29,78 @@ const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.1.0" });
  */
 const sessions = new Map<string, OpenSession>();
 
+/**
+ * A bounded set of ids: the newest MAX_REMEMBERED_IDS are kept and older ones
+ * forgotten. These exist only to turn "invalid session" into a useful message,
+ * so remembering every id a long-lived process ever issued was an unbounded
+ * leak in service of a nicety.
+ */
+const MAX_REMEMBERED_IDS = 1000;
+class RecentIds {
+  private ids = new Set<string>();
+  add(id: string) {
+    this.ids.add(id);
+    while (this.ids.size > MAX_REMEMBERED_IDS) {
+      const oldest = this.ids.values().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.ids.delete(oldest);
+    }
+  }
+  has(id: string) { return this.ids.has(id); }
+  delete(id: string) { return this.ids.delete(id); }
+}
+
 /** Ids evicted to make room, so a stale id gets a useful error, not "invalid". */
-const evicted = new Set<string>();
+const evicted = new RecentIds();
 
 /** Ids explicitly released via log_close — distinguishes "closed on purpose"
  *  from "evicted for space" and from "never opened" (a typo). */
-const closed = new Set<string>();
+const closed = new RecentIds();
 
 const MAX_SESSIONS = (() => {
   const raw = Number(process.env.FLOWTRACE_MCP_MAX_SESSIONS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
 })();
 
-function genId(): string { return Math.random().toString(36).slice(2); }
+/**
+ * Largest log this server will load. Every event is retained as a JS object,
+ * so a multi-hundred-MB JSONL becomes several times that in heap and takes the
+ * process down with it — an out-of-memory kill of an MCP server reads to the
+ * agent as "the tool disappeared", with nothing to explain it.
+ */
+const MAX_BYTES = (() => {
+  const raw = Number(process.env.FLOWTRACE_MCP_MAX_BYTES);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 512 * 1024 * 1024;
+})();
+
+function genId(): string { return randomUUID(); }
+
+/**
+ * Rejects a field name the session has never seen, naming the closest ones it
+ * has. A typo used to be silent: the row lookup produced `undefined`, so
+ * log_search returned a column of nulls and log_aggregate grouped everything
+ * under one empty key — both of which read as a finding about the program.
+ */
+function assertKnownFields(s: OpenSession, names: string[], what: string): void {
+  const known = Object.keys(s.fields);
+  const unknown = names.filter((n) => !(n in s.fields));
+  if (unknown.length === 0) return;
+  const near = (bad: string) => {
+    const b = bad.toLowerCase();
+    return known
+      .filter((k) => k.toLowerCase().includes(b) || b.includes(k.toLowerCase()))
+      .slice(0, 5);
+  };
+  const details = unknown
+    .map((u) => {
+      const suggestions = near(u);
+      return suggestions.length ? `${u} (did you mean ${suggestions.join(", ")}?)` : u;
+    })
+    .join("; ");
+  throw new Error(
+    `Unknown ${what}: ${details}. This log has: ${known.join(", ")}`
+  );
+}
 
 /** Drops least-recently-used sessions until the cap holds. */
 function evictOverCap(): string[] {
@@ -93,7 +153,24 @@ mcp.tool(
   "Open a v2 JSONL trace log and return a session id",
   { path: z.string().describe("Absolute path to the JSONL log file") },
   async ({ path }) => {
-    if (!fs.existsSync(path)) throw new Error(`File not found: ${path}`);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(path);
+    } catch {
+      throw new Error(`File not found: ${path}`);
+    }
+    if (stat.isDirectory()) {
+      throw new Error(
+        `${path} is a directory, not a trace file. Point log_open at a .jsonl file inside it.`
+      );
+    }
+    if (!stat.isFile()) throw new Error(`${path} is not a regular file`);
+    if (stat.size > MAX_BYTES) {
+      throw new Error(
+        `${path} is ${stat.size} bytes, over the ${MAX_BYTES}-byte limit — the whole log is held in memory. ` +
+        `Raise FLOWTRACE_MCP_MAX_BYTES to load it anyway, or narrow the capture (a package prefix usually shrinks a trace by an order of magnitude).`
+      );
+    }
     const { rows, fields, schemaVersion, malformed } = await loadJsonl(path);
     const id = genId();
     sessions.set(id, {
@@ -103,6 +180,8 @@ mcp.tool(
     return ok({
       sessionId: id,
       count: rows.length,
+      bytes: stat.size,
+      fields: Object.keys(fields),
       schemaVersion,
       malformed,
       // Reported rather than silent: a caller holding an older id needs to know
@@ -171,6 +250,7 @@ mcp.tool(
   },
   async ({ sessionId, where, filter, fields, limit = 200, offset = 0 }) => {
     const s = getSession(sessionId);
+    if (fields?.length) assertKnownFields(s, fields, "field name(s)");
     const matched = applyFilters(s.rows, where, filter);
     const page = matched.slice(offset, offset + limit);
 
@@ -208,30 +288,56 @@ mcp.tool(
     }),
     where: whereSchema.optional().describe("Field-level filters applied before aggregation"),
     filter: z.string().optional().describe("Optional substring filter applied before aggregation"),
+    limit: z.number().int().positive().optional().describe("Max groups (default 200)"),
+    offset: z.number().int().nonnegative().optional().describe("Groups to skip, for paging"),
   },
-  async ({ sessionId, groupBy, metric, where, filter }) => {
+  async ({ sessionId, groupBy, metric, where, filter, limit = 200, offset = 0 }) => {
     const s = getSession(sessionId);
+    assertKnownFields(s, groupBy, "groupBy field(s)");
+    if (metric.field) assertKnownFields(s, [metric.field], "metric field");
     const rows = applyFilters(s.rows, where, filter);
-    const grouped = new Map<string, number[]>();
+
+    // Running accumulators rather than an array per group: `Math.max(...vals)`
+    // spreads the group into an argument list, and a group the size of a real
+    // trace overflows the call stack — on the most ordinary call this tool has.
+    interface Acc { n: number; sum: number; max: number; min: number }
+    const grouped = new Map<string, Acc>();
     for (const r of rows) {
       const rec = r as unknown as Record<string, unknown>;
       const key = groupBy.map(k => String(rec[k] ?? "")).join("|");
-      const v = metric.field ? Number(rec[metric.field]) : 1;
-      const arr = grouped.get(key) ?? [];
-      arr.push(Number.isFinite(v) ? v : 0);
-      grouped.set(key, arr);
+      const raw = metric.field ? Number(rec[metric.field]) : 1;
+      const v = Number.isFinite(raw) ? raw : 0;
+      let acc = grouped.get(key);
+      if (!acc) {
+        acc = { n: 0, sum: 0, max: -Infinity, min: Infinity };
+        grouped.set(key, acc);
+      }
+      acc.n += 1;
+      acc.sum += v;
+      if (v > acc.max) acc.max = v;
+      if (v < acc.min) acc.min = v;
     }
-    const out: Array<{ key: string; value: number; n: number }> = [];
-    for (const [key, vals] of grouped) {
+
+    const all: Array<{ key: string; value: number; n: number }> = [];
+    for (const [key, acc] of grouped) {
       let value = 0;
-      if (metric.op === "count") value = vals.length;
-      else if (metric.op === "sum") value = vals.reduce((a, b) => a + b, 0);
-      else if (metric.op === "avg") value = vals.reduce((a, b) => a + b, 0) / vals.length;
-      else if (metric.op === "max") value = Math.max(...vals);
-      else if (metric.op === "min") value = Math.min(...vals);
-      out.push({ key, value, n: vals.length });
+      if (metric.op === "count") value = acc.n;
+      else if (metric.op === "sum") value = acc.sum;
+      else if (metric.op === "avg") value = acc.sum / acc.n;
+      else if (metric.op === "max") value = acc.n ? acc.max : 0;
+      else if (metric.op === "min") value = acc.n ? acc.min : 0;
+      all.push({ key, value, n: acc.n });
     }
-    return ok(out);
+    // Deterministic order, so paging cannot skip or repeat a group.
+    all.sort((a, b) => b.value - a.value || a.key.localeCompare(b.key));
+    const groups = all.slice(offset, offset + limit);
+    return ok({
+      total: all.length,
+      offset,
+      returned: groups.length,
+      truncated: offset + groups.length < all.length,
+      groups,
+    });
   }
 );
 

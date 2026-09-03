@@ -1,6 +1,7 @@
 // FlowTrace v2 — canonical event types. Source of truth: schema/flowtrace-v2.json.
-// Events are one JSON object per line in a JSONL stream. ENTER and EXIT are
-// paired by span_id; ERROR may stand alone or replace EXIT.
+// Events are one JSON object per line in a JSONL stream. `enter` and `exit` are
+// paired by span_id; a failed call is an `exit` carrying `error` (there is no
+// third variant — see the note on TraceEvent below).
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonArray;
 export interface JsonObject { [key: string]: unknown; }
@@ -13,7 +14,7 @@ export type TraceId = string & { readonly __brand: "TraceId" };
 export type SpanId = string & { readonly __brand: "SpanId" };
 
 export type Visibility = "public" | "private" | "internal" | "unknown";
-export type Lang = "java" | "python" | "node" | "ts" | "go" | string;
+export type Lang = "java" | "python" | "node" | "ts" | "go" | "browser" | string;
 
 export interface BaseEvent {
   ts: number;                 // float seconds since epoch
