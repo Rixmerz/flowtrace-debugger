@@ -19,6 +19,7 @@ import re
 import sys
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import ClassVar, Optional
 
@@ -38,6 +39,56 @@ _EXIT_REQUIRED = frozenset({
     "thread", "lang", "module", "class", "method",
     "visibility", "args", "result", "duration_ns", "depth",
 })
+
+
+# ---------------------------------------------------------------------------
+# Process hooks
+#
+# Both atexit.register and os.register_at_fork keep a strong reference to what
+# they are given, and os.register_at_fork cannot be undone at all. Registering
+# a bound method per instance therefore pinned every Emitter ever built — and
+# with it an open file descriptor — for the life of the interpreter.
+#
+# On CPython 3.9 that was not just a leak, it was fatal: an Emitter pinned by a
+# fork callback while still holding an open file crashed the interpreter with
+# SIGSEGV during finalization, so the test suite exited 139 with "100 passed"
+# printed on the line above. 3.10 reordered that teardown and hid it.
+#
+# So the hooks are registered once, at module level, over a WeakSet: the
+# behaviour is identical for the singleton (Emitter._instance keeps it alive),
+# and an Emitter nobody holds any more becomes collectable.
+# ---------------------------------------------------------------------------
+
+_live_emitters: "weakref.WeakSet[Emitter]" = weakref.WeakSet()
+_process_hooks_registered = False
+
+
+def _reset_emitters_after_fork() -> None:
+    """Re-arm every live emitter in the child. Never raises into the fork."""
+    for emitter in list(_live_emitters):
+        try:
+            emitter._after_fork_in_child()
+        except Exception:  # noqa: BLE001 — a fork handler must not raise
+            pass
+
+
+def _shutdown_emitters() -> None:
+    """Close every live emitter at exit. Never raises during shutdown."""
+    for emitter in list(_live_emitters):
+        try:
+            emitter._at_exit()
+        except Exception:  # noqa: BLE001 — shutdown must not raise
+            pass
+
+
+def _register_process_hooks_once() -> None:
+    global _process_hooks_registered
+    if _process_hooks_registered:
+        return
+    atexit.register(_shutdown_emitters)
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(after_in_child=_reset_emitters_after_fork)
+    _process_hooks_registered = True
 
 
 def _default_output_path() -> Path:
@@ -63,14 +114,13 @@ class Emitter:
         self._path: Optional[Path] = None
         self._dropped = 0
         self._warned: set[str] = set()
-        atexit.register(self._at_exit)
         # A forked child inherits a lock that may be held by another thread of
         # the parent (deadlock on first emit) and the parent's open descriptor
         # (both processes appending to one file through one buffer). Start the
         # child with a fresh lock and no file; _ensure_open reopens in append
         # mode, so the child lands in the same file without sharing state.
-        if hasattr(os, "register_at_fork"):
-            os.register_at_fork(after_in_child=self._after_fork_in_child)
+        _live_emitters.add(self)
+        _register_process_hooks_once()
 
     # ------------------------------------------------------------------
     # Singleton access
@@ -156,8 +206,24 @@ class Emitter:
                 except Exception:
                     pass
 
+    def _close(self) -> None:
+        """Flush and close the output file. Idempotent; never raises."""
+        with self._lock:
+            if self._file is None:
+                return
+            try:
+                self._file.flush()
+                self._file.close()
+            except Exception:  # noqa: BLE001 — shutdown must not raise
+                pass
+            self._file = None
+
     def _at_exit(self) -> None:
-        self._flush()
+        # Close, not just flush: the file is opened for the life of the
+        # process, so this is the only place it is ever released. Leaving it to
+        # interpreter teardown means releasing it after the io machinery has
+        # already been dismantled.
+        self._close()
         if self._dropped:
             print(
                 f"[flowtrace] {self._dropped} event(s) were dropped; the trace has holes",

@@ -152,9 +152,74 @@ def test_concurrent_emit_no_interleaving(tmp_path, monkeypatch):
 
 def test_atexit_flush_registered(tmp_path, monkeypatch):
     """Emitter registers an atexit handler without raising."""
-    import atexit as _atexit
     monkeypatch.setenv("FLOWTRACE_OUTPUT", str(tmp_path / "trace.jsonl"))
     e = Emitter.__new__(Emitter)
     Emitter.__init__(e)
     # Simply check that construction did not raise and _flush is callable.
     assert callable(e._flush)
+
+
+# ---------------------------------------------------------------------------
+# Fork-hook lifetime
+# ---------------------------------------------------------------------------
+
+def test_fork_hook_is_registered_once_for_all_emitters(tmp_path, monkeypatch):
+    """os.register_at_fork has no unregister, so it must be called once.
+
+    Registering per instance appended a permanent callback holding that
+    Emitter, and through it an open file, for the life of the interpreter.
+    """
+    import flowtrace_runtime.emitter as em
+
+    monkeypatch.setenv("FLOWTRACE_OUTPUT", str(tmp_path / "trace.jsonl"))
+    calls = []
+    monkeypatch.setattr(os, "register_at_fork", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(em, "_process_hooks_registered", False)
+
+    for _ in range(5):
+        e = Emitter.__new__(Emitter)
+        Emitter.__init__(e)
+        e._ensure_open()
+
+    assert len(calls) == 1, f"registered {len(calls)} fork hooks for 5 emitters"
+
+
+def test_discarded_emitters_are_collectable(tmp_path, monkeypatch):
+    """A dropped Emitter must not be pinned by the fork hook.
+
+    On CPython 3.9 a pinned Emitter still holding an open file segfaulted the
+    interpreter during finalization — the whole suite exited 139 right after
+    printing "100 passed".
+    """
+    import gc
+    import weakref as _weakref
+
+    monkeypatch.setenv("FLOWTRACE_OUTPUT", str(tmp_path / "trace.jsonl"))
+    e = Emitter.__new__(Emitter)
+    Emitter.__init__(e)
+    e._ensure_open()
+    ref = _weakref.ref(e)
+
+    e._close()
+    del e
+    gc.collect()
+
+    assert ref() is None, "the emitter is still reachable after being dropped"
+
+
+def test_at_exit_closes_the_file_and_a_later_emit_reopens_it(tmp_path, monkeypatch):
+    """The file is opened for the process lifetime, so _at_exit is where it closes."""
+    out = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("FLOWTRACE_OUTPUT", str(out))
+    e = Emitter.__new__(Emitter)
+    Emitter.__init__(e)
+
+    e.emit(_make_enter())
+    e._at_exit()
+    assert e._file is None, "_at_exit left the file open"
+
+    # Reopening in append mode keeps the earlier line: an emit after shutdown
+    # must not truncate the trace it is adding to.
+    e.emit(_make_enter())
+    e._close()
+    assert len(out.read_text().splitlines()) == 2
