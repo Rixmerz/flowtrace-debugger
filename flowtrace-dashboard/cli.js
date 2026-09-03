@@ -35,13 +35,13 @@ Examples:
 async function main() {
   try {
     switch (command) {
-      case 'start':
+      case 'start': {
         const serverStatus = await tools.startDashboard();
         console.log(`✅ ${serverStatus.message}`);
         console.log(`📊 Dashboard URL: ${serverStatus.url}`);
         break;
-
-      case 'open':
+      }
+      case 'open': {
         if (!filePath) {
           console.error('❌ Error: File path required');
           process.exit(1);
@@ -76,7 +76,8 @@ async function main() {
         }
         break;
 
-      case 'analyze':
+      }
+      case 'analyze': {
         if (!filePath) {
           console.error('❌ Error: File path required');
           process.exit(1);
@@ -98,7 +99,8 @@ async function main() {
         }
         break;
 
-      case 'slow':
+      }
+      case 'slow': {
         if (!filePath) {
           console.error('❌ Error: File path required');
           process.exit(1);
@@ -118,7 +120,8 @@ async function main() {
         });
         break;
 
-      case 'bottlenecks':
+      }
+      case 'bottlenecks': {
         if (!filePath) {
           console.error('❌ Error: File path required');
           process.exit(1);
@@ -137,7 +140,8 @@ async function main() {
         });
         break;
 
-      case 'errors':
+      }
+      case 'errors': {
         if (!filePath) {
           console.error('❌ Error: File path required');
           process.exit(1);
@@ -159,9 +163,11 @@ async function main() {
         }
         break;
 
-      default:
+      }
+      default: {
         console.error(`❌ Unknown command: ${command}`);
         process.exit(1);
+      }
     }
 
   } catch (error) {

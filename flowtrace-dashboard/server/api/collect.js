@@ -17,8 +17,14 @@
  *     request influences where bytes land.
  *   - Body size and batch length are capped, so a single request cannot fill
  *     the disk or pin the event loop.
- *   - CORS is restricted to localhost by default: any site the developer
- *     happens to visit could otherwise POST into their trace file.
+ *
+ * What is NOT a bound: CORS. A text/plain POST is a CORS "simple request" and
+ * is delivered whatever the Origin — the browser only hides the response. So
+ * any page the developer visits can append schema-valid events here; the
+ * validation above is what keeps that from poisoning the file with anything
+ * but well-formed spans, and the loopback bind (server.js) is what keeps it
+ * off the network. An earlier comment claimed CORS prevented the write; it
+ * does not, and pretending it did would stop the next reader from looking.
  */
 
 'use strict';

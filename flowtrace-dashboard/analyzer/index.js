@@ -15,13 +15,9 @@ class FlowTraceAnalyzer {
   async analyze(filePath) {
     const parser = new JSONLParser();
 
-    // Get basic stats
-    const stats = await parser.getStats(filePath);
+    // One read: stats and events come out of the same pass.
+    const { events, stats } = await parser.parseWithStats(filePath);
 
-    // Parse all events
-    const events = await parser.parse(filePath);
-
-    // Analyze performance
     const perfAnalyzer = new PerformanceAnalyzer(events);
     const performance = perfAnalyzer.analyze();
 

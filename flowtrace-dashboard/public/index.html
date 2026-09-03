@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FlowTrace Performance Dashboard</title>
     <link rel="stylesheet" href="css/dashboard.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Vendored (public/js/vendor): no CDN, so the Content-Security-Policy can be script-src 'self' and the page works offline. -->
+    <script src="js/vendor/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -147,23 +148,6 @@
     <script src="js/components/table-renderer.js"></script>
     <script src="js/components/chart-renderer.js"></script>
     <script src="js/app.js"></script>
-    <script>
-        // Auto-load analysis if analysisId is in URL
-        window.addEventListener('DOMContentLoaded', () => {
-            const params = new URLSearchParams(window.location.search);
-            const analysisId = params.get('analysis');
-
-            if (analysisId) {
-                const apiClient = new APIClient();
-                apiClient.getAnalysis(analysisId)
-                    .then(analysis => {
-                        window.dashboard.handleAnalysisResults(analysis);
-                    })
-                    .catch(error => {
-                        console.error('Failed to load analysis:', error);
-                    });
-            }
-        });
-    </script>
+    <script src="js/app-init.js"></script>
 </body>
 </html>

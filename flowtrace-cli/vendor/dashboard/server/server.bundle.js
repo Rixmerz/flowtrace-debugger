@@ -30021,72 +30021,92 @@ var require_jsonl_parser = __commonJS({
     var fs = require("fs");
     var readline = require("readline");
     function isLikelyV2(obj) {
-      return obj && typeof obj === "object" && typeof obj.trace_id === "string" && typeof obj.span_id === "string" && typeof obj.ts === "number" && (obj.event === "enter" || obj.event === "exit" || obj.event === "error");
+      return obj && typeof obj === "object" && typeof obj.trace_id === "string" && typeof obj.span_id === "string" && typeof obj.ts === "number" && (obj.event === "enter" || obj.event === "exit");
+    }
+    function emptyStats() {
+      return {
+        totalEvents: 0,
+        enterEvents: 0,
+        exitEvents: 0,
+        errorEvents: 0,
+        malformedLines: 0,
+        classes: /* @__PURE__ */ new Set(),
+        traces: /* @__PURE__ */ new Set(),
+        minTs: Infinity,
+        maxTs: 0
+      };
+    }
+    function accumulate(stats, event) {
+      stats.totalEvents++;
+      if (event.event === "enter") stats.enterEvents++;
+      else if (event.event === "exit") {
+        stats.exitEvents++;
+        if (event.error) stats.errorEvents++;
+      }
+      if (event.class) stats.classes.add(event.class);
+      if (event.trace_id) stats.traces.add(event.trace_id);
+      if (typeof event.ts === "number") {
+        stats.minTs = Math.min(stats.minTs, event.ts);
+        stats.maxTs = Math.max(stats.maxTs, event.ts);
+      }
+    }
+    function finish(stats) {
+      const { minTs, maxTs } = stats;
+      return {
+        totalEvents: stats.totalEvents,
+        enterEvents: stats.enterEvents,
+        exitEvents: stats.exitEvents,
+        errorEvents: stats.errorEvents,
+        malformedLines: stats.malformedLines,
+        uniqueClasses: stats.classes.size,
+        uniqueTraces: stats.traces.size,
+        classes: Array.from(stats.classes),
+        timeRange: {
+          startSec: minTs !== Infinity ? minTs : null,
+          endSec: maxTs !== 0 ? maxTs : null,
+          durationSec: maxTs !== 0 && minTs !== Infinity ? maxTs - minTs : 0
+        }
+      };
     }
     var JSONLParser = class {
-      async parse(filePath) {
+      /** Events and stats from a single read of the file. */
+      async parseWithStats(filePath) {
         const events = [];
-        const fileStream = fs.createReadStream(filePath);
-        const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
-        for await (const line of rl) {
-          const t = line.trim();
-          if (!t) continue;
-          try {
-            const obj = JSON.parse(t);
-            if (isLikelyV2(obj)) events.push(obj);
-          } catch {
-          }
-        }
+        const stats = emptyStats();
+        await this._each(filePath, (event) => {
+          events.push(event);
+          accumulate(stats, event);
+        }, stats);
+        return { events, stats: finish(stats) };
+      }
+      async parse(filePath) {
+        const { events } = await this.parseWithStats(filePath);
         return events;
       }
       async parseStream(filePath, callback) {
+        await this._each(filePath, callback, emptyStats());
+      }
+      async getStats(filePath) {
+        const stats = emptyStats();
+        await this._each(filePath, (event) => accumulate(stats, event), stats);
+        return finish(stats);
+      }
+      async _each(filePath, callback, stats) {
         const fileStream = fs.createReadStream(filePath);
         const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
         for await (const line of rl) {
           const t = line.trim();
           if (!t) continue;
+          let obj;
           try {
-            const obj = JSON.parse(t);
-            if (isLikelyV2(obj)) await callback(obj);
+            obj = JSON.parse(t);
           } catch {
+            stats.malformedLines++;
+            continue;
           }
+          if (isLikelyV2(obj)) await callback(obj);
+          else stats.malformedLines++;
         }
-      }
-      async getStats(filePath) {
-        let totalEvents = 0;
-        let enterEvents = 0;
-        let exitEvents = 0;
-        let errorEvents = 0;
-        const classes = /* @__PURE__ */ new Set();
-        const traces = /* @__PURE__ */ new Set();
-        let minTs = Infinity;
-        let maxTs = 0;
-        await this.parseStream(filePath, (event) => {
-          totalEvents++;
-          if (event.event === "enter") enterEvents++;
-          else if (event.event === "exit") exitEvents++;
-          else if (event.event === "error") errorEvents++;
-          if (event.class) classes.add(event.class);
-          if (event.trace_id) traces.add(event.trace_id);
-          if (typeof event.ts === "number") {
-            minTs = Math.min(minTs, event.ts);
-            maxTs = Math.max(maxTs, event.ts);
-          }
-        });
-        return {
-          totalEvents,
-          enterEvents,
-          exitEvents,
-          errorEvents,
-          uniqueClasses: classes.size,
-          uniqueTraces: traces.size,
-          classes: Array.from(classes),
-          timeRange: {
-            startSec: minTs !== Infinity ? minTs : null,
-            endSec: maxTs !== 0 ? maxTs : null,
-            durationSec: maxTs !== 0 && minTs !== Infinity ? maxTs - minTs : 0
-          }
-        };
       }
     };
     module2.exports = JSONLParser;
@@ -30100,10 +30120,18 @@ var require_performance = __commonJS({
     function nsToMs(ns) {
       return ns / 1e6;
     }
+    var MAX_TREE_NODES = 2e3;
+    function percentile(sorted, p) {
+      const n = sorted.length;
+      if (n === 0) return 0;
+      const rank = Math.ceil(p * n) - 1;
+      return sorted[Math.min(n - 1, Math.max(0, rank))];
+    }
     var PerformanceAnalyzer = class {
       constructor(events) {
         this.events = events || [];
         this.methodStats = /* @__PURE__ */ new Map();
+        this._indexSpans();
         this._buildMethodStats();
       }
       analyze() {
@@ -30114,6 +30142,29 @@ var require_performance = __commonJS({
           errorHotspots: this.findErrorHotspots(),
           callTrees: this.buildCallTrees(),
           summary: this.getSummary()
+        };
+      }
+      /** exit by span_id, plus the sum of direct children's durations per span. */
+      _indexSpans() {
+        this.exitBySpan = /* @__PURE__ */ new Map();
+        this.childDuration = /* @__PURE__ */ new Map();
+        for (const e of this.events) {
+          if (e.event === "exit") this.exitBySpan.set(e.span_id, e);
+        }
+        for (const e of this.exitBySpan.values()) {
+          if (!e.parent_id || !this.exitBySpan.has(e.parent_id)) continue;
+          const d = Number.isFinite(e.duration_ns) ? e.duration_ns : 0;
+          this.childDuration.set(e.parent_id, (this.childDuration.get(e.parent_id) || 0) + d);
+        }
+      }
+      /** Inclusive and exclusive time for one exit event. */
+      _timing(exit) {
+        const duration_ns = Number.isFinite(exit.duration_ns) ? exit.duration_ns : 0;
+        const children = this.childDuration.get(exit.span_id) || 0;
+        return {
+          duration_ns,
+          self_ns: Math.max(0, duration_ns - children),
+          asyncOverlap: children > duration_ns
         };
       }
       _buildMethodStats() {
@@ -30127,60 +30178,46 @@ var require_performance = __commonJS({
             stats = { class: cls, module: mod, method: e.method, lang: e.lang, calls: [], errors: 0 };
             this.methodStats.set(key, stats);
           }
-          stats.calls.push({
-            duration_ns: e.duration_ns || 0,
-            ts: e.ts,
-            hasError: !!e.error
-          });
+          const t = this._timing(e);
+          stats.calls.push({ ...t, ts: e.ts, hasError: !!e.error });
           if (e.error) stats.errors++;
         }
       }
+      _methodRow(name, s) {
+        const durations = s.calls.map((c) => c.duration_ns).sort((a, b) => a - b);
+        const selfs = s.calls.map((c) => c.self_ns);
+        const sum = durations.reduce((a, b) => a + b, 0);
+        const selfSum = selfs.reduce((a, b) => a + b, 0);
+        const n = durations.length;
+        return {
+          name,
+          class: s.class,
+          module: s.module,
+          method: s.method,
+          callCount: n,
+          avgDuration: nsToMs(sum / n),
+          avgSelfTime: nsToMs(selfSum / n),
+          p95: nsToMs(percentile(durations, 0.95)),
+          p99: nsToMs(percentile(durations, 0.99)),
+          /** inclusive: children counted, so sums across methods double-count */
+          totalTime: nsToMs(sum),
+          /** exclusive: what this method itself spent */
+          selfTime: nsToMs(selfSum),
+          asyncOverlap: s.calls.some((c) => c.asyncOverlap),
+          errors: s.errors,
+          impactScore: Math.round(nsToMs(selfSum))
+        };
+      }
       findSlowMethods(top = 20) {
         const out = [];
-        for (const [name, s] of this.methodStats) {
-          const durations = s.calls.map((c) => c.duration_ns).sort((a, b) => a - b);
-          const sum = durations.reduce((a, b) => a + b, 0);
-          const avg = sum / durations.length;
-          const pick = (p) => durations[Math.floor(durations.length * p)] || 0;
-          out.push({
-            name,
-            class: s.class,
-            module: s.module,
-            method: s.method,
-            callCount: durations.length,
-            avgDuration: nsToMs(avg),
-            p95: nsToMs(pick(0.95)),
-            p99: nsToMs(pick(0.99)),
-            totalTime: nsToMs(sum),
-            errors: s.errors,
-            impactScore: Math.round(durations.length * nsToMs(avg))
-          });
-        }
+        for (const [name, s] of this.methodStats) out.push(this._methodRow(name, s));
         out.sort((a, b) => b.avgDuration - a.avgDuration);
         return out.slice(0, top);
       }
       findBottlenecks(top = 10) {
         const out = [];
-        for (const [name, s] of this.methodStats) {
-          const sum = s.calls.reduce((a, c) => a + c.duration_ns, 0);
-          const durations = s.calls.map((c) => c.duration_ns).sort((a, b) => a - b);
-          const avg = sum / s.calls.length;
-          const pick = (p) => durations[Math.floor(durations.length * p)] || 0;
-          out.push({
-            name,
-            class: s.class,
-            module: s.module,
-            method: s.method,
-            callCount: s.calls.length,
-            avgDuration: nsToMs(avg),
-            p95: nsToMs(pick(0.95)),
-            p99: nsToMs(pick(0.99)),
-            totalTime: nsToMs(sum),
-            errors: s.errors,
-            impactScore: Math.round(s.calls.length * nsToMs(avg))
-          });
-        }
-        out.sort((a, b) => b.impactScore - a.impactScore);
+        for (const [name, s] of this.methodStats) out.push(this._methodRow(name, s));
+        out.sort((a, b) => b.impactScore - a.impactScore || b.selfTime - a.selfTime);
         return out.slice(0, top);
       }
       calculateTimeDistribution() {
@@ -30197,7 +30234,8 @@ var require_performance = __commonJS({
         for (const s of this.methodStats.values()) {
           for (const c of s.calls) {
             const ms = nsToMs(c.duration_ns);
-            const bucket = BUCKETS.find((b) => ms < b.max);
+            if (!Number.isFinite(ms)) continue;
+            const bucket = BUCKETS.find((b) => ms < b.max) || BUCKETS[BUCKETS.length - 1];
             counts.set(bucket.range, counts.get(bucket.range) + 1);
             totalCalls++;
           }
@@ -30231,7 +30269,18 @@ var require_performance = __commonJS({
         out.sort((a, b) => b.exceptions - a.exceptions);
         return out;
       }
-      /** Group events by trace_id and emit a tree per trace. */
+      /**
+       * Group events by trace_id and emit a tree per trace.
+       *
+       * Capped at MAX_TREE_NODES across the response: a real 17.8k-event trace
+       * produced a multi-megabyte tree, and this structure is cached per analysis
+       * and shipped to the browser whole. `truncated` / `elidedCount` say so.
+       *
+       * A span whose parent_id names a span that is not in the file is reported
+       * with `danglingParent: true` rather than silently promoted to a root: for a
+       * multi-file cross-process trace, a half-loaded file otherwise looks exactly
+       * like a healthy one with several roots.
+       */
       buildCallTrees() {
         const byTrace = /* @__PURE__ */ new Map();
         for (const e of this.events) {
@@ -30239,12 +30288,20 @@ var require_performance = __commonJS({
           byTrace.get(e.trace_id).push(e);
         }
         const trees = [];
+        let budget = MAX_TREE_NODES;
+        let elided = 0;
         for (const [trace_id, scoped] of byTrace) {
           const enters = scoped.filter((e) => e.event === "enter").sort((a, b) => a.ts - b.ts);
-          const exits = /* @__PURE__ */ new Map();
-          for (const e of scoped) if (e.event === "exit") exits.set(e.span_id, e);
           const nodes = /* @__PURE__ */ new Map();
+          let danglingParents = 0;
           for (const e of enters) {
+            if (budget <= 0) {
+              elided++;
+              continue;
+            }
+            budget--;
+            const exit = this.exitBySpan.get(e.span_id);
+            const timing = exit ? this._timing(exit) : null;
             nodes.set(e.span_id, {
               span_id: e.span_id,
               parent_id: e.parent_id,
@@ -30252,8 +30309,13 @@ var require_performance = __commonJS({
               class: e.class,
               module: e.module,
               lang: e.lang,
+              visibility: e.visibility,
               depth: e.depth || 0,
-              duration_ns: exits.get(e.span_id)?.duration_ns ?? null,
+              duration_ns: exit ? timing.duration_ns : null,
+              self_ns: exit ? timing.self_ns : null,
+              asyncOverlap: exit ? timing.asyncOverlap : false,
+              error: exit && exit.error ? { type: exit.error.type, msg: exit.error.msg } : null,
+              danglingParent: false,
               children: []
             });
           }
@@ -30262,33 +30324,46 @@ var require_performance = __commonJS({
             if (node.parent_id && nodes.has(node.parent_id)) {
               nodes.get(node.parent_id).children.push(node);
             } else {
+              if (node.parent_id) {
+                node.danglingParent = true;
+                danglingParents++;
+              }
               roots.push(node);
             }
           }
-          trees.push({ trace_id, roots });
+          trees.push({ trace_id, roots, danglingParents });
         }
-        return trees;
+        return Object.assign(trees, { truncated: elided > 0, elidedCount: elided });
       }
       getSummary() {
         let totalCalls = 0;
         let totalExceptions = 0;
         let total_ns = 0;
+        let self_ns = 0;
         for (const s of this.methodStats.values()) {
           totalCalls += s.calls.length;
           totalExceptions += s.errors;
-          total_ns += s.calls.reduce((a, c) => a + c.duration_ns, 0);
+          for (const c of s.calls) {
+            total_ns += c.duration_ns;
+            self_ns += c.self_ns;
+          }
         }
         return {
           totalCalls,
           totalMethods: this.methodStats.size,
           avgDuration: totalCalls > 0 ? nsToMs(total_ns / totalCalls) : 0,
+          /** inclusive sum — exceeds wall time whenever calls nest */
           totalTime: nsToMs(total_ns),
+          /** exclusive sum — the time actually spent, each nanosecond once */
+          selfTime: nsToMs(self_ns),
           totalExceptions,
           errorRate: totalCalls > 0 ? Math.round(totalExceptions / totalCalls * 1e4) / 100 : 0
         };
       }
     };
     module2.exports = PerformanceAnalyzer;
+    module2.exports.percentile = percentile;
+    module2.exports.MAX_TREE_NODES = MAX_TREE_NODES;
   }
 });
 
@@ -30305,8 +30380,7 @@ var require_analyzer = __commonJS({
        */
       async analyze(filePath) {
         const parser = new JSONLParser();
-        const stats = await parser.getStats(filePath);
-        const events = await parser.parse(filePath);
+        const { events, stats } = await parser.parseWithStats(filePath);
         const perfAnalyzer = new PerformanceAnalyzer(events);
         const performance = perfAnalyzer.analyze();
         return {
@@ -30341,57 +30415,133 @@ var require_analyze = __commonJS({
     var multer = require_multer();
     var path2 = require("path");
     var fs = require("fs");
+    var crypto = require("crypto");
     var FlowTraceAnalyzer = require_analyzer();
     var router = express2.Router();
+    function envInt(name, fallback) {
+      const n = Number(process.env[name]);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+    }
+    var UPLOAD_DIR = process.env.FLOWTRACE_DASHBOARD_UPLOAD_DIR ? path2.resolve(process.env.FLOWTRACE_DASHBOARD_UPLOAD_DIR) : path2.join(__dirname, "../../uploads");
+    var MAX_UPLOAD_BYTES = envInt("FLOWTRACE_DASHBOARD_MAX_UPLOAD_BYTES", 200 * 1024 * 1024);
+    var MAX_ANALYSES = envInt("FLOWTRACE_DASHBOARD_MAX_ANALYSES", 20);
+    var UPLOAD_TTL_MS = 24 * 60 * 60 * 1e3;
+    function allowedRoots() {
+      const raw = [process.cwd(), ...(process.env.FLOWTRACE_DASHBOARD_ROOTS || "").split(path2.delimiter)];
+      const roots = [];
+      for (const r of raw) {
+        if (!r) continue;
+        try {
+          roots.push(fs.realpathSync(path2.resolve(r)));
+        } catch {
+        }
+      }
+      return roots;
+    }
+    function insideRoot(realPath, roots) {
+      return roots.some((root) => realPath === root || realPath.startsWith(root + path2.sep));
+    }
+    function ensureUploadDir() {
+      if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 448 });
+    }
     var storage = multer.diskStorage({
       destination: (req, file, cb) => {
-        const uploadDir = path2.join(__dirname, "../../uploads");
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
+        try {
+          ensureUploadDir();
+          cb(null, UPLOAD_DIR);
+        } catch (e) {
+          cb(e);
         }
-        cb(null, uploadDir);
       },
-      filename: (req, file, cb) => {
-        const uniqueName = `${Date.now()}-${file.originalname}`;
-        cb(null, uniqueName);
-      }
+      // Never the client's name. multer joins destination + filename, so an
+      // originalname of `../../.ssh/config` walked straight out of uploads/.
+      filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}.jsonl`)
     });
     var upload = multer({
       storage,
+      limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
       fileFilter: (req, file, cb) => {
         if (file.originalname.endsWith(".jsonl") || file.mimetype === "application/jsonl") {
           cb(null, true);
         } else {
-          cb(new Error("Only .jsonl files are allowed"));
+          const err = new Error("Only .jsonl files are allowed");
+          err.status = 400;
+          cb(err);
         }
       }
     });
-    var analysisCache = /* @__PURE__ */ new Map();
-    router.post("/analyze", upload.single("file"), async (req, res) => {
-      try {
-        if (!req.file) {
-          return res.status(400).json({ error: "No file uploaded" });
+    function acceptUpload(req, res, next) {
+      upload.single("file")(req, res, (err) => {
+        if (!err) return next();
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(413).json({ error: `upload exceeds the limit of ${MAX_UPLOAD_BYTES} bytes` });
         }
-        const filePath = req.file.path;
-        const analyzer = new FlowTraceAnalyzer();
-        console.log(`Analyzing file: ${req.file.originalname}`);
-        const results = await analyzer.analyze(filePath);
-        const analysisId = `analysis-${Date.now()}`;
-        analysisCache.set(analysisId, {
-          id: analysisId,
-          fileName: req.file.originalname,
-          filePath,
-          uploadTime: /* @__PURE__ */ new Date(),
-          results
-        });
-        res.json({
-          analysisId,
-          fileName: req.file.originalname,
-          results
-        });
+        if (err.code && err.code.startsWith("LIMIT_")) {
+          return res.status(400).json({ error: "invalid upload" });
+        }
+        return res.status(err.status || 400).json({ error: err.message || "invalid upload" });
+      });
+    }
+    function sweepStaleUploads() {
+      try {
+        if (!fs.existsSync(UPLOAD_DIR)) return;
+        const cutoff = Date.now() - UPLOAD_TTL_MS;
+        for (const name of fs.readdirSync(UPLOAD_DIR)) {
+          const p = path2.join(UPLOAD_DIR, name);
+          try {
+            if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
+          } catch {
+          }
+        }
+      } catch {
+      }
+    }
+    sweepStaleUploads();
+    var analysisCache = /* @__PURE__ */ new Map();
+    function removeUploadedFile(entry) {
+      if (!entry || !entry.uploaded) return;
+      try {
+        fs.unlinkSync(entry.filePath);
+      } catch {
+      }
+    }
+    function remember(entry) {
+      analysisCache.set(entry.id, entry);
+      while (analysisCache.size > MAX_ANALYSES) {
+        const oldestId = analysisCache.keys().next().value;
+        removeUploadedFile(analysisCache.get(oldestId));
+        analysisCache.delete(oldestId);
+      }
+    }
+    process.on("exit", () => {
+      for (const entry of analysisCache.values()) removeUploadedFile(entry);
+    });
+    function newAnalysisId() {
+      return `analysis-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    }
+    router.get("/config", (req, res) => {
+      res.json({
+        roots: allowedRoots(),
+        maxUploadBytes: MAX_UPLOAD_BYTES,
+        maxAnalyses: MAX_ANALYSES,
+        uploadDir: UPLOAD_DIR
+      });
+    });
+    router.post("/analyze", acceptUpload, async (req, res) => {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+      const filePath = req.file.path;
+      const fileName = path2.basename(req.file.originalname || "upload.jsonl");
+      try {
+        const results = await new FlowTraceAnalyzer().analyze(filePath);
+        const analysisId = newAnalysisId();
+        remember({ id: analysisId, fileName, filePath, uploaded: true, uploadTime: /* @__PURE__ */ new Date(), results });
+        res.json({ analysisId, fileName, results });
       } catch (error) {
-        console.error("Analysis error:", error);
-        res.status(500).json({ error: error.message });
+        console.error("[flowtrace-dashboard] analysis failed:", error);
+        removeUploadedFile({ uploaded: true, filePath });
+        res.status(500).json({ error: "analysis failed" });
       }
     });
     router.get("/analyze/:id", (req, res) => {
@@ -30400,7 +30550,12 @@ var require_analyze = __commonJS({
         return res.status(404).json({ error: "Analysis not found" });
       }
       const analysis = analysisCache.get(id);
-      res.json(analysis);
+      res.json({
+        id: analysis.id,
+        fileName: analysis.fileName,
+        uploadTime: analysis.uploadTime,
+        results: analysis.results
+      });
     });
     router.get("/analyze", (req, res) => {
       const analyses = Array.from(analysisCache.values()).map((a) => ({
@@ -30417,48 +30572,55 @@ var require_analyze = __commonJS({
       if (!analysisCache.has(id)) {
         return res.status(404).json({ error: "Analysis not found" });
       }
-      const analysis = analysisCache.get(id);
-      if (fs.existsSync(analysis.filePath)) {
-        fs.unlinkSync(analysis.filePath);
-      }
+      removeUploadedFile(analysisCache.get(id));
       analysisCache.delete(id);
       res.json({ message: "Analysis deleted" });
     });
     router.post("/analyze-file", async (req, res) => {
+      const { filePath } = req.body || {};
+      if (!filePath || typeof filePath !== "string") {
+        return res.status(400).json({ error: "File path is required" });
+      }
+      let real;
       try {
-        const { filePath } = req.body;
-        if (!filePath) {
-          return res.status(400).json({ error: "File path is required" });
-        }
-        if (!fs.existsSync(filePath)) {
-          return res.status(404).json({ error: "File not found" });
-        }
-        if (!filePath.endsWith(".jsonl")) {
-          return res.status(400).json({ error: "File must be a .jsonl file" });
-        }
-        const analyzer = new FlowTraceAnalyzer();
-        console.log(`Analyzing file from path: ${filePath}`);
-        const results = await analyzer.analyze(filePath);
-        const analysisId = `analysis-${Date.now()}`;
-        analysisCache.set(analysisId, {
-          id: analysisId,
-          fileName: path2.basename(filePath),
-          filePath,
-          uploadTime: /* @__PURE__ */ new Date(),
-          results
+        real = fs.realpathSync(path2.resolve(filePath));
+      } catch {
+        return res.status(404).json({ error: "File not found" });
+      }
+      const roots = allowedRoots();
+      if (!insideRoot(real, roots)) {
+        return res.status(403).json({
+          error: "path is outside the directories this dashboard may read",
+          code: "OUTSIDE_ROOTS",
+          roots
         });
-        res.json({
-          analysisId,
-          fileName: path2.basename(filePath),
-          filePath,
-          results
-        });
+      }
+      let st;
+      try {
+        st = fs.statSync(real);
+      } catch {
+        return res.status(404).json({ error: "File not found" });
+      }
+      if (!st.isFile()) {
+        return res.status(400).json({ error: "Path is not a file" });
+      }
+      if (!real.endsWith(".jsonl")) {
+        return res.status(400).json({ error: "File must be a .jsonl file" });
+      }
+      try {
+        const results = await new FlowTraceAnalyzer().analyze(real);
+        const analysisId = newAnalysisId();
+        const fileName = path2.basename(real);
+        remember({ id: analysisId, fileName, filePath: real, uploaded: false, uploadTime: /* @__PURE__ */ new Date(), results });
+        res.json({ analysisId, fileName, results });
       } catch (error) {
-        console.error("Analysis error:", error);
-        res.status(500).json({ error: error.message });
+        console.error("[flowtrace-dashboard] analysis failed:", error);
+        res.status(500).json({ error: "analysis failed" });
       }
     });
     module2.exports = router;
+    module2.exports.allowedRoots = allowedRoots;
+    module2.exports.UPLOAD_DIR = UPLOAD_DIR;
   }
 });
 
@@ -37701,8 +37863,18 @@ var analyzeRouter = require_analyze();
 var collectRouter = require_collect();
 var app = express();
 var PORT = process.env.FLOWTRACE_DASHBOARD_PORT || process.env.PORT || 8765;
+var HOST = process.env.FLOWTRACE_DASHBOARD_HOST || "127.0.0.1";
 var corsOrigin = process.env.FLOWTRACE_CORS_ORIGIN ? process.env.FLOWTRACE_CORS_ORIGIN.split(",").map((s) => s.trim()) : /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 app.use(cors({ origin: corsOrigin }));
+app.use((req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+  );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
 app.use("/api", collectRouter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -37714,16 +37886,29 @@ app.get("/health", (req, res) => {
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/index.html"));
 });
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "not found" });
+});
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error("[flowtrace-dashboard]", err);
+  res.status(status).json({ error: status >= 500 ? "internal error" : err.message || "bad request" });
+});
 if (require.main === module) startServer();
 function startServer() {
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, HOST, () => {
+    const shownHost = HOST === "0.0.0.0" || HOST === "::" ? "localhost" : HOST;
     console.log("");
     console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
     console.log("  FlowTrace Performance Dashboard");
     console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
     console.log("");
-    console.log(`  Server running at: http://localhost:${PORT}`);
-    console.log(`  Collector endpoint: POST http://localhost:${PORT}/api/trace`);
+    console.log(`  Server running at: http://${shownHost}:${PORT}  (bound to ${HOST})`);
+    console.log(`  Collector endpoint: POST http://${shownHost}:${PORT}/api/trace`);
+    if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") {
+      console.log("  WARNING: reachable from the network; this API has no authentication.");
+    }
     console.log("");
     console.log("  Upload a flowtrace.jsonl file to start analyzing");
     console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
@@ -37742,3 +37927,5 @@ function startServer() {
 }
 module.exports = app;
 module.exports.startServer = startServer;
+module.exports.HOST = HOST;
+module.exports.PORT = PORT;

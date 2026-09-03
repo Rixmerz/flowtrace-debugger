@@ -63,7 +63,7 @@ class APIClient {
    * @returns {Promise<Object>}
    */
   async getAnalysis(analysisId) {
-    const response = await fetch(`${this.baseURL}/api/analyze/${analysisId}`);
+    const response = await fetch(`${this.baseURL}/api/analyze/${encodeURIComponent(analysisId)}`);
     if (!response.ok) {
       throw new Error(`Failed to fetch analysis: ${response.status}`);
     }
@@ -89,7 +89,7 @@ class APIClient {
    * @returns {Promise<Object>}
    */
   async deleteAnalysis(analysisId) {
-    const response = await fetch(`${this.baseURL}/api/analyze/${analysisId}`, {
+    const response = await fetch(`${this.baseURL}/api/analyze/${encodeURIComponent(analysisId)}`, {
       method: 'DELETE'
     });
     if (!response.ok) {

@@ -7,50 +7,89 @@ const axios = require('axios');
 const { spawn } = require('child_process');
 const path = require('path');
 
-const DASHBOARD_URL = 'http://localhost:8765';
+const HOST = process.env.FLOWTRACE_DASHBOARD_HOST || '127.0.0.1';
+const PORT = process.env.FLOWTRACE_DASHBOARD_PORT || process.env.PORT || 8765;
+const DASHBOARD_URL = `http://${HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST}:${PORT}`;
 let serverProcess = null;
+
+/**
+ * Whether the thing answering on the port is actually this dashboard. Another
+ * service on 8765 would otherwise be reported as "already running" and every
+ * request after that would fail in confusing ways.
+ */
+async function isDashboardUp() {
+  try {
+    const res = await axios.get(`${DASHBOARD_URL}/health`, { timeout: 1000 });
+    return res.data && res.data.service === 'flowtrace-dashboard';
+  } catch {
+    return false;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 /**
  * Start the FlowTrace Dashboard server
  * @returns {Promise<Object>} Server status
  */
 async function startDashboard() {
-  return new Promise((resolve, reject) => {
-    // Check if server is already running
-    axios.get(`${DASHBOARD_URL}/health`)
-      .then(response => {
-        resolve({
-          status: 'already_running',
-          message: 'Dashboard server is already running',
-          url: DASHBOARD_URL
-        });
-      })
-      .catch(() => {
-        // Server not running, start it
-        const serverPath = path.join(__dirname, 'server', 'server.js');
-        serverProcess = spawn('node', [serverPath], {
-          detached: true,
-          stdio: 'ignore'
-        });
+  if (await isDashboardUp()) {
+    return {
+      status: 'already_running',
+      message: 'Dashboard server is already running',
+      url: DASHBOARD_URL
+    };
+  }
 
-        serverProcess.unref();
-
-        // Wait for server to start
-        setTimeout(async () => {
-          try {
-            await axios.get(`${DASHBOARD_URL}/health`);
-            resolve({
-              status: 'started',
-              message: 'Dashboard server started successfully',
-              url: DASHBOARD_URL,
-              pid: serverProcess.pid
-            });
-          } catch (error) {
-            reject(new Error('Failed to start dashboard server'));
-          }
-        }, 2000);
-      });
+  // process.execPath, not 'node': the interpreter running this is the one
+  // that is known to exist, and a PATH without `node` (nvm, a pinned
+  // toolchain) is common.
+  const serverPath = path.join(__dirname, 'server', 'server.js');
+  serverProcess = spawn(process.execPath, [serverPath], {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
   });
+  serverProcess.unref();
+
+  // Poll instead of a fixed sleep: ready in a few hundred ms on a warm
+  // machine, several seconds on a cold one.
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (await isDashboardUp()) {
+      return {
+        status: 'started',
+        message: 'Dashboard server started successfully',
+        url: DASHBOARD_URL,
+        pid: serverProcess.pid
+      };
+    }
+    await sleep(150);
+  }
+  throw new Error(`Failed to start dashboard server on ${DASHBOARD_URL}`);
+}
+
+/**
+ * Sends a path to the server, falling back to an upload when the path is
+ * outside the directories the server is allowed to read (403 OUTSIDE_ROOTS).
+ */
+async function submitFile(filePath) {
+  try {
+    const response = await axios.post(`${DASHBOARD_URL}/api/analyze-file`, { filePath });
+    return response.data;
+  } catch (error) {
+    const code = error.response && error.response.data && error.response.data.code;
+    if (!(error.response && error.response.status === 403 && code === 'OUTSIDE_ROOTS')) throw error;
+  }
+  const fs = require('fs');
+  const FormData = globalThis.FormData;
+  const Blob = globalThis.Blob;
+  const form = new FormData();
+  form.append('file', new Blob([fs.readFileSync(filePath)]), path.basename(filePath));
+  const response = await axios.post(`${DASHBOARD_URL}/api/analyze`, form);
+  return response.data;
 }
 
 /**
@@ -63,15 +102,10 @@ async function openInDashboard(filePath) {
     // Ensure server is running
     await startDashboard();
 
-    // Analyze the file
-    const response = await axios.post(`${DASHBOARD_URL}/api/analyze-file`, {
-      filePath: filePath
-    });
-
-    const { analysisId, fileName, results } = response.data;
+    const { analysisId, fileName, results } = await submitFile(filePath);
 
     // Generate dashboard URL with analysis ID
-    const dashboardURL = `${DASHBOARD_URL}?analysis=${analysisId}`;
+    const dashboardURL = `${DASHBOARD_URL}?analysis=${encodeURIComponent(analysisId)}`;
 
     return {
       success: true,
@@ -107,11 +141,7 @@ async function analyzeFile(filePath) {
   try {
     await startDashboard();
 
-    const response = await axios.post(`${DASHBOARD_URL}/api/analyze-file`, {
-      filePath: filePath
-    });
-
-    const { results } = response.data;
+    const { results } = await submitFile(filePath);
 
     return {
       success: true,
@@ -143,7 +173,7 @@ async function getSlowMethods(filePath, top = 10) {
     return result.performance.slowMethods.slice(0, top);
 
   } catch (error) {
-    throw new Error(`Failed to get slow methods: ${error.message}`);
+    throw new Error(`Failed to get slow methods: ${error.message}`, { cause: error });
   }
 }
 
@@ -163,7 +193,7 @@ async function getBottlenecks(filePath, top = 10) {
     return result.performance.bottlenecks.slice(0, top);
 
   } catch (error) {
-    throw new Error(`Failed to get bottlenecks: ${error.message}`);
+    throw new Error(`Failed to get bottlenecks: ${error.message}`, { cause: error });
   }
 }
 
@@ -182,7 +212,7 @@ async function getErrorHotspots(filePath) {
     return result.performance.errorHotspots;
 
   } catch (error) {
-    throw new Error(`Failed to get error hotspots: ${error.message}`);
+    throw new Error(`Failed to get error hotspots: ${error.message}`, { cause: error });
   }
 }
 
@@ -201,7 +231,7 @@ async function getPerformanceSummary(filePath) {
     return result.performance.summary;
 
   } catch (error) {
-    throw new Error(`Failed to get performance summary: ${error.message}`);
+    throw new Error(`Failed to get performance summary: ${error.message}`, { cause: error });
   }
 }
 

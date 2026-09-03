@@ -2,14 +2,14 @@
   "name": "flowtrace-dashboard",
   "private": true,
   "//": "Workspace-internal. Bundled into @rixmerz/flowtrace by flowtrace-cli/scripts/bundle-dashboard.mjs; never published to npm.",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Performance analysis dashboard for FlowTrace logs",
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
     "dev": "nodemon server/server.js",
     "cli": "node cli.js",
-    "test": "node test/test-analyzer.js"
+    "test": "for t in test/*.js; do echo \"-- $t\"; node \"$t\" || exit 1; done"
   },
   "bin": {
     "flowtrace-dashboard": "./cli.js"
