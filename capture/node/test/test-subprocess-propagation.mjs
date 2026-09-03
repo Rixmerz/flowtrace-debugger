@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import { withTraceparentEnv, TRACEPARENT_ENV } from '../src/runtime/subprocess.js';
 import { seedFromEnvironment, runInSpan, getCurrent } from '../src/runtime/index.js';
+import { _clearInheritedContextForTests } from '../src/runtime/context.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
@@ -153,4 +154,43 @@ test('currentTraceparent drives what gets injected', async () => {
     const out = withTraceparentEnv(['ls'], `00-${ctx.trace_id}-${ctx.span_id}-01`);
     assert.ok(out[1].env[TRACEPARENT_ENV].includes(ctx.trace_id));
   });
+});
+
+/**
+ * The seeded context must be readable from an async context other than the one
+ * that seeded it. It used to live in an AsyncLocalStorage via enterWith(),
+ * which only worked because the async_hooks implementation let that leak out
+ * of the calling context. Node 24 makes AsyncContextFrame the default and ends
+ * the leak, and every worker thread silently started its own root trace: the
+ * `--import` bootstrap seeds in one context, the worker's main module runs in
+ * another. test-worker-threads.mjs catches it end to end on Node 24 only; this
+ * states the invariant on every version.
+ */
+test('a seeded context survives into a different async context', async () => {
+  try {
+    assert.equal(seedFromEnvironment(TP), true);
+    const seeded = getCurrent();
+    assert.ok(seeded, 'seeded synchronously');
+
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(getCurrent(), seeded, 'still there after the context changed');
+
+    await runInSpan(async () => {
+      const span = getCurrent();
+      assert.equal(span.trace_id, seeded.trace_id, 'a local span inherits the trace');
+      assert.equal(span.depth, 0, 'and lands at depth 0, like an ordinary root');
+      assert.notEqual(span.span_id, seeded.span_id, 'the real span wins over the seed');
+    });
+
+    assert.deepEqual(getCurrent(), seeded, 'the seed is a fallback, not consumed');
+  } finally {
+    _clearInheritedContextForTests();
+  }
+});
+
+test('an unseeded process has no ambient context', () => {
+  _clearInheritedContextForTests();
+  assert.equal(seedFromEnvironment('not-a-traceparent'), false);
+  assert.equal(getCurrent(), null, 'a malformed carrier leaves no seed behind');
 });

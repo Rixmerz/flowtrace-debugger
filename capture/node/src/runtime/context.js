@@ -10,11 +10,23 @@ import { parseTraceparent, formatTraceparent } from './traceparent.js';
 const storage = new AsyncLocalStorage();
 
 /**
+ * The context seeded from the environment, outside any AsyncLocalStorage
+ * scope. See seedFromEnvironment for why it does not live in the storage.
+ * @type {SpanContext | null}
+ */
+let inheritedContext = null;
+
+/**
  * Returns the current span context, or null if none is active.
+ *
+ * The seeded context is the fallback, never an override: inside any
+ * storage.run() the real span wins, and the seed only answers before the
+ * first local span opens.
+ *
  * @returns {SpanContext | null}
  */
 export function getCurrent() {
-  return storage.getStore() ?? null;
+  return storage.getStore() ?? inheritedContext;
 }
 
 /**
@@ -104,8 +116,24 @@ export { storage };
  * an ordinary root and satisfying the schema's `depth >= 0`.
  *
  * Unlike runWithRemoteContext this does not scope the context to a callback:
- * there is no callback to scope it to. It sets the store for the lifetime of
- * the process, which is exactly the lifetime the parent's span covers.
+ * there is no callback to scope it to. It holds for the lifetime of this
+ * thread, which is exactly the lifetime the parent's span covers — so it is
+ * kept in a module-level variable that getCurrent() falls back to, not in the
+ * AsyncLocalStorage.
+ *
+ * It used to be `storage.enterWith(seed)`, which worked only because the
+ * async_hooks implementation of AsyncLocalStorage let an enterWith() leak out
+ * of the async context that made the call. Node 24 turns AsyncContextFrame on
+ * by default and that leak is gone: in a worker thread the `--import`
+ * bootstrap runs in a different context from the worker's main module, so the
+ * seed never reached the traced code and every worker silently started its own
+ * root trace. Silently is the problem — a split trace looks exactly like a
+ * working one until someone compares ids across threads.
+ *
+ * A module-level variable also says what this actually is. Each worker thread
+ * gets its own module registry, so the seed is per-thread, and it is the only
+ * form of "current context" that does not depend on how a runtime chooses to
+ * propagate one.
  *
  * @param {string} [raw] - Defaults to process.env.FLOWTRACE_TRACEPARENT.
  * @returns {boolean} whether a valid context was adopted.
@@ -113,11 +141,16 @@ export { storage };
 export function seedFromEnvironment(raw = process.env.FLOWTRACE_TRACEPARENT) {
   const remote = parseTraceparent(raw);
   if (!remote) return false;
-  storage.enterWith({
+  inheritedContext = {
     trace_id: remote.trace_id,
     span_id: remote.parent_id,
     depth: -1,
     remote: true,
-  });
+  };
   return true;
+}
+
+/** @internal Forget the seeded context. */
+export function _clearInheritedContextForTests() {
+  inheritedContext = null;
 }
