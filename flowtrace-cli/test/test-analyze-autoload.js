@@ -194,14 +194,14 @@ async function main() {
     } catch (e) {
       secondOut = (e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : '');
     }
-    assert(/ya esta corriendo/.test(secondOut), 'reuse: second invocation reports reuse, not a fresh spawn');
+    assert(/ya está corriendo/.test(secondOut), 'reuse: second invocation reports reuse, not a fresh spawn');
 
     // AC3: the reuse path must still pre-load the trace (postAnalyzeFile is
     // called, so the URL it prints carries ?analysis=) but must NOT open a
     // browser tab — assert against the `open`/`xdg-open` shim (the
     // `_openBrowser` test-injection point for a real subprocess) never
     // being invoked, not by mocking the function in-process.
-    assert(/view this trace at:/.test(secondOut), `reuse: stdout prints the "view this trace at" message instead of opening a tab (got: ${JSON.stringify(secondOut)})`);
+    assert(/mira esta traza en:/.test(secondOut), `reuse: stdout prints the "mira esta traza en" message instead of opening a tab (got: ${JSON.stringify(secondOut)})`);
     // Extract the pre-loaded URL specifically (stdout also logs the bare
     // `dashboard: http://localhost:PORT` line earlier without ?analysis=) —
     // match on the ?analysis= query string, not just any localhost URL, and
@@ -218,7 +218,13 @@ async function main() {
       const analysisId = printedUrl.split('?analysis=')[1].trim();
       const { statusCode, body } = await httpGetJson(`http://localhost:${PORT}/api/analyze/${analysisId}`);
       assert(statusCode === 200, `reuse: GET /api/analyze/${analysisId} returns 200 (got ${statusCode})`);
-      assert(!!body && body.fileName === 'expected.jsonl' && body.filePath === secondJsonl, `reuse: returned analysis is for the SECOND file, not the first (filePath: ${body && body.filePath})`);
+      // The response deliberately no longer carries filePath — a server-side
+      // path is not the client's business — so identity is fileName plus the
+      // fact that this analysis was created by the second invocation.
+      assert(!!body && body.fileName === path.basename(secondJsonl),
+        `reuse: returned analysis is for the SECOND file, not the first (fileName: ${body && body.fileName})`);
+      assert(!!body && body.filePath === undefined,
+        'reuse: the response does not leak a server filesystem path');
     }
 
     killPort(PORT);

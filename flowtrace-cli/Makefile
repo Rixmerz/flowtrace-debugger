@@ -6,6 +6,7 @@ build: fetch-deps
 fetch-deps:
 	@sh scripts/fetch-otel-agent.sh
 
+# Glob, like the root Makefile: a hardcoded list ran 2 of 13 files, so a
+# contributor running `make test` here got a green run over 15% of the suite.
 test:
-	node test/test-cli.js
-	node test/test-cli-java.js
+	@for t in test/*.js; do echo "-- $$t"; node "$$t" || exit 1; done

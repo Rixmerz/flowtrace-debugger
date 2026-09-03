@@ -7,7 +7,7 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
-const { detectLang, detectPackagePrefix } = require('../lib/detect');
+const { detectLang, detectPackagePrefix, nodePackageName } = require('../lib/detect');
 
 let passed = 0;
 let failed = 0;
@@ -142,21 +142,27 @@ console.log('\n[detectPackagePrefix]');
 {
   const d = mkTmp();
   fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ name: 'my-app' }));
-  assert(detectPackagePrefix(d, 'node') === 'my-app', 'node: package.json plain name');
+  // The Node capture layer matches the prefix as a PATH substring
+  // (capture/node/src/cjs/hook.js: filename.includes(prefix)), so the project
+  // directory is the value that actually instruments anything. Returning the
+  // package name only worked when the directory happened to share it.
+  assert(detectPackagePrefix(d, 'node') === d, 'node: prefix is the project directory');
 }
 
 // Node scoped package name strip
 {
   const d = mkTmp();
   fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ name: '@org/my-lib' }));
-  assert(detectPackagePrefix(d, 'node') === 'my-lib', 'node: scoped name @org/my-lib -> my-lib');
+  assert(detectPackagePrefix(d, 'node') === d, 'node: scoped package still yields the directory');
+  assert(nodePackageName(d) === 'my-lib', 'node: the display name still strips @scope');
 }
 
 // Node no name
 {
   const d = mkTmp();
   fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({}));
-  assert(detectPackagePrefix(d, 'node') === null, 'node: package.json without name -> null');
+  assert(detectPackagePrefix(d, 'node') === d, 'node: a package.json without a name still yields the directory');
+  assert(nodePackageName(d) === null, 'node: no name -> no display name');
 }
 
 // Unknown lang

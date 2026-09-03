@@ -19,7 +19,7 @@ program
   .command('init')
   .description('Inicializa FlowTrace en el proyecto actual (.flowtrace/config.json)')
   .option('--lang <lang>', 'Forza el lenguaje: java|python|node|ts|go')
-  .option('-y, --yes', 'Acepta valores por defecto')
+  .option('-y, --yes', 'No pregunta: acepta el primer lenguaje detectado')
   .action(async (options) => {
     try {
       await require('../lib/commands/init')(options);
@@ -35,9 +35,9 @@ program
   .addHelpText('after', `
 Opciones:
   --lang <java|python|node|ts|go>   Lenguaje del proyecto (auto-detectado si se omite)
-  --package-prefix <pkg>            Prefijo de paquete a instrumentar (Java/Python)
+  --package-prefix <pkg>            Prefijo a instrumentar (paquete en Java/Python/Go, ruta en Node/TS)
   --inject <mvn|gradle|java>        Estrategia de inyección JVM (default: auto)
-  --output <path>                   Ruta del JSONL (default: .flowtrace/<ISO-UTC>.jsonl)
+  -o, --out <path>                  Ruta del JSONL (default: .flowtrace/<ISO-UTC>.jsonl)
 
 Auto-detección:
   Sin --lang el CLI detecta el lenguaje según archivos del proyecto:
@@ -54,7 +54,7 @@ Ejemplos:
   flowtrace run --lang java -- mvn spring-boot:run
   flowtrace run --lang go -- go run ./cmd/api`)
   .option('--lang <lang>', 'Lenguaje de la app: java|python|node|ts|go (auto-detectado si se omite)')
-  .option('--package-prefix <pkg>', 'Prefijo de paquete a instrumentar (Java)')
+  .option('--package-prefix <pkg>', 'Prefijo a instrumentar (paquete en Java/Python/Go, ruta en Node/TS)')
   .option('--inject <strategy>', 'Estrategia de inyección JVM: mvn|gradle|java (default: auto)')
   .option('-o, --out <path>', 'Ruta de salida JSONL (default: .flowtrace/<ISO>.jsonl)')
   .allowUnknownOption(true)

@@ -105,7 +105,7 @@ async function main() {
     secondOut = (e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : '');
   }
 
-  assert(/ya esta corriendo/.test(secondOut), 'second invocation: reports dashboard already running, does not attempt a spawn');
+  assert(/ya está corriendo/.test(secondOut), 'second invocation: reports dashboard already running, does not attempt a spawn');
   assert(!/Iniciando servidor/.test(secondOut), 'second invocation: never logs "Iniciando servidor" (no spawn attempt)');
 
   const pidsAfterSecond = pidsOnPort(PORT);

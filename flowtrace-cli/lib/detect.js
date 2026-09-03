@@ -81,17 +81,40 @@ function _pythonPrefix(cwd) {
 }
 
 // ---- Node / TS ----
+/**
+ * For Node the capture layer matches FLOWTRACE_PACKAGE_PREFIX as a **path
+ * substring**: `capture/node/src/cjs/hook.js` does `filename.includes(prefix)`,
+ * and the ESM loader the same. So the value that works is a directory, not a
+ * package name.
+ *
+ * This used to return the package.json `name` with the npm scope stripped
+ * (`@acme/api-server` -> `api-server`), which instruments the project only
+ * when the directory happens to be named after the package. When it is not —
+ * a monorepo where `packages/core` publishes as `@acme/core-runtime`, a clone
+ * into `myproject-main` — nothing matched and the trace came out EMPTY, which
+ * reads as "my code never ran" rather than "the prefix is wrong". `flowtrace
+ * run` always used the directory, so `init` and `run` disagreed on the same
+ * project.
+ *
+ * The package name is still what identifies the project to a human, so it is
+ * recorded alongside as `capture.packageName` by `flowtrace init`.
+ */
 function _nodePrefix(cwd) {
+  if (!fs.existsSync(path.join(cwd, 'package.json'))) return null;
+  return cwd;
+}
+
+/** The npm package name (scope stripped), for display. Not a capture prefix. */
+function nodePackageName(cwd) {
   const pkgPath = path.join(cwd, 'package.json');
   if (!fs.existsSync(pkgPath)) return null;
   try {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
     if (!pkg.name) return null;
-    // Strip npm scope @org/
     return pkg.name.replace(/^@[^/]+\//, '');
   } catch {
     return null;
   }
 }
 
-module.exports = { detectLang, detectPackagePrefix };
+module.exports = { detectLang, detectPackagePrefix, nodePackageName };

@@ -12,7 +12,7 @@ const path = require('path');
 const os   = require('os');
 
 // We test the detect module used by run, not the full spawn path.
-const { detectLang, detectPackagePrefix } = require('../lib/detect');
+const { detectLang, detectPackagePrefix, nodePackageName } = require('../lib/detect');
 
 let passed = 0;
 let failed = 0;
@@ -98,8 +98,11 @@ console.log('\n[prefix from cwd]');
 {
   const d = mkTmp();
   fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ name: '@acme/api-server' }));
+  // The capture layer matches a path substring, so the directory is the prefix;
+  // the scope-stripped package name remains available for display only.
   const prefix = detectPackagePrefix(d, 'node');
-  assert(prefix === 'api-server', 'node: strips @scope from package name');
+  assert(prefix === d, 'node: prefix is the project directory the layer matches');
+  assert(nodePackageName(d) === 'api-server', 'node: display name strips @scope');
 }
 
 {

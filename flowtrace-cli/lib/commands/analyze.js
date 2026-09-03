@@ -1,8 +1,8 @@
 /**
  * `flowtrace analyze` (v2) — abre el dashboard sobre un archivo JSONL.
- * --last (default): usa el JSONL mas reciente en .flowtrace/
- * <file>          : ruta explicita
- * Lanza el dashboard server y abre el navegador automaticamente.
+ * --last (default): usa el JSONL más reciente en .flowtrace/
+ * <file>          : ruta explícita
+ * Lanza el dashboard server y abre el navegador automáticamente.
  */
 'use strict';
 
@@ -113,46 +113,87 @@ async function waitForHealth(url, { retries = 30, intervalMs = 200 } = {}) {
   return false;
 }
 
-/**
- * POSTs `{filePath}` to `${baseUrl}/api/analyze-file` and resolves with the
- * returned `analysisId`, or `null` on any failure (bad JSON, non-2xx,
- * network error). Mirrors flowtrace-dashboard/mcp-tools.js's
- * openInDashboard(), which already does this against the same endpoint.
- */
-function postAnalyzeFile(baseUrl, filePath) {
+/** One HTTP request, resolved as {status, body} or null when it never landed. */
+function request(baseUrl, { pathname, method = 'POST', headers = {}, body }) {
   return new Promise((resolve) => {
-    const body = JSON.stringify({ filePath });
-    const { hostname, port, pathname } = new URL('/api/analyze-file', baseUrl);
+    const url = new URL(pathname, baseUrl);
     const req = http.request(
-      {
-        hostname,
-        port,
-        path: pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-      },
+      { hostname: url.hostname, port: url.port, path: url.pathname, method, headers },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => {
-          if (res.statusCode < 200 || res.statusCode >= 300) return resolve(null);
-          try {
-            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-            resolve(parsed.analysisId || null);
-          } catch {
-            resolve(null);
-          }
+          const text = Buffer.concat(chunks).toString('utf8');
+          let parsed = null;
+          try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+          resolve({ status: res.statusCode, body: parsed, text });
         });
       }
     );
     req.on('error', () => resolve(null));
-    req.write(body);
+    if (body) req.write(body);
     req.end();
   });
 }
+
+/**
+ * POSTs `{filePath}` to `${baseUrl}/api/analyze-file` and resolves with the
+ * returned `analysisId`.
+ *
+ * The dashboard only reads paths inside its allowed roots (its own working
+ * directory plus FLOWTRACE_DASHBOARD_ROOTS) and answers 403 with
+ * `code: "OUTSIDE_ROOTS"` for anything else. That is not a failure to report
+ * — it is the server saying "hand me the bytes instead", so this uploads the
+ * file. Any other failure resolves null and the caller opens the dashboard
+ * empty rather than blocking on it.
+ */
+async function postAnalyzeFile(baseUrl, filePath) {
+  const body = JSON.stringify({ filePath });
+  const res = await request(baseUrl, {
+    pathname: '/api/analyze-file',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    body,
+  });
+  if (!res) return null;
+  if (res.status === 403 && res.body && res.body.code === 'OUTSIDE_ROOTS') {
+    return uploadForAnalysis(baseUrl, filePath);
+  }
+  if (res.status < 200 || res.status >= 300) return null;
+  return (res.body && res.body.analysisId) || null;
+}
+
+/**
+ * multipart/form-data upload to /api/analyze, hand-built so the CLI keeps its
+ * dependency list unchanged for one request shape.
+ */
+async function uploadForAnalysis(baseUrl, filePath) {
+  let content;
+  try {
+    content = fs.readFileSync(filePath);
+  } catch {
+    return null;
+  }
+  const boundary = `----flowtrace${Date.now().toString(16)}`;
+  const head = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${path.basename(filePath)}"\r\n` +
+    'Content-Type: application/jsonl\r\n\r\n'
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([head, content, tail]);
+  const res = await request(baseUrl, {
+    pathname: '/api/analyze',
+    headers: {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Length': body.length,
+    },
+    body,
+  });
+  if (!res || res.status < 200 || res.status >= 300) return null;
+  return (res.body && res.body.analysisId) || null;
+}
+
+/** Ids are server-minted; anything else does not belong in a URL we open. */
+const ANALYSIS_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Pre-loads `target` into the running dashboard server and returns the URL
@@ -163,10 +204,16 @@ function postAnalyzeFile(baseUrl, filePath) {
 async function buildOpenUrl(baseUrl, target) {
   const analysisId = await postAnalyzeFile(baseUrl, target);
   if (!analysisId) {
-    console.error(chalk.yellow('Warning:'), 'No se pudo pre-cargar el trace en el dashboard; abriendo vacio.');
+    console.error(chalk.yellow('Aviso:'), 'No se pudo pre-cargar la traza en el dashboard; abriendo vacío.');
     return baseUrl;
   }
-  return `${baseUrl}?analysis=${analysisId}`;
+  if (!ANALYSIS_ID_RE.test(analysisId)) {
+    // The value comes back over HTTP and ends up in a URL handed to the
+    // shell on Windows (`cmd /c start`), where `&` is a command separator.
+    console.error(chalk.yellow('Aviso:'), 'El dashboard devolvió un id inesperado; abriendo vacío.');
+    return baseUrl;
+  }
+  return `${baseUrl}?analysis=${encodeURIComponent(analysisId)}`;
 }
 
 async function analyzeCommand(file, options = {}) {
@@ -177,7 +224,7 @@ async function analyzeCommand(file, options = {}) {
   if (!target || options.last) {
     target = findLatestJsonl(path.join(cwd, '.flowtrace'));
     if (!target) {
-      console.error(chalk.red('Error:'), 'No se encontro ningun JSONL en .flowtrace/');
+      console.error(chalk.red('Error:'), 'No se encontró ningún JSONL en .flowtrace/');
       console.log(chalk.gray('Ejecuta primero: flowtrace run -- <cmd>'));
       process.exit(1);
     }
@@ -191,8 +238,8 @@ async function analyzeCommand(file, options = {}) {
 
   const dashboardServer = resolveDashboardServer();
   if (!dashboardServer) {
-    console.error(chalk.red('Error:'), 'No se encontro el dashboard.');
-    console.log(chalk.gray('Reinstala @rixmerz/flowtrace, o si estas en el checkout corre `make bundle-dashboard`.'));
+    console.error(chalk.red('Error:'), 'No se encontró el dashboard.');
+    console.log(chalk.gray('Reinstala @rixmerz/flowtrace, o si estás en el checkout corre `make bundle-dashboard`.'));
     process.exit(1);
   }
 
@@ -207,9 +254,9 @@ async function analyzeCommand(file, options = {}) {
   // a server that is already running means some earlier invocation already
   // opened one. Pre-load the trace so the URL is ready, but only print it.
   if (await checkHealth(`${url}/health`)) {
-    console.log(chalk.green('OK'), `Dashboard ya esta corriendo en ${url}`);
+    console.log(chalk.green('OK'), `Dashboard ya está corriendo en ${url}`);
     const openUrl = await buildOpenUrl(url, target);
-    console.log(chalk.cyan('Dashboard already running — view this trace at:'), openUrl);
+    console.log(chalk.cyan('El dashboard ya estaba corriendo — mira esta traza en:'), openUrl);
     return { file: target, exitCode: 0, reused: true };
   }
 
@@ -235,7 +282,7 @@ async function analyzeCommand(file, options = {}) {
       console.log(chalk.green('OK'), `Dashboard listo en ${url}`);
       analyzeCommand._openBrowser(await buildOpenUrl(url, target));
     } else {
-      console.error(chalk.red('Error:'), 'El dashboard no respondio a tiempo.');
+      console.error(chalk.red('Error:'), 'El dashboard no respondió a tiempo.');
     }
   });
 
@@ -252,6 +299,7 @@ analyzeCommand._openBrowser = openBrowser;
 analyzeCommand._resolveDashboardServer = resolveDashboardServer;
 analyzeCommand._checkHealth = checkHealth;
 analyzeCommand._postAnalyzeFile = postAnalyzeFile;
+analyzeCommand._uploadForAnalysis = uploadForAnalysis;
 analyzeCommand._buildOpenUrl = buildOpenUrl;
 
 module.exports = analyzeCommand;

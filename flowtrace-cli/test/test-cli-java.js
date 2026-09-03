@@ -11,7 +11,7 @@ const path   = require('node:path');
 
 // Load the module under test
 const runCmd = require('../lib/commands/run');
-const { _buildJavaInjection, _detectGroupIdFromPom, _ensureGitignore } = runCmd;
+const { _buildJavaInjection, _resolvePrefix, _ensureGitignore } = runCmd;
 
 const tests = [];
 let passed = 0;
@@ -118,9 +118,13 @@ test('--package-prefix overrides pom scan', () => {
   assert.ok(hasOverride, 'override prefix present');
 });
 
-// ─── _detectGroupIdFromPom ────────────────────────────────────────────────────
+// ─── package prefix resolution ────────────────────────────────────────────────
+// run.js used to carry its own pom.xml-only detector while detect.js already
+// handled pom.xml AND build.gradle — so `flowtrace init` found a Gradle
+// project's prefix and `flowtrace run` then refused to start. There is one
+// implementation now; these cases moved onto it.
 
-test('detectGroupIdFromPom: extracts groupId from valid pom.xml', () => {
+test('run resolves the Java prefix from pom.xml', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-test-'));
   fs.writeFileSync(path.join(tmp, 'pom.xml'), `
 <project>
@@ -128,14 +132,22 @@ test('detectGroupIdFromPom: extracts groupId from valid pom.xml', () => {
   <groupId>io.mycompany</groupId>
   <artifactId>myapp</artifactId>
 </project>`);
-  const result = _detectGroupIdFromPom(tmp);
+  const result = _resolvePrefix({ options: {}, config: {}, cwd: tmp, lang: 'java' });
   fs.rmSync(tmp, { recursive: true });
   assert.equal(result, 'io.mycompany');
 });
 
-test('detectGroupIdFromPom: returns null when no pom.xml', () => {
+test('run resolves the Java prefix from build.gradle too', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-test-'));
-  const result = _detectGroupIdFromPom(tmp);
+  fs.writeFileSync(path.join(tmp, 'build.gradle'), 'group = "io.gradleco"\n');
+  const result = _resolvePrefix({ options: {}, config: {}, cwd: tmp, lang: 'java' });
+  fs.rmSync(tmp, { recursive: true });
+  assert.equal(result, 'io.gradleco');
+});
+
+test('run returns null when neither build file is present', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-test-'));
+  const result = _resolvePrefix({ options: {}, config: {}, cwd: tmp, lang: 'java' });
   fs.rmSync(tmp, { recursive: true });
   assert.equal(result, null);
 });

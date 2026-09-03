@@ -7,7 +7,8 @@
 const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
-const { detectLang, detectPackagePrefix } = require('../detect');
+const { detectLang, detectPackagePrefix, nodePackageName } = require('../detect');
+const { ensureGitignore } = require('../gitignore');
 
 const SCHEMA_ID = 'https://flowtrace.dev/schema/flowtrace-v2.json';
 
@@ -24,8 +25,21 @@ async function initCommand(options = {}) {
   if (!lang) {
     const detected = detectLang(cwd);
     if (Array.isArray(detected)) {
-      lang = detected[0]; // pick first on init; user can override with --lang
-      console.log(chalk.yellow('Aviso:'), `Detectados varios lenguajes (${detected.join(', ')}). Usando: ${lang}. Usa --lang para especificar.`);
+      if (!options.yes) {
+        // Picking silently is how a polyglot repo ends up configured for the
+        // wrong runtime; ask unless the caller opted out with -y.
+        const inquirer = require('inquirer');
+        const { choice } = await inquirer.prompt([{
+          type: 'list',
+          name: 'choice',
+          message: 'Se detectaron varios lenguajes. Selecciona:',
+          choices: detected,
+        }]);
+        lang = choice;
+      } else {
+        lang = detected[0];
+        console.log(chalk.yellow('Aviso:'), `Detectados varios lenguajes (${detected.join(', ')}). Usando: ${lang} (--yes). Usa --lang para especificar.`);
+      }
     } else {
       lang = detected || 'auto';
     }
@@ -39,8 +53,15 @@ async function initCommand(options = {}) {
     schemaVersion: 'v2',
     lang,
     capture: {
+      // `flowtrace run` reads these: the prefix takes precedence over
+      // auto-detection, and maxArgLength is exported to every runtime.
       packagePrefix,
       maxArgLength: 512,
+      ...(lang === 'node' || lang === 'ts'
+        // For Node the prefix is a path (see detect.js); the package name is
+        // recorded separately because it is what identifies the project.
+        ? { packageName: nodePackageName(cwd) }
+        : {}),
     },
     output: {
       dir: '.flowtrace',
@@ -51,19 +72,8 @@ async function initCommand(options = {}) {
 
   fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 
-  // Auto-add .flowtrace/ to .gitignore (idempotent)
-  const giPath = path.join(cwd, '.gitignore');
-  const gitDir = path.join(cwd, '.git');
-  if (fs.existsSync(gitDir)) {
-    if (fs.existsSync(giPath)) {
-      const gi = fs.readFileSync(giPath, 'utf-8');
-      if (!/^\.flowtrace\/?$/m.test(gi)) {
-        fs.appendFileSync(giPath, (gi.endsWith('\n') ? '' : '\n') + '.flowtrace/\n');
-      }
-    } else {
-      fs.writeFileSync(giPath, '.flowtrace/\n');
-    }
-  }
+  // Auto-add .flowtrace/ to .gitignore (idempotent, shared with `run`)
+  ensureGitignore(cwd);
 
   console.log(chalk.green('OK'), `FlowTrace v2 inicializado en ${cfgPath}`);
   console.log(chalk.gray(`  lang   : ${lang}`));
