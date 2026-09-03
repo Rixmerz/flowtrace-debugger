@@ -57,7 +57,11 @@ Keep the response short. Three sharp findings beat twelve observations.
 - **Truncated values are not data.** A value shown as `<truncated:"xxx...>` hit
   the `max-arg-length` limit. Do not reason about its content — report that a
   re-run with a higher limit is needed.
-- **Durations are inclusive** of child spans, always.
+- **Durations are inclusive** of the children a span *waited for* — see the
+  async note above. A span that started work without awaiting it (an express
+  middleware calling `next()`) closes before its children, so subtracting
+  child time yields a negative number; that is the signal "the work was handed
+  off", not a measurement error.
 - **`enter` without `exit`** means the process died inside that call. Report it
   as a finding rather than treating the file as corrupt.
 - **Don't infer causation from adjacency.** Check `thread` and `trace_id`

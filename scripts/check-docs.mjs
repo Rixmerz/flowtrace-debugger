@@ -49,7 +49,28 @@ const REQUIRED = [
   { what: '@rixmerz/flowtrace-browser', why: 'the published browser capture layer' },
 ];
 
-const DOCS = ['README.md', 'README.en.md'];
+/**
+ * Every file that restates the capability list. It was the two root READMEs
+ * only, so the plugin's command file and the skill — which an agent reads far
+ * more often than a human reads a README — drifted freely: `trace.md` went on
+ * calling `@rixmerz/flowtrace` "the only published package" and recommending
+ * an `npx` invocation the shim had already abandoned for breaking in exactly
+ * the projects it exists to trace.
+ */
+const DOCS = [
+  'README.md',
+  'README.en.md',
+  'flowtrace-cli/README.md',
+  'plugin/commands/trace.md',
+  'plugin/skills/flowtrace-analysis/SKILL.md',
+];
+
+/**
+ * A doc need not name every runtime — the CLI's own README covers the CLI, the
+ * skill covers reading a trace. Presence is required only where the file's job
+ * is to enumerate what is supported.
+ */
+const NAMES_EVERYTHING = new Set(['README.md', 'README.en.md', 'flowtrace-cli/README.md']);
 
 /**
  * Phrases the published-package count makes false. Only add a phrase here when
@@ -57,14 +78,23 @@ const DOCS = ['README.md', 'README.en.md'];
  * data this script already holds, not to lint prose.
  */
 const PUBLISHED = REQUIRED.filter(({ what }) => what.startsWith('@rixmerz/'));
-const CONTRADICTED = PUBLISHED.length > 1
-  ? ['único paquete publicado', 'only published package']
-  : [];
+const CONTRADICTED = [
+  ...(PUBLISHED.length > 1 ? ['único paquete publicado', 'only published package'] : []),
+  // Not a count, but decidable from data this script already holds:
+  // plugin/bin/flowtrace stopped using npx precisely because npm resolves its
+  // config from the traced project's directory, so a project declaring
+  // devEngines.packageManager makes `npx @rixmerz/flowtrace` fail with
+  // EBADDEVENGINES. Any doc telling a user to run it is telling them to
+  // reproduce that. A doc may still WARN about npx — the phrase checked here
+  // is the recommendation form, i.e. an actual invocation.
+  'npx @rixmerz/flowtrace run',
+];
 
 let failed = 0;
 for (const doc of DOCS) {
   const text = readFileSync(join(REPO, doc), 'utf8');
-  const missing = REQUIRED.filter(({ what }) => !text.includes(what));
+  const required = NAMES_EVERYTHING.has(doc) ? REQUIRED : [];
+  const missing = required.filter(({ what }) => !text.includes(what));
 
   // Emphasis markers sit inside the claim ("the **only** published package"),
   // so a naive substring match misses it — which is how it shipped.
@@ -78,7 +108,9 @@ for (const doc of DOCS) {
   }
 
   if (missing.length === 0) {
-    console.log(`  ${doc}: names all ${REQUIRED.length} supported things`);
+    console.log(required.length
+      ? `  ${doc}: names all ${required.length} supported things`
+      : `  ${doc}: no contradicted claims`);
     continue;
   }
   failed += missing.length;

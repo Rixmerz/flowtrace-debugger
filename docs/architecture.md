@@ -1,6 +1,6 @@
 # FlowTrace Architecture
 
-> Reference for contributors and integrators. For sprint history see [HANDOFF_V2.md](../HANDOFF_V2.md).
+> Reference for contributors and integrators. For sprint history see [HANDOFF_V2.md](./HANDOFF_V2.md).
 
 ---
 
@@ -22,7 +22,7 @@ Each runtime uses its native hook point:
 
 | Runtime | Mechanism |
 |---|---|
-| Java | OpenTelemetry Java agent extension. `SpanProcessor` intercepts every span at `onStart`/`onEnd`. No bytecode rewrite at the user level. |
+| Java | An *extension* loaded by the OpenTelemetry javaagent. `FlowtraceTypeInstrumentation` selects methods and `FlowtraceAdvice` is woven into them by ByteBuddy — this **is** a bytecode rewrite; what the OTel agent provides is the carrier and the W3C context, not the weaving. There is no `SpanProcessor` anywhere in `capture/java`. |
 | Python | A `sys.meta_path` finder (`FlowtraceFinder`) installs a loader that rewrites each matching module's AST at import time, injecting enter/exit calls. Compiled results are cached by content hash under `~/.flowtrace/cache/py`. |
 | Node.js | An ESM loader registered via `module.register()` (Node 20.6+), plus a CJS `require` hook, rewriting each matching module's AST as it loads. |
 | TypeScript | The same Node.js loaders — TypeScript is transformed on the same path, not a separate mechanism. |
@@ -120,7 +120,7 @@ trace_id      string  W3C-compatible 32-hex trace identifier
 span_id       string  W3C-compatible 16-hex span identifier
 parent_id     string  span_id of the caller, null for root
 depth         int     Call stack depth (0 = root)
-visibility    string  "public" | "private" | "protected" (where detectable)
+visibility    string  "public" | "private" | "internal" | "unknown" (schema enum; Java maps protected -> internal)
 args          object  Parsed argument map (truncated per max-arg-length)
 result        object  Return value (exit events only, truncated)
 duration_ns   int     Wall-clock enter->exit in nanoseconds (exit events only).
@@ -138,8 +138,8 @@ EXIT events always pair with an ENTER event sharing the same `span_id`.
 
 ## Decisions log
 
-**Why OpenTelemetry extension for Java (not ByteBuddy direct rewrite)?**
-ByteBuddy direct rewrite (v1 approach) required a premain agent and class matching by annotation. OTel extension builds on a production-grade instrumentation framework, provides W3C context propagation for free, and avoids conflicts with other Java agents the user may run. Trade-off: requires the OTel Java agent as a carrier, adding ~10 MB to the classpath.
+**Why an OpenTelemetry extension for Java (not our own premain agent)?**
+Both approaches weave bytecode with ByteBuddy — the question was only what carries the weaving. v1 shipped a standalone premain agent and matched classes by annotation, which meant owning agent startup, class-file transformation ordering, and conflicts with any other Java agent the user runs. An OTel extension inherits a production-grade instrumentation framework and W3C context propagation for free, and coexists with the agents users already have. Trade-off: it requires the OTel javaagent as a carrier (~24 MB, fetched once and checksum-verified).
 
 **Why AST rewrite for Python (not `sys.setprofile`)?**
 `sys.setprofile` fires on every call in the process, so scoping to user code means filtering at event time — after paying the cost — and it is a single global slot that a profiler, debugger or coverage tool will take from us. Rewriting the AST at import time means the instrumentation only exists in modules matching the prefix, and nothing is filtered on the hot path. `capture/python/transformer.py` is the implementation; there is no `setprofile` path.

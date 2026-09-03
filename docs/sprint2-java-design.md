@@ -1,5 +1,10 @@
 # Sprint 2 — Java Capture Design (OTel Java Agent Extension)
 
+> **Historical design document.** Kept for the reasoning behind the Java capture layer;
+> it is not maintained against the code. The current behaviour lives in
+> `docs/architecture.md`, `TRUNCATION_SYSTEM.md` and each layer's README.
+
+
 Status: design + spike. No implementation. Targets `examples/golden/java/expected.jsonl`
 (Calculator.run -> add -> _validate x2, with `_validate` private).
 

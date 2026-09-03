@@ -154,7 +154,7 @@ export function parseJsonl(raw) {
       try {
         return JSON.parse(l);
       } catch (e) {
-        throw new Error(`invalid JSON on line ${i + 1}: ${e.message}`);
+        throw new Error(`invalid JSON on line ${i + 1}: ${e.message}`, { cause: e });
       }
     });
 }

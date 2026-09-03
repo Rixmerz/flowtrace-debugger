@@ -1,8 +1,8 @@
 {
   "name": "flowtrace-workspace",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "FlowTrace v2 workspace root — orchestrates the JS/TS subprojects. Java and Python builds stay in the Makefile.",
+  "description": "FlowTrace v2 workspace root \u2014 orchestrates the JS/TS subprojects. Java and Python builds stay in the Makefile.",
   "packageManager": "pnpm@9.15.4",
   "engines": {
     "node": ">=20.6"
@@ -14,11 +14,18 @@
     "test:mcp": "pnpm --filter @flowtrace/mcp-server run test",
     "validate:schema": "node scripts/validate-golden.mjs",
     "golden:check": "node scripts/check-golden.mjs",
-    "golden:gen": "node scripts/gen-golden.mjs"
+    "golden:gen": "node scripts/gen-golden.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Rixmerz/flowtrace-debugger.git"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.12.0"
   }
 }

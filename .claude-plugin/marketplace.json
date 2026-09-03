@@ -7,7 +7,7 @@
   },
   "metadata": {
     "description": "FlowTrace \u2014 multi-language runtime tracing for AI-assisted debugging.",
-    "version": "2.6.0"
+    "version": "2.7.0"
   },
   "plugins": [
     {

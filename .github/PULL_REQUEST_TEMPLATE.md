@@ -1,70 +1,54 @@
 # Pull Request
 
-## Description
+## What changed and why
 
-Please include a summary of the changes and which issue is fixed. Include relevant motivation and context.
+<!-- The "why" is the part the diff cannot show: the root cause, or the
+     decision and what it rules out. -->
 
 Fixes # (issue)
 
 ## Type of change
 
-Please delete options that are not relevant.
-
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update
-- [ ] Code refactoring
-- [ ] Performance improvement
-- [ ] Test addition/improvement
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change (schema, CLI flags, or an emitted field)
+- [ ] Documentation
+- [ ] Refactor
+- [ ] Performance
+- [ ] Tests
 
 ## Component
 
-Which component does this PR affect?
-
-- [ ] Java Agent
-- [ ] Node.js Agent
-- [ ] Python Agent
-- [ ] Go Agent
-- [ ] Rust Agent
-- [ ] .NET Agent
-- [ ] CLI Tool
-- [ ] MCP Server
+- [ ] Java capture layer
+- [ ] Python capture layer
+- [ ] Node.js / TypeScript capture layer
+- [ ] Go capture layer
+- [ ] Browser capture layer
+- [ ] CLI (`@rixmerz/flowtrace`)
+- [ ] MCP server
+- [ ] Dashboard
+- [ ] Claude Code plugin
+- [ ] Schema / golden fixtures
 - [ ] Documentation
-- [ ] Build/CI
-- [ ] Other (please specify)
+- [ ] Build / CI
 
-## How Has This Been Tested?
+## Checks
 
-Please describe the tests that you ran to verify your changes. Provide instructions so we can reproduce.
+- [ ] `make test` passes locally
+- [ ] Touched a capture layer → regenerated the golden fixtures and **reviewed
+      the diff**; every changed line is explained by this change
+- [ ] Touched `mcp-server/src` → ran `make bundle-mcp` and committed the bundle
+- [ ] Touched `flowtrace-dashboard/` → ran `make bundle-dashboard` and committed it
+- [ ] Touched `mcp-server/src/runtimes.ts` → the READMEs, `plugin/commands/trace.md`
+      and the skill still agree (`make check-docs`)
+- [ ] Changed an emitted field → the schema, all five capture layers, the
+      fixtures and both consumers move in this commit
+- [ ] Added tests for the behaviour this changes
 
-- [ ] Unit tests
-- [ ] Integration tests
-- [ ] Manual testing
-- [ ] Test case added/updated
+**Tested on**: OS, and the runtime versions relevant to the change (Node, JDK,
+Python, Go).
 
-**Test Configuration**:
-* OS:
-* Node.js version (if applicable):
-* Java version (if applicable):
+## Notes
 
-## Checklist:
-
-- [ ] My code follows the style guidelines of this project
-- [ ] I have performed a self-review of my code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] Any dependent changes have been merged and published in downstream modules
-- [ ] I have updated the ROADMAP.md if this affects future plans
-- [ ] I have updated both English and Spanish documentation if applicable
-
-## Additional Notes
-
-Add any other context about the pull request here.
-
-## Screenshots (if applicable)
-
-Add screenshots to help explain your changes if relevant.
+<!-- Anything a reviewer would otherwise have to reconstruct: an approach you
+     tried and rejected, a limitation you left in place on purpose. -->

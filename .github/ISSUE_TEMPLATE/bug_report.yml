@@ -14,11 +14,18 @@ body:
       label: Component
       description: Which component is affected?
       options:
-        - Java Agent
-        - Node.js Agent
-        - CLI Tool
-        - MCP Server
+        - Java capture layer
+        - Python capture layer
+        - Node.js / TypeScript capture layer
+        - Go capture layer
+        - Browser capture layer (@rixmerz/flowtrace-browser)
+        - CLI (@rixmerz/flowtrace)
+        - MCP server
+        - Dashboard
+        - Claude Code plugin
+        - Schema / golden fixtures
         - Documentation
+        - Build / CI
         - Other
     validations:
       required: true
@@ -52,18 +59,39 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: prefix
+    attributes:
+      label: Package prefix used
+      description: >
+        The value of --package-prefix / FLOWTRACE_PACKAGE_PREFIX. A wrong prefix
+        is the single most common cause of an empty or enormous trace, so this
+        is the first thing anyone triaging will ask for.
+      placeholder: "com.acme.orders  /  myapp  /  github.com/acme/svc  /  /home/me/project"
+    validations:
+      required: true
+
   - type: textarea
     id: environment
     attributes:
       label: Environment
       description: Please provide your environment details
       placeholder: |
-        - OS: [e.g. macOS 14.0, Ubuntu 22.04, Windows 11]
-        - Node.js version: [e.g. 18.17.0]
-        - Java version: [e.g. 11, 17]
-        - FlowtTrace version: [e.g. 1.0.0]
+        - OS: [e.g. macOS 15, Ubuntu 24.04, Windows 11]
+        - FlowTrace version: [flowtrace --version, e.g. 3.4.0]
+        - Node.js version: [e.g. 22.11.0 — the CLI needs 20.6+]
+        - Java / Python / Go version, if relevant: [e.g. JDK 21, Python 3.12, Go 1.25]
     validations:
       required: true
+
+  - type: textarea
+    id: trace
+    attributes:
+      label: First lines of the trace
+      description: >
+        The first ~20 lines of the .jsonl, or "the file is empty". **Read it
+        first** — a trace contains your arguments and return values.
+      render: shell
 
   - type: textarea
     id: logs

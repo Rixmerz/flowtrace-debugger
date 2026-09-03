@@ -31,8 +31,11 @@ __pycache__/
 .tox/
 .venv/
 venv/
-build/
-dist/
+# Anchored deliberately. Unanchored `build/` and `dist/` match at ANY depth,
+# which is the same over-broad shape as the `*.jsonl` rule recorded below —
+# a future capture/<lang>/dist/ that needs committing would vanish silently.
+capture/python/build/
+capture/python/dist/
 
 # Node
 node_modules/
@@ -59,6 +62,19 @@ flowtrace-*.jsonl
 # emitter.py) — a run artifact, never source, and would otherwise ship in the
 # npm tarball via vendor.mjs's copyDir (see that script's own filter).
 **/.flowtrace/
+
+# Per-developer Claude Code state, created the moment anyone approves a
+# permission. Never shared.
+.claude/settings.local.json
+
+# Benchmark output. Timestamped, one file per language per run, and the harness
+# writes it into the tracked benchmarks/ directory — six all-zero results were
+# committed this way.
+benchmarks/results-*.json
+
+# jig was removed wholesale (see CLAUDE.md). A tombstone so a stray tool that
+# still knows the name cannot re-add it.
+.jig/
 
 # IDE
 .idea/

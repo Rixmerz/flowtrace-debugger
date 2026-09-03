@@ -1,269 +1,132 @@
-# Contributing to FlowTrace Debugger
+# Contributing to FlowTrace
 
-[🇺🇸 English](#english) | [🇪🇸 Español](#español)
+Short, because the build tells you most of what you need. `make test` is the
+source of truth: if it passes, CI passes.
 
----
+By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
-<a name="english"></a>
-## 🇺🇸 English
+## Setup
 
-Thank you for considering contributing to FlowTrace Debugger! This document outlines the process for contributing to this project.
+Prerequisites — all five toolchains, because `make test` exercises all five
+capture layers:
 
-### Code of Conduct
+| Tool | Version | Why |
+|---|---|---|
+| Node | ≥ 20.6 | `module.register()`; the whole JS workspace |
+| pnpm | 9.15.4 (`corepack enable`) | one lockfile at the root; **not npm** |
+| JDK | 21+ to build (bytecode target stays 11) | the java21 test sources need it |
+| Maven | 3.9+ | the Java capture module |
+| Python | ≥ 3.9 | the Python capture module |
+| Go | ≥ 1.24 | `runtime/pprof` label layout — see `capture/go/README.md` |
 
-This project adheres to a [Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
-
-### How Can I Contribute?
-
-#### Reporting Bugs
-
-Before creating bug reports, please check existing issues to avoid duplicates. When creating a bug report, include:
-
-- **Clear title** describing the problem
-- **Steps to reproduce** the behavior
-- **Expected vs actual** behavior
-- **Environment details** (OS, Java/Node version, etc.)
-- **Log files** or error messages if applicable
-
-#### Suggesting Enhancements
-
-Enhancement suggestions are tracked as GitHub issues. When suggesting an enhancement:
-
-- **Use a clear title** describing the enhancement
-- **Provide detailed description** of the proposed feature
-- **Explain why this enhancement** would be useful
-- **List any alternatives** you've considered
-
-#### Pull Requests
-
-1. **Fork the repository** and create your branch from `main`
-2. **Follow coding standards**:
-   - Java: Follow Oracle's Java Code Conventions
-   - JavaScript/TypeScript: Use ESLint configuration provided
-   - Use meaningful variable/function names
-   - Add comments for complex logic
-3. **Write tests** for new features
-4. **Update documentation** if changing functionality
-5. **Ensure all tests pass** before submitting
-6. **Write clear commit messages**:
-   ```
-   feat: add Python agent support
-   fix: resolve memory leak in Java agent
-   docs: update installation guide
-   ```
-
-### Development Setup
+The first Java run downloads the ~24 MB OpenTelemetry javaagent into
+`~/.flowtrace/` and verifies it against a pinned SHA-256, so that step needs
+network once.
 
 ```bash
-# Clone your fork
-git clone git@github.com:YOUR_USERNAME/flowtrace-debugger.git
-cd flowtrace-debugger
-
-# Install dependencies
-./install-all.sh
-
-# Run tests
-cd flowtrace-agent && mvn test
-cd ../flowtrace-agent-js && npm test
-cd ../mcp-server && npm test
+pnpm install
+make test
 ```
 
-### Project Structure
+## What `make test` runs
 
 ```
-flowtrace-debugger/
-├── flowtrace-agent/        # Java bytecode instrumentation agent
-├── flowtrace-agent-js/     # Node.js require hook agent
-├── flowtrace-cli/          # CLI tool for initialization
-├── mcp-server/             # MCP server for log analysis
-├── agents/                 # Future: Python, Go, Rust, .NET agents
-└── examples/               # Example projects
+validate-schema   every fixture against schema/flowtrace-v2.json
+check-golden      re-runs every capture layer and diffs the committed output
+test-java         JUnit, with -Dflowtrace.it.required=true so the integration
+                  test cannot silently skip itself
+test-python       pytest
+test-node         node --test
+test-go           go test ./...
+test-browser      the browser layer plus a real collector end-to-end
+test-mcp          the MCP server
+test-dashboard    the dashboard API and analyzer
+test-cli          the CLI
+check-docs        the READMEs, the plugin command and the skill still restate
+                  mcp-server/src/runtimes.ts
+check-bundle      the committed bundles match their source, and the plugin
+                  boots standalone
 ```
 
-### Language-Specific Contributions
+## The four things that will bite you
 
-#### Adding Support for a New Language
-
-We're actively seeking contributors for:
-- **Python** tracing agent
-- **Go** tracing agent
-- **Rust** tracing agent
-- **.NET/C#** tracing agent
-
-See [ROADMAP.md](./ROADMAP.md) for detailed plans.
-
-### Style Guides
-
-#### Git Commit Messages
-
-- Use present tense ("add feature" not "added feature")
-- Use imperative mood ("move cursor to..." not "moves cursor to...")
-- Limit first line to 72 characters
-- Reference issues and pull requests after first line
-
-#### JavaScript/TypeScript
-
-- Use ESLint configuration provided
-- Prefer `const` over `let`, avoid `var`
-- Use async/await over promises when possible
-- Add JSDoc comments for public APIs
-
-#### Java
-
-- Follow Oracle's Java Code Conventions
-- Use Javadoc for public methods
-- Keep methods small and focused
-- Avoid deep nesting
-
-### Testing
-
-- Write unit tests for new features
-- Ensure existing tests pass
-- Add integration tests for complex features
-- Test on multiple platforms if possible
-
-### Documentation
-
-- Update README.md if changing user-facing features
-- Add/update JSDoc or Javadoc comments
-- Update language-specific guides in `docs/`
-- Keep documentation in sync across English/Spanish versions
-
-### Questions?
-
-Feel free to ask questions by:
-- Opening a GitHub issue
-- Starting a discussion in GitHub Discussions
-
----
-
-<a name="español"></a>
-## 🇪🇸 Español
-
-¡Gracias por considerar contribuir a FlowTrace Debugger! Este documento describe el proceso para contribuir a este proyecto.
-
-### Código de Conducta
-
-Este proyecto se adhiere a un [Código de Conducta](./CODE_OF_CONDUCT.md). Al participar, se espera que respetes este código.
-
-### ¿Cómo Puedo Contribuir?
-
-#### Reportar Errores
-
-Antes de crear reportes de errores, verifica los issues existentes para evitar duplicados. Al crear un reporte de error, incluye:
-
-- **Título claro** describiendo el problema
-- **Pasos para reproducir** el comportamiento
-- **Comportamiento esperado vs actual**
-- **Detalles del entorno** (SO, versión Java/Node, etc.)
-- **Archivos de log** o mensajes de error si aplica
-
-#### Sugerir Mejoras
-
-Las sugerencias de mejora se rastrean como issues de GitHub. Al sugerir una mejora:
-
-- **Usa un título claro** describiendo la mejora
-- **Proporciona descripción detallada** de la función propuesta
-- **Explica por qué esta mejora** sería útil
-- **Lista alternativas** que hayas considerado
-
-#### Pull Requests
-
-1. **Haz fork del repositorio** y crea tu rama desde `main`
-2. **Sigue los estándares de código**:
-   - Java: Sigue las Convenciones de Código Java de Oracle
-   - JavaScript/TypeScript: Usa la configuración ESLint proporcionada
-   - Usa nombres significativos para variables/funciones
-   - Agrega comentarios para lógica compleja
-3. **Escribe tests** para nuevas funciones
-4. **Actualiza la documentación** si cambias funcionalidad
-5. **Asegúrate de que todos los tests pasen** antes de enviar
-6. **Escribe mensajes de commit claros**:
-   ```
-   feat: agregar soporte para agente Python
-   fix: resolver fuga de memoria en agente Java
-   docs: actualizar guía de instalación
-   ```
-
-### Configuración de Desarrollo
+**1. Golden fixtures are real capture output.** `examples/golden/<id>/expected.jsonl`
+is what the layer actually emitted, normalized and committed. If you change a
+capture layer, `make check-golden` fails — that is the point. Regenerate with
 
 ```bash
-# Clona tu fork
-git clone git@github.com:TU_USUARIO/flowtrace-debugger.git
-cd flowtrace-debugger
-
-# Instala dependencias
-./install-all.sh
-
-# Ejecuta tests
-cd flowtrace-agent && mvn test
-cd ../flowtrace-agent-js && npm test
-cd ../mcp-server && npm test
+node scripts/gen-golden.mjs <id>       # one fixture
+make gen-golden                        # all of them
 ```
 
-### Estructura del Proyecto
+and then **read the diff**. Every changed line must be explained by the change
+you made; a line you cannot explain is the finding. Add a new fixture by
+registering it in `scripts/golden/runners.mjs` — CI picks it up from there.
+
+A fixture cannot assert cross-process correlation: the normalizer rewrites
+every `trace_id` to one constant. That property is tested by
+`capture/node/test/test-cross-process.mjs`, which spawns real processes.
+
+**2. Bundles are committed build artifacts.**
+
+- Touched `mcp-server/src`? → `make bundle-mcp`
+- Touched `flowtrace-dashboard/`? → `make bundle-dashboard`
+
+Both are checked by `make check-bundle`, which rebuilds and fails on any diff.
+A plugin install copies files and runs no build, so the bundle *is* the
+product for anyone installing from the marketplace.
+
+**3. `mcp-server/src/runtimes.ts` is the single source of truth** for what
+FlowTrace supports. Change it first; the READMEs, the plugin command file and
+the skill restate it, and `make check-docs` fails when they drift.
+
+**4. The schema is a contract across five layers.** `schema/flowtrace-v2.json`
+has `additionalProperties: false`. Renaming or adding a field means changing
+every capture layer, the schema, every golden fixture and every consumer
+(`mcp-server`, `flowtrace-dashboard`) **in one commit**. Two rules that have
+each been broken before:
+
+- A failed call is an `exit` with `error` set. There is no `event: "error"`.
+- `result` is required on every exit — `{}` when there is no value.
+
+## Commit messages
+
+Conventional commits with a `Why:` body. The `Why:` is the part that matters:
+it records the root cause or the decision, which the diff cannot.
 
 ```
-flowtrace-debugger/
-├── flowtrace-agent/        # Agente de instrumentación bytecode Java
-├── flowtrace-agent-js/     # Agente require hook Node.js
-├── flowtrace-cli/          # Herramienta CLI para inicialización
-├── mcp-server/             # Servidor MCP para análisis de logs
-├── agents/                 # Futuro: agentes Python, Go, Rust, .NET
-└── examples/               # Proyectos de ejemplo
+fix: login redirect loop
+
+Why: the stale refresh token was not cleared on 401, so /login and /dashboard
+bounced between each other forever.
 ```
 
-### Contribuciones Específicas por Lenguaje
+One logical change per commit. English, so the history reads consistently.
 
-#### Agregar Soporte para un Nuevo Lenguaje
+## Code style
 
-Estamos buscando activamente contribuidores para:
-- Agente de tracing para **Python**
-- Agente de tracing para **Go**
-- Agente de tracing para **Rust**
-- Agente de tracing para **.NET/C#**
+There is no linter configured (see `ROADMAP.md`). Match the file you are in:
+this codebase writes comments that explain *why*, especially where a previous
+approach failed — several files record the exact silent failure they were
+written to prevent. Keep that. A comment restating the code is noise; a comment
+naming the trap is the reason the trap is not re-entered.
 
-Ver [ROADMAP.md](./ROADMAP.md) para planes detallados.
+User-facing CLI text is Spanish (with accents). Code, comments and commit
+messages are English.
 
-### Guías de Estilo
+## Layout
 
-#### Mensajes de Commit Git
+| Path | What |
+|---|---|
+| `capture/{java,node,python,go,browser}/` | the capture layers, one README each |
+| `schema/flowtrace-v2.json` | the contract |
+| `examples/golden/` | committed real capture output |
+| `scripts/` | golden runners, schema validation, doc and plugin checks |
+| `mcp-server/`, `flowtrace-dashboard/`, `flowtrace-cli/` | the consumers |
+| `plugin/` | the distributable Claude Code plugin |
+| `docs/` | architecture and dated change notes |
 
-- Usa tiempo presente ("add feature" no "added feature")
-- Usa modo imperativo ("move cursor to..." no "moves cursor to...")
-- Limita la primera línea a 72 caracteres
-- Referencias issues y pull requests después de la primera línea
+## Security
 
-#### JavaScript/TypeScript
-
-- Usa la configuración ESLint proporcionada
-- Prefiere `const` sobre `let`, evita `var`
-- Usa async/await sobre promesas cuando sea posible
-- Agrega comentarios JSDoc para APIs públicas
-
-#### Java
-
-- Sigue las Convenciones de Código Java de Oracle
-- Usa Javadoc para métodos públicos
-- Mantén los métodos pequeños y enfocados
-- Evita anidamiento profundo
-
-### Testing
-
-- Escribe pruebas unitarias para nuevas funciones
-- Asegúrate de que las pruebas existentes pasen
-- Agrega pruebas de integración para funciones complejas
-- Prueba en múltiples plataformas si es posible
-
-### Documentación
-
-- Actualiza README.md si cambias funciones de cara al usuario
-- Agrega/actualiza comentarios JSDoc o Javadoc
-- Actualiza guías específicas de lenguaje en `docs/`
-- Mantén la documentación sincronizada entre versiones inglés/español
-
-### ¿Preguntas?
-
-Siéntete libre de hacer preguntas mediante:
-- Abriendo un issue de GitHub
-- Iniciando una discusión en GitHub Discussions
+Please do not open a public issue for a vulnerability — see
+[SECURITY.md](./SECURITY.md).

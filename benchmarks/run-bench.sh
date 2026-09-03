@@ -24,9 +24,22 @@ declare -A overhead_pct
 
 run_and_extract_ms() {
   # Run command, capture stdout, extract BENCH_RESULT_MS=<n>.
-  local output
-  output=$("$@" 2>/dev/null) || true
-  echo "$output" | grep -oE 'BENCH_RESULT_MS=[0-9]+' | cut -d= -f2 || true
+  #
+  # Failure is LOUD. This used to swallow stderr, `|| true` the exit status and
+  # return an empty string, which compute_overhead then turned into 0% — so a
+  # harness that never ran at all reported "0% overhead", and six all-zero
+  # result files were committed on the strength of it. A benchmark that cannot
+  # tell "no overhead" from "no measurement" is worse than no benchmark.
+  local output status
+  output=$("$@" 2>&1) || status=$?
+  local ms
+  ms=$(echo "$output" | grep -oE 'BENCH_RESULT_MS=[0-9]+' | cut -d= -f2 || true)
+  if [ -z "$ms" ]; then
+    echo "[bench] FAILED: '$*' produced no BENCH_RESULT_MS (exit ${status:-0})" >&2
+    echo "$output" | tail -20 >&2
+    return 1
+  fi
+  echo "$ms"
 }
 
 write_result() {
@@ -49,10 +62,12 @@ compute_overhead() {
   local base=$1
   local instr=$2
   if [ "$base" -eq 0 ]; then
-    echo 0
-  else
-    echo $(( (instr - base) * 100 / base ))
+    # A zero baseline means the measurement is meaningless, not that the
+    # instrumentation is free. Say so rather than printing a reassuring 0.
+    echo "[bench] baseline is 0 ms — the measurement did not happen" >&2
+    return 1
   fi
+  echo $(( (instr - base) * 100 / base ))
 }
 
 # ---------------------------------------------------------------------------

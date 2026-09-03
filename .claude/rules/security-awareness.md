@@ -40,9 +40,10 @@ safety, so lean on the manual checks below.
 - Check for hardcoded credentials, API keys, or tokens in new code (and in test fixtures).
 - Confirm new dependencies are pinned and from trusted sources.
 
-## When no provider is installed
+## There is no scanner wired up here
 
-If `get_provider()` returns the `NullProvider`, security findings will be empty. In that mode:
+No security-findings provider is installed in this repo, so "no findings" is
+not a signal at all. In that mode:
 
 - Lean harder on manual review and the static checks above.
 - Recommend installing a provider that surfaces security findings if the project has any external attack surface.

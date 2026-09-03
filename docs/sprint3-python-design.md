@@ -1,5 +1,10 @@
 # Sprint 3 — Python Capture Design
 
+> **Historical design document.** Kept for the reasoning behind the Python capture layer;
+> it is not maintained against the code. The current behaviour lives in
+> `docs/architecture.md`, `TRUNCATION_SYSTEM.md` and each layer's README.
+
+
 **Status**: Design + spike (Sprint 3 of FlowTrace v2)
 **Contract**: Zero source modification. User runs `flowtrace run --python -- python app.py`. No decorators, no imports added to user code. PEP 8 underscore-prefix is the visibility convention.
 **Schema**: emits to `flowtrace.jsonl` per `schema/flowtrace-v2.json`.

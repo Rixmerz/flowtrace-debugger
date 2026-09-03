@@ -2,6 +2,187 @@
 
 All notable changes to FlowTrace.
 
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the CLI (`@rixmerz/flowtrace`) version is the one these headings carry.
+The capture layers, the plugin and `@rixmerz/flowtrace-browser` version
+independently; each release names them.
+
+## [Unreleased]
+
+## [4.0.0] - 2026-09-03 — capture layers 2.2.0, browser 2.3.0, plugin 2.7.0
+
+A repository-wide audit and the fixes it produced. Two of these crashed the
+program being traced, and three were ways for a secret or a file to leave the
+machine; the rest are the drift five parallel capture layers accumulate when
+nothing compares them to each other.
+
+### Security
+
+- **The dashboard bound every network interface while every message it printed
+  said "localhost".** Combined with the two findings below, anyone on the same
+  LAN could read files off a developer's machine. It binds `127.0.0.1` now;
+  `FLOWTRACE_DASHBOARD_HOST` widens it deliberately and prints a warning when
+  it does.
+- **`POST /api/analyze-file` read any `.jsonl` path on the machine.** It is now
+  confined to allowed roots — the directory the server was started in plus
+  `FLOWTRACE_DASHBOARD_ROOTS` — resolved through `realpath`, so a symlink
+  inside a root cannot point outside it. Outside them it answers `403
+  {code: "OUTSIDE_ROOTS"}` and `flowtrace analyze` uploads the file instead.
+- **An upload was stored under the client's own filename**, which multer joins
+  onto the upload directory: an `originalname` of `../../../.ssh/config` wrote
+  straight out of it. Names are server-chosen UUIDs now, with a size cap, and
+  uploads are deleted when their analysis is evicted.
+- **The OpenTelemetry javaagent was downloaded and handed to the JVM with no
+  integrity check.** That jar runs before the traced program's `main()`. The
+  download is now verified against a pinned SHA-256 before it is put in place,
+  redirects are followed only to `https`, and a stalled transfer times out.
+  `scripts/fetch-otel-agent.sh` pinned a *different* version than the CLI did;
+  both now pin one artifact and both verify it.
+- **Node, Java and the browser layer redacted nothing.** Python and Go had a
+  redact-key list; the same Express app traced through Node wrote every
+  `password` and `Authorization` value into the file. All five layers share the
+  list now, applied to `args` and `result` before truncation.
+- The dashboard sends a strict Content-Security-Policy and serves a vendored
+  Chart.js instead of an unpinned CDN script; the inline bootstrap moved to a
+  file so `script-src 'self'` holds.
+- The Python and Node transform caches — rewritten copies of the user's source,
+  loaded as code — are created `0700`/`0600`. The Go overlay's staged sources
+  were `0755`/`0644` in a shared `/tmp` and are now `0700`/`0600`.
+
+### Fixed
+
+- **An arrow function with a destructured parameter crashed the traced app.**
+  `({a, b}) => …` compiled to code referencing an undeclared `arg0`, so the
+  first call threw `ReferenceError`. Ubiquitous in Express and React code, and
+  it failed at call time, which reads as a bug in the application.
+- **The Python emitter raised into the traced program.** A write failure — an
+  unwritable `FLOWTRACE_OUTPUT`, a full disk — propagated out of the `finally`
+  the transformer injects into *every* function. Nothing in the instrumentation
+  can raise into user code now; failures are counted and reported once.
+- **Every instrumented Python function lost its docstring.** Wrapping the body
+  in `try/finally` moved the docstring off the first statement, so `__doc__`
+  became `None` — breaking doctest, `help()`, click/typer help text and FastAPI
+  descriptions.
+- **`sitecustomize` forced every traced Python run to exit 0** and skipped the
+  program's `atexit` handlers (`logging.shutdown`, coverage's data write) via
+  `os._exit(0)`. It now joins non-daemon threads, runs `atexit`, flushes and
+  exits with the program's own status.
+- **`flowtrace run` reported success for a crashed program.** A child killed by
+  a signal gives Node `code === null`, and `process.exit(code ?? 0)` turned a
+  SIGSEGV or an OOM kill into exit 0. It is `128 + signal` now.
+- **`result` was never truncated in Node, Python or Java**, contradicting
+  `TRUNCATION_SYSTEM.md`. **Java's marker was `...[truncated]`** where every
+  other layer emits `<truncated:…...>`, and it measured `toString()` rather
+  than the JSON form.
+- **The dashboard counted an event variant that cannot exist.** `errorEvents`
+  came from `event === "error"`, which schema v2 rejects, so it reported zero
+  errors on every real trace.
+- **`log_aggregate` with `op: "max"` crashed on any real trace.**
+  `Math.max(...vals)` spreads the group into an argument list and overflows the
+  call stack. Percentiles in the dashboard had the mirror-image defect: the
+  index overshot and `|| 0` reported p99 = 0 for small samples.
+- **The Node transform cache was never invalidated.** Its fingerprint was a
+  hardcoded `2.0.0-alpha.1` at package version 2.1.0, so every transform fix
+  since was invisible to anyone with a warm cache. It hashes the transform
+  source now.
+- **A path containing a space broke Node and JVM injection.** `NODE_OPTIONS`
+  and `JAVA_TOOL_OPTIONS` are split on whitespace; the loader silently never
+  registered, producing an empty trace.
+- **`flowtrace run` ignored `.flowtrace/config.json`.** Only `lang` was read, so
+  the prefix a user reviewed and `maxArgLength` had no effect at all.
+- **A Gradle project could be initialised but not run**: `run` carried its own
+  pom.xml-only prefix detector while `init` used one that handled both.
+- **The Node package prefix was the npm package name**, but the layer matches it
+  against the file path — so a project whose directory is not named after its
+  package instrumented nothing. `init` and `run` now agree on the directory.
+- Timer leak in Go's `safeErrorMessage` (one live `time.After` per
+  error-returning call); `FLOWTRACE_MAX_EVENTS` re-read from the environment on
+  every event under the emitter lock.
+- Java: output written in the platform charset (non-ASCII produced invalid
+  UTF-8); `NaN`/`Infinity` emitted bare, which no JSON parser accepts; one
+  unserializable argument dropped the whole event; `traceparent` accepted
+  uppercase, whitespace and a trailing `-` that every other layer rejects;
+  `PendingThreadContext` pinned dead threads and their spans for the JVM's
+  lifetime.
+- Default trace filenames had second resolution in Python and Go, so two
+  processes started in the same second appended to one file.
+- The browser layer silently discarded a batch the collector never received;
+  losses are counted and reported once, and an `https` page with a plaintext
+  endpoint is warned about at setup instead of failing every flush in silence.
+- `initFlowtrace` registered its listeners again on every call, doubling every
+  unhandled error under hydration or HMR.
+
+### Added
+
+- **Go honours `FLOWTRACE_PACKAGE_PREFIX`** (exact import path or `prefix/…`),
+  the one layer that instrumented everything regardless.
+- **Go exit events key results by their declared names** — `{"quotient": …,
+  "err": …}` rather than `{"r0": …, "r1": …}` — which also makes result
+  redaction able to fire at all.
+- `lang: "ts"` is emitted for TypeScript sources and `lang: "browser"` for the
+  browser layer; both are in the schema enum. Node reports
+  `thread: worker-<id>` inside a worker, and a worker joins the trace of the
+  span that created it.
+- Java: structural JSON for arguments and results (maps, collections, arrays,
+  enums, `Optional`, bounded depth and width) instead of `toString()`; real
+  parameter names where the class carries them.
+- Python: `threading.Thread` inherits the starting span; fork-safe emitter.
+- `log_open` reports size and field names and refuses a directory or a file
+  over `FLOWTRACE_MCP_MAX_BYTES`; `log_aggregate` pages like `log_search`; an
+  unknown field name is an error naming the closest real ones instead of a
+  column of nulls.
+- The dashboard analyzer reports **self time** (exclusive of children) beside
+  inclusive duration, ranks hotspots by it, caps call trees at 2000 nodes, and
+  flags spans whose parent is missing from the file rather than silently
+  presenting them as roots.
+- New golden fixtures `truncation/go` and `error/go`; a README for every
+  capture layer; `SECURITY.md`; `.github/dependabot.yml`; ESLint and
+  `.editorconfig`.
+- CI: `make check-docs` now runs (it was in `make test` but in no job), a lint
+  job, and wider matrices — Node 24, Python 3.14, Go 1.27.
+
+### Changed
+
+- **Python wraps every non-`None` return as `{"value": …}`.** A `dict` return
+  was emitted unwrapped, so `{"value": 1}` returned by the program was
+  indistinguishable from `1`. **Breaking for anything reading Python results.**
+- `check-docs` covers `plugin/commands/trace.md`, the skill and the CLI README,
+  and fails on a recommended `npx @rixmerz/flowtrace` — the shim abandoned npx
+  because npm resolves config from the traced project's directory, so
+  `devEngines.packageManager` made it fail in exactly the projects being traced.
+- Package-level `test` scripts glob their directories; `mcp-server` and
+  `flowtrace-dashboard` ran 1 of 3 and 1 of 4 files, `flowtrace-cli/Makefile`
+  ran 2 of 13.
+- The benchmark harness fails loudly instead of reporting 0% overhead for a run
+  that never happened — which is how six all-zero results came to be committed.
+
+### Removed
+
+- `axios` from `mcp-server` (declared, never imported); Jackson from the
+  shipped Java jar (test-only now).
+- `.jig/`, eight committed trace files under `capture/node/.flowtrace/`, the
+  zeroed benchmark results, two orphaned shell scripts, the
+  `examples/nextjs-typescript/` README describing code that does not exist, and
+  `docs/{en,es}/installation.md` (v1 throughout: Java 8, Node 14,
+  `install-all.sh`, `flowtrace-agent.jar`).
+- Five `.claude/skills/` packs for languages and domains this project does not
+  have, and `.claude/rules/rust.md`.
+
+### Documentation
+
+- `ROADMAP.md` and `CONTRIBUTING.md` rewritten — both described v1: Python and
+  Go "Not Started" while shipped and matrix-tested, `./install-all.sh`, `mvn
+  test` in directories that no longer exist, and no mention of `make test`,
+  the golden fixtures or the bundles.
+- `TRUNCATION_SYSTEM.md` corrected (Go was missing, redaction was described as
+  Python-only, the marker was presented as universal) and now states what the
+  parity fixtures do *not* prove.
+- `docs/architecture.md`: Java is a ByteBuddy rewrite carried by the OTel
+  agent, not a `SpanProcessor`; `visibility` lists the schema's real enum.
+  Historical design documents are labelled as such.
+- The issue and PR templates ask for the package prefix and drop the removed
+  Rust/.NET components; `CODE_OF_CONDUCT.md` has a real contact address.
+
 ## [3.4.0] — browser capture 2.2.0
 
 ### Fixed

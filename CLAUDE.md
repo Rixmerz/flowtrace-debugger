@@ -13,7 +13,8 @@ the program actually did, rather than have it infer behaviour from source.
 Supported runtimes: **Java** (OpenTelemetry javaagent extension), **Node /
 TypeScript** (CJS hook + ESM loader + SWC transform), **Python** (import hook +
 AST transform) and **Go** (source rewrite before compilation via
-`go build -overlay`). Rust and .NET were v1 experiments and have been removed;
+`go build -overlay`). Each layer has its own README with the knobs and the
+caveats that layer alone has. Rust and .NET were v1 experiments and have been removed;
 Go was too, and came back in a different shape — do not "restore" the v1 Go
 agent, `capture/go/` is a v2 layer emitting schema v2.
 
@@ -53,8 +54,8 @@ Everything is driven from the root `Makefile` — there is no per-subproject
 install script. `make test` is the source of truth.
 
 ```bash
-make build            # build-java + build-python + build-node + build-mcp
-make test             # schema + golden + java + python + node + browser + mcp + dashboard + cli + plugin bundle
+make build            # build-java + build-python + build-node + build-go + build-mcp
+make test             # schema + golden + java + python + node + go + browser + mcp + dashboard + cli + docs + plugin bundle
 
 make test-java        # JUnit 5 (capture/java)
 make test-go          # go test ./... (capture/go)
@@ -148,16 +149,47 @@ trace explodes. Every layer honours a package/module prefix
 auto-detects one on `flowtrace init`. When investigating "the log is huge" or a
 perf complaint, check prefix wiring first.
 
+**What the prefix is matched against differs by layer, and getting it wrong
+produces an empty trace rather than an error:**
+
+| Layer | Matched against |
+|---|---|
+| Java | the class's package (`com.acme`) |
+| Python | the module name (`myapp`, matching `myapp` and `myapp.*`) |
+| Go | the package **import path** (exact, or `prefix/...`) |
+| Node / TS | the **file path** — `filename.includes(prefix)`, so it is a directory, not a package name |
+
+`flowtrace init` writes it to `.flowtrace/config.json` and `flowtrace run`
+honours it: flag > config > auto-detection.
+
+### Redaction
+
+Every file-writing layer replaces a value whose argument name — or nested key —
+matches the shared list (`password, secret, token, authorization, api_key, url,
+dsn, connection_string, email`) with `<redacted>`, in `args` and `result`,
+before truncation. `FLOWTRACE_REDACT_KEYS` extends the list, never replaces it.
+The reason is in `SECURITY.md`: a trace exists to be pasted into a model
+conversation, which is the last place a credential belongs.
+
 ### Truncation
 
 `TRUNCATION_SYSTEM.md` documents the shared rules for truncating `args` /
-`result`. Each layer takes a `max-arg-length` knob (`0` = no truncation), and
-`examples/golden/truncation/{java,node,python}` pin parity across runtimes.
+`result`. Each layer takes a `max-arg-length` knob (`0` = no truncation), the
+marker is `<truncated:{first N chars of the JSON}...>` measured on the JSON
+form, and it applies to `args` **and** `result` independently.
+
+`examples/golden/truncation/{java,node,python,go}` pin each layer against
+itself. They cannot catch two layers disagreeing with each other — each is
+diffed against its own previous output — and that is exactly how Java came to
+emit a different marker, measured on `toString()`, with results never
+truncated at all. When the rule changes, read the four layers together.
 
 ### Per-runtime capture strategy (don't conflate them)
 
 - **Java** — an *OpenTelemetry javaagent extension*, not a standalone premain
-  agent. `FlowtraceInstrumentationModule` / `FlowtraceTypeInstrumentation`
+  agent. Virtual threads propagate context; tasks on a platform-thread pool do
+  NOT — they inherit whatever span was current when the pool thread started.
+  Say so rather than implying pools work. `FlowtraceInstrumentationModule` / `FlowtraceTypeInstrumentation`
   select methods; `FlowtraceAdvice` weaves enter/exit and derives ids from
   `Span.fromContext(Context.current())`, which is why incoming `traceparent`
   works with no code of ours. The OTel agent version therefore decides which
@@ -167,7 +199,11 @@ perf complaint, check prefix wiring first.
 - **Node** — `src/cjs/hook.js` patches `Module._load`; `src/esm/loader.mjs` is
   the ESM loader; `src/transform/swc.js` rewrites matched functions to call the
   `__ft_enter` / `__ft_exit` / `__ft_exit_error` helpers. Context propagation is
-  `AsyncLocalStorage`.
+  `AsyncLocalStorage`; workers get it through `FLOWTRACE_TRACEPARENT` in their
+  env and report `thread: worker-<id>`. `lang` is `ts` for `.ts/.tsx/.mts/.cts`
+  sources — same layer, different label. Nested functions are deliberately not
+  instrumented (an Express trace would be unreadable); Python's transformer
+  does instrument them, so the same program yields different tree shapes.
 - **Browser** — no module rewriting and no ambient context. `api.js` holds all
   the logic as plain functions; `angular.js` is wiring only, so the part that
   needs a framework to test is the part least likely to be wrong. Browser work
@@ -197,6 +233,18 @@ perf complaint, check prefix wiring first.
 package prefix, then writes `.flowtrace/config.json` into the target project and
 updates its `.gitignore`. When adding a runtime, add a detector + command here —
 do not modify the capture layers.
+
+### Dashboard (`flowtrace-dashboard/`)
+
+A **local** tool with no authentication, so it is built like one: binds
+`127.0.0.1` (`FLOWTRACE_DASHBOARD_HOST` widens it, with a warning), reads trace
+paths only inside allowed roots (its cwd plus `FLOWTRACE_DASHBOARD_ROOTS`,
+resolved through `realpath`), stores uploads under server-chosen random names,
+and sends a strict CSP with Chart.js vendored rather than pulled from a CDN.
+`POST /api/analyze-file` answers `403 {code: "OUTSIDE_ROOTS"}` outside those
+roots and `flowtrace analyze` then uploads instead. The analyzer reports both
+inclusive `duration_ns` and exclusive `self_ns`; rank by self time, because
+summing inclusive time counts every nanosecond once per ancestor.
 
 ### MCP server (`mcp-server/`)
 

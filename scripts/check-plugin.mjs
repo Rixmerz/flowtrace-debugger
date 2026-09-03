@@ -69,6 +69,18 @@ if (marketplace && manifest) {
     } else if (source !== PLUGIN) {
       fail(`marketplace.json: source "${entry.source}" does not point at plugin/`);
     }
+    // Two files, bumped by hand, on every release. The only thing keeping them
+    // in step was someone remembering — and an installer that reads the
+    // marketplace entry would advertise a version the plugin does not carry.
+    const marketVersion = entry.version ?? marketplace.metadata?.version;
+    if (!marketVersion) {
+      fail(`marketplace.json: no version for plugin "${manifest.name}"`);
+    } else if (marketVersion !== manifest.version) {
+      fail(
+        `version mismatch: plugin.json says ${manifest.version}, ` +
+        `marketplace.json says ${marketVersion} — bump both`
+      );
+    }
   }
 }
 

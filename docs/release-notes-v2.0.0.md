@@ -1,5 +1,14 @@
 # FlowTrace v2.0.0 Release Notes
 
+> **Historical.** These are the notes as published for 2.0.0 and are kept for
+> the record; they are not a description of the current system. Two claims here
+> were already wrong when written — Python uses an import hook and an AST
+> rewrite, not `sys.setprofile` (see docs/architecture.md), and the MCP tools
+> are named `trace_tree` / `trace_diff`, not `trace.tree` / `trace.diff` — and
+> Go, described here as out of scope, shipped in `capture/go`. For what is
+> supported now, read the `flowtrace://runtimes` MCP resource or the READMEs.
+
+
 **Zero-source-modification capture for Java, Python, Node.js, and TypeScript.**
 
 ---

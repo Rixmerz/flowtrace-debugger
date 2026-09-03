@@ -10,7 +10,6 @@ Rules for when and how to commit during development work.
 - After a refactor that improves structure without changing behavior
 - After each workflow phase completion (natural checkpoint)
 - Before switching context to a different task
-- After resolving a set of DCC smells or tensions
 
 ## WHEN NOT to commit
 - Mid-implementation (incomplete changes that break the build)
@@ -27,7 +26,7 @@ Why: root cause, decision rationale, or motivation
 Types: `fix:`, `feat:`, `refactor:`, `perf:`, `chore:`, `docs:`
 
 ## DO
-- Focus the `Why:` on the root cause or decision rationale — this is where experiential memory is captured (a PostToolUse hook reads commit messages and saves them for future projects)
+- Focus the `Why:` on the root cause or decision rationale — a commit that records only *what* changed makes the next reader re-derive the reasoning from the diff
 - One logical change per commit — don't bundle unrelated fixes
 - Write commit messages in English for cross-project memory compatibility
 - Example: `fix: login redirect loop\n\nWhy: stale refresh token wasn't cleared on 401, causing infinite redirect between /login and /dashboard`

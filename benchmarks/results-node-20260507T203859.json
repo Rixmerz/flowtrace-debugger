@@ -1,8 +1,0 @@
-{
-  "lang": "node",
-  "timestamp": "20260507T203859",
-  "iterations": 10000,
-  "baseline_ms": 0,
-  "instrumented_ms": 0,
-  "overhead_pct": 0
-}

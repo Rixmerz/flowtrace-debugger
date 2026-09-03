@@ -26,7 +26,7 @@
 # Pinned deliberately: an unpinned fetch would silently change the capture
 # layer under a fixed plugin version. scripts/check-plugin.mjs asserts this pin
 # matches flowtrace-cli/package.json.
-FLOWTRACE_CLI_VERSION="3.4.0"
+FLOWTRACE_CLI_VERSION="4.0.0"
 
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/flowtrace-cli/$FLOWTRACE_CLI_VERSION"
 ENTRY="$CACHE/node_modules/@rixmerz/flowtrace/bin/flowtrace.js"

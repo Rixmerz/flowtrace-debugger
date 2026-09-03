@@ -1,8 +1,0 @@
-{
-  "lang": "python",
-  "timestamp": "20260507T203905",
-  "iterations": 10000,
-  "baseline_ms": 1,
-  "instrumented_ms": 1,
-  "overhead_pct": 0
-}

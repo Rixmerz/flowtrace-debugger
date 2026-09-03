@@ -1,5 +1,10 @@
 # Sprint 6 Hardening Notes
 
+> **Historical design document.** Kept for the reasoning behind the truncation and hardening work;
+> it is not maintained against the code. The current behaviour lives in
+> `docs/architecture.md`, `TRUNCATION_SYSTEM.md` and each layer's README.
+
+
 ## Emitter flush strategy — memory bounded by design
 
 All three language emitters write and flush on every event. No in-memory

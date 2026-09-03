@@ -1,10 +1,14 @@
 # FlowTrace
 
+[![v2-ci](https://github.com/Rixmerz/flowtrace-debugger/actions/workflows/v2-ci.yml/badge.svg)](https://github.com/Rixmerz/flowtrace-debugger/actions/workflows/v2-ci.yml)
+[![npm](https://img.shields.io/npm/v/@rixmerz/flowtrace)](https://www.npmjs.com/package/@rixmerz/flowtrace)
+[![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+
 🇺🇸 English | [🇪🇸 Español](./README.md)
 
 Zero-source-modification multi-language call tracer. Generates structured JSONL logs of every instrumented method, ready for AI analysis.
 
-**Supported runtimes**: Java 11+ | Python 3.8+ | Node.js 20.6+ | TypeScript 5+ | Go 1.24+
+**Supported runtimes**: Java 11+ | Python 3.9+ | Node.js 20.6+ | TypeScript 5+ | Go 1.24+
 
 Plus the **browser**, a separate and deliberately narrower layer: with no
 `AsyncLocalStorage` there is no ambient async context, so it does not
@@ -26,11 +30,13 @@ resource wins — an agent can read it rather than infer it.
 npm install -g @rixmerz/flowtrace
 ```
 
-Or without installing anything:
-
-```bash
-npx @rixmerz/flowtrace run -- python myapp.py
-```
+Do not reach for `npx @rixmerz/flowtrace`: npm resolves its configuration from
+the nearest `package.json` to the *current* directory, and `flowtrace run` is by
+definition run from inside your project — so a project declaring
+`devEngines.packageManager` makes npx fail with `EBADDEVENGINES`, in exactly the
+projects this exists to trace. The Claude Code plugin puts `flowtrace` on PATH
+without a global install (it installs into its own cache directory, for the
+same reason).
 
 `@rixmerz/flowtrace` is the **only** package you need for the five runtimes.
 It carries the capture layers inside the tarball: no Maven, no pip, and no
@@ -179,8 +185,12 @@ with no global install.
 
 ```bash
 cd flowtrace-dashboard && npm start
-# http://localhost:3000
+# http://localhost:8765   (FLOWTRACE_DASHBOARD_PORT to change it)
 ```
+
+It binds `127.0.0.1` only, and reads traces only from the directory it was
+started in (plus `FLOWTRACE_DASHBOARD_ROOTS`). There is no authentication: this
+is a local tool, and a trace routinely contains arguments and return values.
 
 See [flowtrace-dashboard/](flowtrace-dashboard/) for full instructions.
 
@@ -193,6 +203,26 @@ If you use v1 logs (`ENTER`/`EXIT`, `durationMicros`), see:
 [docs/migration-v1-v2.md](docs/migration-v1-v2.md)
 
 ---
+
+## Development
+
+Prerequisites: Node ≥ 20.6, pnpm 9.15.4 (`corepack enable`), JDK 21+, Maven 3.9+,
+Python ≥ 3.9, Go ≥ 1.24. The first Java test downloads ~24 MB (the OTel agent,
+verified against a pinned sha256).
+
+```bash
+pnpm install
+make test          # everything; this is the source of truth
+```
+
+After touching…               | run
+---                           | ---
+`mcp-server/src`              | `make bundle-mcp`
+`flowtrace-dashboard/`        | `make bundle-dashboard`
+a capture layer               | `make gen-golden` — and **review the diff**
+`mcp-server/src/runtimes.ts`  | `make check-docs`
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

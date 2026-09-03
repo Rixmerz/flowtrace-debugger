@@ -31,12 +31,19 @@ one before doing anything.
 3. **Run it** with `flowtrace run -- $ARGUMENTS`.
 
    The plugin ships `flowtrace` on your PATH, so this resolves with no global
-   install — the shim shells out to `npx @rixmerz/flowtrace`, which needs
-   network on its first run and is cached after. If `flowtrace` is somehow not
-   resolvable, use `npx @rixmerz/flowtrace run -- $ARGUMENTS` directly.
+   install. The shim installs the pinned CLI version into its own cache
+   directory (`$XDG_CACHE_HOME/flowtrace-cli/<version>`) on first use and runs
+   it from there. It deliberately does NOT use `npx`: npm resolves its
+   configuration from the nearest `package.json` to the current directory, and
+   this command runs inside the user's project — so a project declaring
+   `devEngines.packageManager` makes `npx @rixmerz/flowtrace` fail with
+   `EBADDEVENGINES`, in exactly the projects tracing is wanted for. If
+   `flowtrace` is somehow not resolvable, tell the user to
+   `npm i -g @rixmerz/flowtrace`; do not suggest npx.
 
-   `@rixmerz/flowtrace` is the only published package and it vendors every
-   capture layer. Do NOT try to install `@flowtrace/cli` or
+   `@rixmerz/flowtrace` is the package that vendors every capture layer. The
+   one other published package is `@rixmerz/flowtrace-browser`, which is a
+   build-time dependency of a front-end bundle and is not involved here. Do NOT try to install `@flowtrace/cli` or
    `@flowtrace/capture-node` — those names are not on npm and never have been;
    they are workspace-internal. Do not hand-wire a capture layer, and do not
    symlink one out of a flowtrace-debugger checkout: that only works on the

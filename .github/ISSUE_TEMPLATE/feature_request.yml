@@ -14,15 +14,18 @@ body:
       label: Component
       description: Which component would this feature affect?
       options:
-        - Java Agent
-        - Node.js Agent
-        - Python Agent (Coming Soon)
-        - Go Agent (Coming Soon)
-        - Rust Agent (Coming Soon)
-        - .NET Agent (Coming Soon)
-        - CLI Tool
-        - MCP Server
+        - Java capture layer
+        - Python capture layer
+        - Node.js / TypeScript capture layer
+        - Go capture layer
+        - Browser capture layer (@rixmerz/flowtrace-browser)
+        - CLI (@rixmerz/flowtrace)
+        - MCP server
+        - Dashboard
+        - Claude Code plugin
+        - Schema / golden fixtures
         - Documentation
+        - Build / CI
         - Other
     validations:
       required: true

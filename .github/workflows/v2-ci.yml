@@ -98,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.9', '3.11', '3.13']
+        python-version: ['3.9', '3.11', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v4
 
@@ -116,7 +116,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['20', '22']
+        # 20 left maintenance in April 2026; 24 is the current LTS and was
+        # untested while the floor claim in every doc said 20.6+.
+        node-version: ['20', '22', '24']
     steps:
       - uses: actions/checkout@v4
 
@@ -155,7 +157,9 @@ jobs:
         # map[string]string before 1.24 and struct{ list []label } from 1.24
         # on — an entirely different memory layout. See D3 and "Risks
         # accepted" in docs/changes/2026-08-27-go-capture-layer.md.
-        go-version: ['1.24', '1.25']
+        # The floor is 1.24 (see below) and the newest release is the one that
+        # can break the //go:linkname into runtime/pprof, so both ends are tested.
+        go-version: ['1.24', '1.25', '1.27']
     steps:
       - uses: actions/checkout@v4
 
@@ -219,6 +223,13 @@ jobs:
       - name: CLI
         run: make test-cli
 
+      # The docs gate exists because the prose has gone stale three times now
+      # (a runtime row, a published package, an npx invocation the shim had
+      # already abandoned). It was in `make test` but in no CI job, so it only
+      # ever ran for a developer who ran the whole suite locally.
+      - name: Docs restate the authoritative runtime list
+        run: make check-docs
+
   # Guard against the class of bug that started all of this: a .gitignore rule
   # that silently swallows a file the build depends on.
   fixtures-committed:
@@ -268,6 +279,45 @@ jobs:
       # stale, then validates manifests, paths and a standalone boot.
       - name: Bundle is current and the plugin boots standalone
         run: make check-bundle
+
+  lint:
+    name: Lint and formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: ESLint
+        run: pnpm run lint
+
+      # transform/testdata/ is excluded at the source: those files are
+      # byte-spliced transformer output plus one deliberately unparseable
+      # fixture, so gofmt neither can nor should touch them.
+      - name: gofmt
+        run: |
+          cd capture/go
+          unformatted=$(find . -name '*.go' -not -path './transform/testdata/*' -print0 | xargs -0 gofmt -l)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would change these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: cd capture/go && go vet ./...
 
   bench:
     name: Benchmark harness (informational)

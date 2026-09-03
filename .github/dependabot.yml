@@ -1,0 +1,51 @@
+# Dependency updates.
+#
+# Grouped and monthly on purpose. The two committed bundles
+# (plugin/mcp/server.bundle.js, flowtrace-cli/vendor/dashboard) are rebuilt by
+# `make check-bundle`, so any dependency bump that changes them fails CI until
+# someone regenerates and commits — which is the intended friction, but it
+# makes one PR per package unworkable.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        patterns: ['@types/*', 'typescript', 'esbuild', 'nodemon', 'ts-node']
+      production:
+        patterns: ['*']
+        exclude-patterns: ['@types/*', 'typescript', 'esbuild', 'nodemon', 'ts-node']
+    ignore:
+      # esbuild is pinned exactly so `make check-bundle` can compare a rebuild
+      # byte-for-byte; a caret bump would make the guard fire on every patch
+      # release and turn it into noise. Bump it deliberately, with the bundles.
+      - dependency-name: esbuild
+
+  - package-ecosystem: maven
+    directory: /capture/java/flowtrace-otel-extension
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: gomod
+    directory: /capture/go
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: pip
+    directory: /capture/python
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

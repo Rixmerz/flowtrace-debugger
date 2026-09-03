@@ -35,7 +35,7 @@ The `mcp-server` includes a compatibility shim that detects v1 logs by checking 
 - On v1 log detection: the server logs a warning to stderr and translates fields on the fly for `log_open`, `log_search`, and `log_aggregate`.
 - v2-only tools (`trace_tree`, `trace_diff`, `trace_private_calls`) return an empty result set for v1 logs with an explanatory message.
 
-To silence the warning and opt into v1 mode explicitly, pass `--schema-v1` to `flowtrace analyze` (planned for 3 releases, not yet implemented).
+There is no `--schema-v1` flag. One was floated at 2.0.0 and never built; three majors later nobody has asked for it, so it is not planned. The warning is the whole story: a v1 log opens, reports `schemaVersion: "v1"`, and the v2-only tools return empty rather than inventing structure.
 
 ---
 
