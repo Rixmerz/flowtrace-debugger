@@ -20,7 +20,10 @@ one before doing anything.
    unreadable, so this is not optional:
    - Java: `groupId` from `pom.xml`, or `group` from `build.gradle`
    - Python: `name` from `pyproject.toml` / `setup.py`
-   - Node/TS: `name` from `package.json` (drop any `@scope/`)
+   - Node/TS: the **project directory**, not the package name — the Node layer
+     matches the prefix as a path substring. A package name only matches when
+     the directory happens to be named after it; otherwise the trace comes out
+     empty. `flowtrace run` detects this for you.
    - Go: the `module` line from `go.mod` (Go needs 1.24 or newer, and the
      target module's own `go` directive must be 1.24+ too — FlowTrace refuses
      before touching anything otherwise, rather than failing mid-build)

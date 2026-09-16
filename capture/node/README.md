@@ -34,6 +34,7 @@ promises keep their parent span.
 | `FLOWTRACE_OUTPUT` | Output path. Default `.flowtrace/<iso-timestamp>.jsonl` under cwd. |
 | `FLOWTRACE_PACKAGE_PREFIX` | Only files whose path contains this string are instrumented. Unset: everything under cwd. `node_modules` is never instrumented. |
 | `FLOWTRACE_MAX_ARG_LENGTH` | Per-value limit on the JSON form of each argument and of the result; `0` disables. Default 512. Over the limit the value becomes `<truncated:{first N chars}...>`. |
+| `FLOWTRACE_MAX_DEPTH` | Deepest span opened; `0` disables the limit. Default 256. Calls nested deeper run untraced and are counted on stderr at exit. This is a stack budget as much as a trace-size one — see *Stack depth* below. |
 | `FLOWTRACE_REDACT_KEYS` | Extra key substrings to redact, comma-separated. Additive to the shared defaults (`password, secret, token, authorization, api_key, url, dsn, connection_string, email`); a matching arg name or nested object key is written as `<redacted>`. |
 | `FLOWTRACE_TRACEPARENT` | A W3C `traceparent` to adopt at startup, set by whatever spawned this process. |
 | `FLOWTRACE_PROPAGATE=0` | Turn off outbound propagation (fetch/http headers, child process and worker environments). |
@@ -53,6 +54,37 @@ promises keep their parent span.
   under `argN` with the whole destructured value.
 - `result` is `{"value": X}`, or `{}` for `undefined`/`null` and for a call
   that threw (then `error` is set).
+
+## Stack depth
+
+Instrumented code has roughly **5-8x less usable stack depth** than the same
+code untraced. On Node 22 a plain recursion reaches ~8800 frames and the same
+recursion instrumented reaches ~1100-1800. That is inherent to the rewrite:
+every function body becomes an arrow invoked through `__ft_run`, and the
+rewritten frame carries more locals, so the cost is paid whether or not a span
+is actually opened.
+
+What this means in practice:
+
+- A program that recurses a few hundred deep is unaffected. One that needs
+  thousands of frames will run out under `flowtrace run` where it did not on
+  its own.
+- When it happens the program gets an ordinary, catchable `RangeError` in its
+  own code, and FlowTrace prints on stderr how many calls it lost. It used to
+  get an *uncatchable* one: `newSpanId()` drew from `crypto.randomBytes`, which
+  allocates an async resource, so with `AsyncLocalStorage` active the id ran an
+  async_hooks init hook — and a throw from a hook is answered with
+  `fatalError()`. The process died with a stack ending in
+  `node:internal/crypto/random` and nothing of the user's program on it. Ids
+  are now drawn once at startup and counted from there (`src/runtime/ids.js`).
+- `FLOWTRACE_MAX_DEPTH` is the lever, and it is a partial one: the default 256
+  takes that ~1100 to ~1700, around half again and no more, because most of the
+  cost is the rewrite rather than the span. Lower it further and the curve
+  flattens — at a limit of 1 the depth is still only ~1800. Lowering it is
+  usually right anyway for a second reason: 2000 levels of recursion produce
+  4000 events that all say the same thing.
+- `--package-prefix` is the other lever: instrumenting less of the program
+  leaves more of the stack to it.
 
 ## What is deliberately not instrumented
 

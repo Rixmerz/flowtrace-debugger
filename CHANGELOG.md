@@ -9,6 +9,35 @@ independently; each release names them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Node capture layer killed the program it was tracing, with a stack that
+  named only Node's crypto internals.** A Node ESM server that started fine on
+  its own died under `flowtrace run` with an uncaught `RangeError: Maximum call
+  stack size exceeded` at `node:internal/crypto/random`, before the first
+  request and with nothing of the application on the stack. `newSpanId()` drew
+  from `crypto.randomBytes`, which allocates an async resource, so with
+  `AsyncLocalStorage` active every span id ran an async_hooks init hook — and a
+  throw from a hook is answered with `fatalError()`, which nothing can catch.
+  Ids are now drawn once at startup and counted from there, off that path
+  entirely, so stack exhaustion arrives as an ordinary catchable error in the
+  program's own code. The runtime helpers also fail open now, the way
+  `propagate.js` and `subprocess.js` already did: a call FlowTrace cannot trace
+  runs untraced and is counted on stderr at exit, and an exit helper can no
+  longer replace the program's own exception with FlowTrace's.
+- **New `FLOWTRACE_MAX_DEPTH` (Node, default 256)** caps how deep spans are
+  opened. Instrumented Node code has roughly 5-8x less usable stack depth than
+  the same code untraced — inherent to rewriting every body into an arrow — and
+  the cap buys about half of that back while keeping a deep recursion from
+  filling the trace with thousands of identical events. `capture/node/README.md`
+  now states the limit outright instead of leaving it to be discovered.
+- **The documented Node/TypeScript package prefix was wrong.** `runtimes.ts` and
+  `plugin/commands/trace.md` both told you to use the `package.json` name; the
+  CLI has detected the project directory since the layer started matching the
+  prefix as a path substring, and a package name matches only when the directory
+  happens to be named after it. Following the docs produced an empty trace,
+  which reads as "my code never ran".
+
 ## [4.0.0] - 2026-09-03 — capture layers 2.2.0, browser 2.3.0, plugin 2.7.0
 
 A repository-wide audit and the fixes it produced. Two of these crashed the

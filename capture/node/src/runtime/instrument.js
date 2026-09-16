@@ -52,6 +52,7 @@ const REDACTED = '<redacted>';
 
 let _maxArgLength = null;
 let _redactKeys = null;
+let _maxDepth = null;
 
 /**
  * Max-arg-length limit from env. 0 = no truncation. Default 512.
@@ -88,10 +89,47 @@ function getRedactKeys() {
   return _redactKeys;
 }
 
+/**
+ * Deepest span FlowTrace will open, from FLOWTRACE_MAX_DEPTH. 0 = no limit.
+ * Default 256.
+ *
+ * This is a stack budget before it is a trace-size knob. Measured on Node 22,
+ * a plain recursion reaches ~8800 frames; the same recursion instrumented with
+ * no limit reaches ~1100, and with a limit ~1700-1800. So the limit buys back
+ * around half again, and no more: most of the cost is the rewrite itself —
+ * every body becomes an arrow invoked through __ft_run, in a frame carrying
+ * more locals — and that is paid whether or not a span is opened. Do not read
+ * this knob as making deep recursion safe; read the *Stack depth* section of
+ * capture/node/README.md, which states the 5-8x floor outright.
+ *
+ * 256 is far past what a call tree nests for real reasons — an Express
+ * request handler is tens of levels deep, not hundreds — and far short of the
+ * depth where the stack becomes the binding constraint. The levels below it
+ * are also the ones nobody reads: a recursion 2000 deep emits 4000 events
+ * that say the same thing.
+ *
+ * @returns {number} Infinity when unlimited.
+ */
+function getMaxDepth() {
+  if (_maxDepth === null) {
+    const raw = process.env.FLOWTRACE_MAX_DEPTH;
+    if (raw === undefined) {
+      _maxDepth = 256;
+    } else {
+      const n = parseInt(raw, 10);
+      _maxDepth = isNaN(n) ? 256 : Math.max(0, n);
+    }
+    if (_maxDepth === 0) _maxDepth = Infinity;
+  }
+  return _maxDepth;
+}
+
 /** @internal Forget the cached env-derived config. */
 export function _resetConfigForTests() {
   _maxArgLength = null;
   _redactKeys = null;
+  _maxDepth = null;
+  depthCeiling = getMaxDepth();
 }
 
 function isRedactedKey(name) {
@@ -270,6 +308,146 @@ function common(ctx, module_, cls, method, visibility, lang) {
 }
 
 // ────────────────────────────────────────────────────────────
+// Failing open
+// ────────────────────────────────────────────────────────────
+
+/**
+ * What `__ft_enter` returns when it could not open a span. The transform
+ * passes it straight through to `__ft_run` and the exit helpers, which read it
+ * as "this call is not traced".
+ */
+const NO_SPAN = null;
+
+/**
+ * Span depth past which __ft_run checks whether AsyncLocalStorage.run has the
+ * stack to run at all, instead of assuming it.
+ *
+ * ALS.run costs about 3.3 frames per level (measured on Node 22), and when it
+ * runs out it throws from inside its own machinery — before it has called the
+ * traced function, so the program's body never runs and the error surfaces as
+ * FlowTrace's, not theirs. The check needs a closure to tell that case from
+ * the body throwing, and a closure per call is exactly the hot-path cost this
+ * whole file is trying not to pay, so it is armed only where it can matter.
+ *
+ * 128 is far below the depth at which any of this becomes reachable (~1300
+ * traced levels on a default Node 22 stack) and far above anything a call tree
+ * reaches for real reasons — an Express request handler nests tens of levels,
+ * not hundreds.
+ */
+const GUARD_FROM = 128;
+
+/**
+ * Calls FlowTrace gave up on, and the first reason it gave up.
+ *
+ * Counted rather than reported on the spot, and that is the whole trick. V8
+ * hands a `catch` back only the frames it unwound to reach it, so a handler
+ * that calls anything — `process.stderr.write` included — overflows again on
+ * the way out, and the second RangeError escapes the try/catch that was
+ * supposed to contain the first. That is not hypothetical: the first version
+ * of this fix warned from the handler and crashed identically. The recovery
+ * path therefore does nothing but an increment and an assignment, neither of
+ * which needs a frame, and the line that explains it is printed from the exit
+ * hook below, where the stack is whole again.
+ */
+let abandoned = 0;
+/** @type {unknown} */
+let abandonedCause = null;
+
+/**
+ * Calls FlowTrace declined to trace because they were deeper than the limit.
+ *
+ * Counted apart from `abandoned` because the two mean different things to
+ * whoever reads the trace — one is the configured limit doing its job, the
+ * other is the program at its stack ceiling — and a run can hit both.
+ */
+let skippedDeep = 0;
+
+/**
+ * Span depth at which tracing stops for the rest of the current call tree.
+ *
+ * Starts at getMaxDepth() and only ever ratchets DOWN, to the depth of a call
+ * that ran out of stack before reaching the configured limit — a worker thread
+ * or a `--stack-size` below the default gets there sooner. A root call (depth
+ * 0) restores it, so one deep recursion does not mute tracing for the rest of
+ * the process: a server starts each request at depth 0 and traces the next one
+ * in full.
+ *
+ * The ratchet matters on its own. Without it, recovery oscillates and buys
+ * almost nothing: abandoning one span frees the frames that span was holding,
+ * so the next call has room, opens one, and runs out again a level later. The
+ * program crawls along the same ceiling at the same cost per level and still
+ * dies far short of the depth it reaches untraced.
+ */
+let depthCeiling = getMaxDepth();
+
+/*
+ * Why any of this exists.
+ *
+ * Every other patch in this runtime already fails open — propagate.js and
+ * subprocess.js both say so in as many words — but the helpers the transform
+ * injects did not, and they are the ones running inside the traced program's
+ * own stack. Instrumentation spends several frames per call (__ft_run, the
+ * AsyncLocalStorage.run inside it, the inner arrow), so a program with deep
+ * recursion reaches V8's limit far sooner traced than untraced: measured on
+ * Node 22, ~8800 frames of plain recursion against ~1300 instrumented, about
+ * 6x. Past that depth `newSpanId()` threw RangeError from
+ * node:internal/crypto/random — inside the traced program's stack, uncaught,
+ * naming nothing the user wrote. A program that ran fine untraced died on
+ * startup under `flowtrace run`, and the stack blamed Node's crypto internals.
+ *
+ * Abandoning the span makes the call untraced instead: __ft_run then invokes
+ * the body directly, without the storage frames. That does not restore the
+ * program's native depth — see getMaxDepth for what it does and does not buy —
+ * but it does mean the program reaches its own ceiling and throws its own
+ * catchable error there, instead of being killed by FlowTrace's. Calls nested
+ * inside an abandoned one attach to the nearest ancestor that did open a span,
+ * which leaves the tree connected and one level short rather than severed.
+ */
+
+// Deliberately at 'exit' and not at the point of failure: see `abandoned`
+// above. emitter.js reports its own dropped writes the same way.
+//
+// The two causes get different lines because they call for different things.
+// Hitting the depth limit is FlowTrace working as configured and the answer is
+// a bigger limit; running out of stack is the program at its ceiling and the
+// answer is to instrument less of it.
+process.on('exit', () => {
+  if (skippedDeep > 0) {
+    process.stderr.write(
+      `[flowtrace] ${skippedDeep} call(s) nested deeper than FLOWTRACE_MAX_DEPTH `
+      + `(${getMaxDepth()}) and are missing from the trace; raise it to trace deeper.\n`
+    );
+  }
+  if (abandoned > 0) {
+    process.stderr.write(
+      `[flowtrace] ${abandoned} call(s) ran untraced and are missing from the trace `
+      + `(first cause: ${abandonedCause?.message ?? String(abandonedCause)}). `
+      + `Instrumented code has roughly 5-8x less stack depth than the same code `
+      + `untraced, so deep recursion runs out sooner — narrow --package-prefix, or `
+      + `lower FLOWTRACE_MAX_DEPTH, to instrument less of the program.\n`
+    );
+  }
+});
+
+/** @internal Forget the abandoned-call tally. */
+export function _resetAbandonedForTests() {
+  abandoned = 0;
+  abandonedCause = null;
+  skippedDeep = 0;
+  depthCeiling = getMaxDepth();
+}
+
+/** @internal Calls that ran untraced because a helper could not complete. */
+export function abandonedCount() {
+  return abandoned;
+}
+
+/** @internal Calls not traced because they were deeper than the limit. */
+export function skippedDeepCount() {
+  return skippedDeep;
+}
+
+// ────────────────────────────────────────────────────────────
 // Helpers called from transformed code
 // ────────────────────────────────────────────────────────────
 
@@ -286,23 +464,44 @@ function common(ctx, module_, cls, method, visibility, lang) {
  * @returns {{ span_id: string, trace_id: string, parent_id: string|null, depth: number, start: bigint }}
  */
 export function __ft_enter(module_, cls, method, visibility, paramNames, args, lang) {
-  const parent = getCurrent();
-  const span_id = newSpanId();
-  const trace_id = parent ? parent.trace_id : newTraceId();
-  const parent_id = parent ? parent.span_id : null;
-  const depth = parent ? parent.depth + 1 : 0;
+  // The whole body is guarded, not just the id calls: serializeArgs and emit
+  // are deeper still, and any of them running out of stack must cost the trace
+  // a call, never the program a crash. See `abandoned`.
+  let depth = 0;
+  try {
+    const parent = getCurrent();
+    depth = parent ? parent.depth + 1 : 0;
 
-  const ctx = { span_id, trace_id, parent_id, depth, start: process.hrtime.bigint() };
+    // Two integer comparisons on the hot path. See depthCeiling.
+    if (depth === 0) {
+      depthCeiling = getMaxDepth();
+    } else if (depth >= depthCeiling) {
+      skippedDeep++;
+      return NO_SPAN;
+    }
 
-  emit({
-    ts: nowTs(),
-    ...common(ctx, module_, cls, method, visibility, lang),
-    event: 'enter',
-    args: serializeArgs(paramNames, args),
-    depth,
-  });
+    const span_id = newSpanId();
+    const trace_id = parent ? parent.trace_id : newTraceId();
+    const parent_id = parent ? parent.span_id : null;
 
-  return ctx;
+    const ctx = { span_id, trace_id, parent_id, depth, start: process.hrtime.bigint() };
+
+    emit({
+      ts: nowTs(),
+      ...common(ctx, module_, cls, method, visibility, lang),
+      event: 'enter',
+      args: serializeArgs(paramNames, args),
+      depth,
+    });
+
+    return ctx;
+  } catch (e) {
+    // No call, and no property read on `e`: see `abandoned`.
+    abandoned++;
+    abandonedCause ??= e;
+    if (depth < depthCeiling) depthCeiling = depth;
+    return NO_SPAN;
+  }
 }
 
 /**
@@ -319,17 +518,25 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args, l
  * @param {string} [lang]
  */
 export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, args, result, lang) {
-  const duration_ns = Number(process.hrtime.bigint() - ctx.start);
+  // No span was opened, so there is no enter event for this exit to close.
+  if (ctx === NO_SPAN) return;
 
-  emit({
-    ts: nowTs(),
-    ...common(ctx, module_, cls, method, visibility, lang),
-    event: 'exit',
-    args: serializeArgs(paramNames, args),
-    result: serializeResult(result),
-    duration_ns,
-    depth: ctx.depth,
-  });
+  try {
+    const duration_ns = Number(process.hrtime.bigint() - ctx.start);
+
+    emit({
+      ts: nowTs(),
+      ...common(ctx, module_, cls, method, visibility, lang),
+      event: 'exit',
+      args: serializeArgs(paramNames, args),
+      result: serializeResult(result),
+      duration_ns,
+      depth: ctx.depth,
+    });
+  } catch (e) {
+    abandoned++;
+    abandonedCause ??= e;
+  }
 }
 
 /**
@@ -346,21 +553,30 @@ export function __ft_exit(ctx, module_, cls, method, visibility, paramNames, arg
  * @param {string} [lang]
  */
 export function __ft_exit_error(ctx, module_, cls, method, visibility, paramNames, args, err, lang) {
-  const duration_ns = Number(process.hrtime.bigint() - ctx.start);
+  if (ctx === NO_SPAN) return;
 
-  emit({
-    ts: nowTs(),
-    ...common(ctx, module_, cls, method, visibility, lang),
-    event: 'exit',
-    args: serializeArgs(paramNames, args),
-    // `result` is required on every exit event by schema v2. A call that threw
-    // produced no value, and {} is already how a void/undefined return is
-    // encoded.
-    result: {},
-    error: errorInfo(err),
-    duration_ns,
-    depth: ctx.depth,
-  });
+  try {
+    const duration_ns = Number(process.hrtime.bigint() - ctx.start);
+
+    emit({
+      ts: nowTs(),
+      ...common(ctx, module_, cls, method, visibility, lang),
+      event: 'exit',
+      args: serializeArgs(paramNames, args),
+      // `result` is required on every exit event by schema v2. A call that threw
+      // produced no value, and {} is already how a void/undefined return is
+      // encoded.
+      result: {},
+      error: errorInfo(err),
+      duration_ns,
+      depth: ctx.depth,
+    });
+  } catch (e) {
+    // Never rethrow: the transform throws the program's own error on the very
+    // next line, and ours would take its place.
+    abandoned++;
+    abandonedCause ??= e;
+  }
 }
 
 /**
@@ -371,11 +587,42 @@ export function __ft_exit_error(ctx, module_, cls, method, visibility, paramName
  * Returns the span ctx so the exit helper can be called with it.
  */
 export function __ft_run(enterCtx, fn) {
+  // No span: run the body directly. Skipping storage.run also skips its
+  // frames, which is the entire point when the reason there is no span is that
+  // the stack ran out — this is what hands the program back its own depth.
+  //
+  // storage.run itself is not guarded: __ft_enter has just returned, and it is
+  // by far the deeper of the two (ids, serializeArgs, JSON.stringify, the
+  // write), so if there was stack for it there is stack for this. Guarding
+  // here would need a flag to tell "threw before fn ran" from "fn threw", and
+  // that flag plus its closure would cost a frame on every traced call —
+  // making the problem it guards against more likely.
+  if (enterCtx === NO_SPAN) return fn();
+
   // Run the function inside a storage context so child calls inherit parent.
   const spanCtx = {
     trace_id: enterCtx.trace_id,
     span_id: enterCtx.span_id,
     depth: enterCtx.depth,
   };
-  return storage.run(spanCtx, fn);
+
+  // Shallow — the overwhelming majority of calls — takes the plain path, at
+  // the cost of one integer comparison. See GUARD_FROM.
+  if (enterCtx.depth < GUARD_FROM) return storage.run(spanCtx, fn);
+
+  let entered = false;
+  try {
+    return storage.run(spanCtx, () => { entered = true; return fn(); });
+  } catch (e) {
+    // `entered` is what separates the two errors that arrive here: storage.run
+    // running out of stack before it ever called fn, and fn throwing the
+    // program's own error. Rethrowing the second is required; rethrowing the
+    // first is the bug. Nothing weaker distinguishes them — by the time the
+    // catch runs, the store is restored either way.
+    if (entered) throw e;
+    abandoned++;
+    abandonedCause ??= e;
+    if (enterCtx.depth < depthCeiling) depthCeiling = enterCtx.depth;
+    return fn();
+  }
 }

@@ -21472,10 +21472,10 @@ var RUNTIMES = [
     minVersion: "20.6+",
     mechanism: "CJS Module._load hook + ESM loader + SWC transform; AsyncLocalStorage for context",
     invoke: "flowtrace run -- node myapp.js",
-    prefix: "name from package.json (drop any @scope/)",
+    prefix: "the project directory \u2014 Node matches the prefix as a path substring, not as a package name",
     inbound: "automatic \u2014 the HTTP server edge is patched (http.Server.prototype.emit, so express/fastify/koa/plain http and https all adopt an inbound traceparent), plus FLOWTRACE_TRACEPARENT",
     outbound: "automatic \u2014 patches global fetch, http/https.request, child_process spawns and worker_threads (opt out with FLOWTRACE_PROPAGATE=0)",
-    notes: `The package prefix is matched against the FILE PATH, not a package name, so it is a directory. thread is "main" on the main thread and "worker-<threadId>" inside a worker, which joins the creating span's trace.`
+    notes: '`flowtrace run` and `flowtrace init` both detect it as the project directory; a package name only matches when the directory happens to be named after it, and otherwise the trace comes out EMPTY, which reads as "my code never ran". thread is "main" on the main thread and "worker-<threadId>" inside a worker, which joins the creating span\'s trace.'
   },
   {
     lang: "ts",
@@ -21483,7 +21483,7 @@ var RUNTIMES = [
     minVersion: "5+ (on Node 20.6+)",
     mechanism: "the same Node loaders \u2014 TypeScript is transformed on the same path, not a separate layer",
     invoke: "flowtrace run -- ts-node myapp.ts",
-    prefix: "name from package.json (drop any @scope/)",
+    prefix: "the project directory \u2014 Node matches the prefix as a path substring, not as a package name",
     inbound: "automatic \u2014 same as Node",
     outbound: "automatic \u2014 same as Node",
     notes: 'Events carry lang "ts" (.ts/.tsx/.mts/.cts); everything else is the Node layer.'
