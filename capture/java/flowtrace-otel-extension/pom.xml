@@ -23,7 +23,7 @@
     <java.version>11</java.version>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <otel.version>1.61.0</otel.version>
+    <otel.version>1.65.0</otel.version>
     <otel.javaagent.version>2.27.0-alpha</otel.javaagent.version>
     <!-- Standalone fat-jar (not alpha) for the -javaagent flag. This is the
          agent the integration test actually runs, so it decides which JDKs
