@@ -5,6 +5,6 @@
   "description": "Express golden fixture — proves the Node capture traces user code running inside a real framework request cycle.",
   "main": "app.js",
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^5.2.1"
   }
 }
