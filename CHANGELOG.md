@@ -9,6 +9,8 @@ independently; each release names them.
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-09-16 — capture layers 2.2.0, browser 2.3.0, plugin 2.8.0
+
 ### Fixed
 
 - **The Node capture layer killed the program it was tracing, with a stack that
