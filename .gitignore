@@ -76,6 +76,17 @@ benchmarks/results-*.json
 # still knows the name cannot re-add it.
 .jig/
 
+# Working state written by whatever Claude Code plugins a contributor happens
+# to have installed. None of it is this project's: .vise/ and
+# .claude/workflow/graph.yaml are the vise plugin's phase-gate bookkeeping, and
+# .mcp-docs/ is a 14 MB SQLite cache. Ignored rather than committed on purpose —
+# CLAUDE.md says graph workflows were removed from this repo wholesale, so a
+# graph.yaml landing in git would quietly reintroduce exactly that, and a
+# checkout's plugin set is a per-developer choice either way.
+.vise/
+.claude/workflow/
+.mcp-docs/
+
 # IDE
 .idea/
 *.iml
