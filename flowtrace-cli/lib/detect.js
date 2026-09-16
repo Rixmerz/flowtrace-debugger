@@ -44,6 +44,58 @@ function detectLang(cwd) {
 }
 
 /**
+ * The language a command is going to run, from the program it names, or null
+ * when the command says nothing about it.
+ *
+ * This exists because detectLang only looks at the files in cwd, and a cwd can
+ * sit above more than one project. Run from the root of a worktree holding a
+ * Python service and a `node/` subdirectory, detection saw requirements.txt,
+ * answered "python", and `flowtrace run -- node src/app.js` then launched a
+ * Node process with PYTHONPATH and a Python package prefix pointing at it.
+ * Nothing failed: the Node program ran, untouched, and produced an empty
+ * trace — which reads as "my code never ran" rather than "the wrong capture
+ * layer was wired up". The command is far stronger evidence of what is about
+ * to run than a file in the current directory, so it gets to correct it.
+ *
+ * Deliberately conservative. Only launchers that can run exactly one language
+ * are listed: `npm`, `pnpm`, `yarn` and `npx` are NOT, because `npm test` in a
+ * polyglot repo routinely shells out to pytest or maven, and a wrong
+ * correction is worse than none. An unrecognised command returns null and
+ * detection is left alone.
+ *
+ * node and ts are one answer, not two: `node app.ts` and `ts-node app.ts` are
+ * the same capture layer, and which of the two a project is called depends on
+ * whether a tsconfig.json happens to sit next to the package.json.
+ *
+ * @param {string[]} argv - The tokens after `--`.
+ * @returns {'java'|'python'|'node'|'go'|null}
+ */
+function langFromCommand(argv) {
+  const first = argv?.[0];
+  if (!first) return null;
+  // Strip any directory and, on Windows, the extension: a command can arrive
+  // as `python`, `/usr/bin/python3.12`, `./venv/bin/python` or `node.exe`.
+  const bin = path.basename(String(first)).replace(/\.(exe|cmd|bat)$/i, '');
+
+  if (/^python[\d.]*$/.test(bin) || bin === 'pytest' || bin === 'uvicorn' || bin === 'gunicorn') {
+    return 'python';
+  }
+  if (bin === 'node' || bin === 'nodejs' || bin === 'ts-node' || bin === 'tsx') return 'node';
+  if (bin === 'java' || bin === 'mvn' || bin === 'mvnw' || bin === 'gradle' || bin === 'gradlew') {
+    return 'java';
+  }
+  if (bin === 'go') return 'go';
+  return null;
+}
+
+/** node and ts are the same capture layer; everything else stands alone. */
+function sameCaptureLayer(a, b) {
+  if (a === b) return true;
+  const nodeish = (l) => l === 'node' || l === 'ts';
+  return nodeish(a) && nodeish(b);
+}
+
+/**
  * Returns detected package prefix string or null.
  */
 function detectPackagePrefix(cwd, lang) {
@@ -117,4 +169,4 @@ function nodePackageName(cwd) {
   }
 }
 
-module.exports = { detectLang, detectPackagePrefix, nodePackageName };
+module.exports = { detectLang, detectPackagePrefix, nodePackageName, langFromCommand, sameCaptureLayer };

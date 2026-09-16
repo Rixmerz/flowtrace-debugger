@@ -31,6 +31,21 @@ independently; each release names them.
   the cap buys about half of that back while keeping a deep recursion from
   filling the trace with thousands of identical events. `capture/node/README.md`
   now states the limit outright instead of leaving it to be discovered.
+- **`flowtrace run` instrumented the wrong runtime in a polyglot worktree,
+  without saying so.** Language detection only ever looked at the files in the
+  current directory, so run from the root of a worktree holding a Python
+  service and a `node/` subdirectory it saw `requirements.txt`, answered
+  `python`, and `flowtrace run -- node src/app.js` launched the Node program
+  with `PYTHONPATH` and a Python package prefix. Nothing failed and nothing
+  warned: the Node program ran completely uninstrumented and the trace came
+  out empty. The command now gets a say — it is far stronger evidence of what
+  is about to run than a file in cwd. A mismatch with auto-detection or with
+  `.flowtrace/config.json` prints the conflict and follows the command; a
+  mismatch with an explicit `--lang` is refused with exit 2 and names the fix.
+  Only launchers that can run exactly one language count (`node`, `ts-node`,
+  `tsx`, `python*`, `pytest`, `java`, `mvn`/`gradle` and wrappers, `go`);
+  `npm`/`pnpm`/`yarn`/`npx` deliberately do not, since `npm test` routinely
+  shells out to pytest or maven.
 - **The documented Node/TypeScript package prefix was wrong.** `runtimes.ts` and
   `plugin/commands/trace.md` both told you to use the `package.json` name; the
   CLI has detected the project directory since the layer started matching the

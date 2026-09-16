@@ -12,7 +12,7 @@ const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const chalk = require('chalk');
 const assets = require('../assets');
-const { detectLang, detectPackagePrefix } = require('../detect');
+const { detectLang, detectPackagePrefix, langFromCommand, sameCaptureLayer } = require('../detect');
 const { detectPythonPrefix } = require('../python-prefix');
 const { detectGoModulePath } = require('../go-module');
 const { ensureGitignore } = require('../gitignore');
@@ -196,30 +196,71 @@ async function runCommand(options = {}, restArgs = []) {
     config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
   }
 
+  // What the command itself says it is about to run. Stronger evidence than
+  // any file in cwd — see langFromCommand.
+  const cmdLang = langFromCommand(restArgs);
+
   // Determine language: CLI flag > config > auto-detect
-  let lang = options.lang || config.lang || null;
+  const explicitLang = options.lang && options.lang !== 'auto' ? options.lang : null;
+  let lang = explicitLang || config.lang || null;
+
+  // An explicit --lang that contradicts the command is refused rather than
+  // obeyed. Obeying it wires up a capture layer that cannot touch the process
+  // and yields an empty trace, and an empty trace is the one failure of this
+  // tool that reads as a bug in the user's application.
+  if (explicitLang && cmdLang && !sameCaptureLayer(explicitLang, cmdLang)) {
+    console.error(chalk.red('Error:'), `--lang ${explicitLang} no corresponde al comando \`${restArgs.join(' ')}\`, que ejecuta ${cmdLang}.`);
+    console.log(chalk.gray(`  Con --lang ${explicitLang} se inyectaría la capa de ${explicitLang} en un proceso ${cmdLang}: la traza saldría vacía.`));
+    console.log(chalk.gray(`  Usa --lang ${cmdLang}, o cambia el comando.`));
+    process.exit(2);
+  }
+
   if (!lang || lang === 'auto') {
     const detected = detectLang(cwd);
-    if (detected === null) {
+    if (detected === null && cmdLang === null) {
       console.error(chalk.red('Error:'), 'No se pudo detectar el lenguaje del proyecto.');
       console.log(chalk.gray('Archivos reconocidos: pom.xml, build.gradle, pyproject.toml, setup.py, requirements.txt, package.json, go.mod'));
       console.log(chalk.gray('O usa: flowtrace run --lang <java|python|node|ts|go> -- <cmd>'));
       process.exit(1);
     }
     if (Array.isArray(detected)) {
-      // Multi-lang: prompt via inquirer
-      const inquirer = require('inquirer');
-      const { choice } = await inquirer.prompt([{
-        type: 'list',
-        name: 'choice',
-        message: 'Se detectaron varios lenguajes. Selecciona:',
-        choices: detected,
-      }]);
-      lang = choice;
+      // Several projects share this directory. The command settles it when it
+      // names one of them; only otherwise is there anything to ask about.
+      const fromCmd = detected.find((l) => sameCaptureLayer(l, cmdLang));
+      if (fromCmd) {
+        lang = fromCmd;
+        console.log(chalk.gray(`  lang (del comando): ${lang}`));
+      } else {
+        const inquirer = require('inquirer');
+        const { choice } = await inquirer.prompt([{
+          type: 'list',
+          name: 'choice',
+          message: 'Se detectaron varios lenguajes. Selecciona:',
+          choices: detected,
+        }]);
+        lang = choice;
+      }
+    } else if (detected === null || (cmdLang && !sameCaptureLayer(detected, cmdLang))) {
+      // cwd says one thing and the command says another: a worktree root that
+      // holds a Python service and a node/ subdirectory answers "python" to
+      // `flowtrace run -- node src/app.js`. Follow the command, and say so —
+      // silently instrumenting the wrong runtime is how this produced an empty
+      // trace with no warning at all.
+      if (detected !== null) {
+        console.log(chalk.yellow('Aviso:'), `el directorio parece ${detected}, pero el comando ejecuta ${cmdLang}.`);
+      }
+      lang = cmdLang;
+      console.log(chalk.gray(`  lang (del comando): ${lang}`));
     } else {
       lang = detected;
       console.log(chalk.gray(`  lang (detectado): ${lang}`));
     }
+  } else if (cmdLang && !sameCaptureLayer(lang, cmdLang)) {
+    // Same mismatch, but the stale answer came from .flowtrace/config.json —
+    // written by an `init` run from a different directory, typically.
+    console.log(chalk.yellow('Aviso:'), `.flowtrace/config.json dice ${lang}, pero el comando ejecuta ${cmdLang}.`);
+    lang = cmdLang;
+    console.log(chalk.gray(`  lang (del comando): ${lang}`));
   }
 
   if (!SUPPORTED_LANGS.has(lang)) {
