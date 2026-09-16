@@ -92,28 +92,72 @@ function goCaptureDir() {
   );
 }
 
+/** Path to the extension's pom, which exists in a checkout and not in the package. */
+const JAVA_POM = path.join(
+  REPO_ROOT, 'capture', 'java', 'flowtrace-otel-extension', 'pom.xml');
+
+/**
+ * The extension version the checkout is on, read from its pom, or null when
+ * there is no pom (an installed package).
+ *
+ * The pom is the only thing that knows which jar is current. Everything else —
+ * filename order, mtime — is a guess, and the guesses were wrong.
+ */
+function javaExtensionVersion(pomPath = JAVA_POM) {
+  if (!fs.existsSync(pomPath)) return null;
+  const m = fs.readFileSync(pomPath, 'utf8')
+    .match(/<artifactId>\s*flowtrace-otel-extension\s*<\/artifactId>\s*<version>\s*([^<\s]+)\s*<\/version>/);
+  return m ? m[1] : null;
+}
+
+/** Shaded extension jars in `dir`; shade leaves the pre-shading jar as original-*.jar. */
+function extensionJarsIn(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter((n) =>
+    n.startsWith('flowtrace-otel-extension-') && n.endsWith('.jar') && !n.startsWith('original-'));
+}
+
 /**
  * The shaded FlowTrace OTel extension jar.
  *
- * Located by prefix and picking the most recently modified match, never by an
- * exact filename: the name carries the version, so a hardcoded one goes stale
- * on every release — as it had, still pointing at a 2.0.0-SNAPSHOT jar two
- * versions later. And after a bump the Maven target/ holds both jars, with a
- * directory order that is filesystem-dependent, so "the first match" could
- * silently be the previous release.
+ * In a checkout the pom names it exactly. That matters because `mvn package`
+ * does not clean target/, so after a version bump the PREVIOUS release's jar
+ * is still sitting there — and the two rules this replaced both picked it.
+ * A hardcoded filename went stale at every release (it pointed at a
+ * 2.0.0-SNAPSHOT jar two versions on, and silently found nothing); switching
+ * to "newest matching mtime" then handed back real, loadable, *old* code,
+ * which is worse: `flowtrace run --lang java` traced fine and produced
+ * subtly wrong events — arg0/arg1 instead of parameter names, arrays
+ * serialized as the string "[]", virtual-thread call paths in their own
+ * disconnected trace — with nothing anywhere saying the wrong jar was loaded.
+ *
+ * An older jar in target/ is therefore ignored, never used as a fallback:
+ * returning null makes the caller say "run make build-java", which is true
+ * and fixable. Guessing does not.
  */
 function javaExtensionJar() {
-  const vendored = path.join(VENDOR, 'java');
-  const built = path.join(REPO_ROOT, 'capture', 'java', 'flowtrace-otel-extension', 'target');
-  for (const dir of [built, vendored]) {
-    if (!fs.existsSync(dir)) continue;
-    const hits = fs.readdirSync(dir)
-      .filter((n) => n.startsWith('flowtrace-otel-extension-') && n.endsWith('.jar') && !n.startsWith('original-'))
-      .map((n) => path.join(dir, n));
-    if (hits.length === 0) continue;
-    return hits.reduce((a, b) =>
-      (fs.statSync(a).mtimeMs >= fs.statSync(b).mtimeMs ? a : b));
+  return _pickJavaExtensionJar(
+    path.join(REPO_ROOT, 'capture', 'java', 'flowtrace-otel-extension', 'target'),
+    path.join(VENDOR, 'java'),
+    javaExtensionVersion()
+  );
+}
+
+/** The rule above, with its inputs passed in so a test can drive it. */
+function _pickJavaExtensionJar(built, vendored, version) {
+  if (version) {
+    return firstExisting(
+      path.join(built, `flowtrace-otel-extension-${version}.jar`),
+      path.join(vendored, `flowtrace-otel-extension-${version}.jar`)
+    );
   }
+
+  // Installed package: no pom, and scripts/vendor.mjs wipes vendor/ before it
+  // copies, so exactly one jar is there by construction. More than one means
+  // that invariant broke — refuse rather than pick, because picking is what
+  // this function used to do wrong.
+  const hits = extensionJarsIn(vendored);
+  if (hits.length === 1) return path.join(vendored, hits[0]);
   return null;
 }
 
@@ -268,6 +312,8 @@ module.exports = {
   pythonRuntimeParent,
   goCaptureDir,
   javaExtensionJar,
+  javaExtensionVersion,
+  _pickJavaExtensionJar,
   findOtelAgent,
   ensureOtelAgent,
   otelAgentPath,

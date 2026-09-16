@@ -24,7 +24,7 @@
  * Run by `prepack`, so `npm pack` and `npm publish` cannot produce a tarball
  * that is missing them.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -82,17 +82,29 @@ copyDir(join(REPO, 'capture', 'python', 'stub'),
 // install needed either — `go run` builds it fresh, from source, every time.
 copyDir(join(REPO, 'capture', 'go'), join(VENDOR, 'go'), 'go capture');
 
-// Java: the shaded jar, located by prefix and newest-wins for the same reason
-// assets.js does — target/ holds the previous release's jar after a bump.
-const target = join(REPO, 'capture', 'java', 'flowtrace-otel-extension', 'target');
+// Java: the shaded jar, named by the pom rather than found by searching
+// target/. `mvn package` does not clean, so after a version bump target/ holds
+// the PREVIOUS release's jar too — and this used to take the newest by mtime,
+// which quietly shipped old capture code in the tarball. Demanding the exact
+// version turns that into a build failure with a fix in it.
+const javaDir = join(REPO, 'capture', 'java', 'flowtrace-otel-extension');
+const target = join(javaDir, 'target');
 if (!existsSync(target)) fail('java target/ missing — run `make build-java` first');
-const jars = readdirSync(target)
-  .filter((n) => n.startsWith('flowtrace-otel-extension-') && n.endsWith('.jar') && !n.startsWith('original-'))
-  .map((n) => join(target, n));
-if (jars.length === 0) fail('no shaded jar in target/ — run `make build-java` first');
-const jar = jars.reduce((a, b) => (statSync(a).mtimeMs >= statSync(b).mtimeMs ? a : b));
+
+const pomPath = join(javaDir, 'pom.xml');
+if (!existsSync(pomPath)) fail(`extension pom.xml missing at ${pomPath}`);
+const versionMatch = readFileSync(pomPath, 'utf8')
+  .match(/<artifactId>\s*flowtrace-otel-extension\s*<\/artifactId>\s*<version>\s*([^<\s]+)\s*<\/version>/);
+if (!versionMatch) fail('could not read the extension version from pom.xml');
+const jarName = `flowtrace-otel-extension-${versionMatch[1]}.jar`;
+
+const jar = join(target, jarName);
+if (!existsSync(jar)) {
+  fail(`${jarName} missing from target/ — run \`mvn clean package\` in ${javaDir}. `
+    + 'An older version\'s jar in target/ is deliberately not accepted as a substitute.');
+}
 mkdirSync(join(VENDOR, 'java'), { recursive: true });
-cpSync(jar, join(VENDOR, 'java', jar.split('/').pop()));
-console.log(`[vendor] java extension -> <pkg>/vendor/java/${jar.split('/').pop()}`);
+cpSync(jar, join(VENDOR, 'java', jarName));
+console.log(`[vendor] java extension -> <pkg>/vendor/java/${jarName}`);
 
 console.log('[vendor] done');

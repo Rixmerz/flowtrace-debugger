@@ -59,8 +59,10 @@ class VirtualThreadIntegrationTest {
 
         File extensionJar = findExtensionJar(projectBase);
         requireArtifact(extensionJar != null,
-                "Extension jar not built under " + new File(projectBase, "target")
-                        + " — run 'mvn package' first.");
+                expectedExtensionJarName() + " not present under "
+                        + new File(projectBase, "target")
+                        + " — run 'mvn package' first. An older version's jar in "
+                        + "target/ does NOT count: see findExtensionJar.");
 
         // VirtualThreadRunner/VirtualThreadCalcRunner are compiled to
         // target/test-classes by the jdk21-fixtures profile's extra
@@ -145,17 +147,40 @@ class VirtualThreadIntegrationTest {
 
     // ---- helpers (mirrors FlowtraceIntegrationTest; kept independent, see class doc) ----
 
+    /**
+     * The jar this Maven build produced, by exact name.
+     *
+     * <p>{@code project.version} comes from the pom via surefire's
+     * {@code systemPropertyVariables}, so the name is never guessed. Two
+     * earlier attempts both shipped a silent wrong answer: an exact hardcoded
+     * name went stale at the {@code 2.0.0} release and the test skipped itself
+     * on every run; resolving by the {@code flowtrace-otel-extension-} prefix
+     * and taking the newest by mtime then made a version bump load the
+     * PREVIOUS release's jar, because {@code mvn package} runs the test phase
+     * before it writes the new jar and {@code target/} is not cleaned between
+     * builds. That produced a failure that read as a product regression —
+     * virtual-thread context propagation, parameter names in {@code args},
+     * array serialization — when the only thing wrong was which jar was
+     * loaded.
+     *
+     * <p>Missing is now a clean answer, not a fallback: {@link
+     * #requireArtifact} skips, or fails hard under {@code
+     * flowtrace.it.required}.
+     */
     private static File findExtensionJar(File projectBase) {
-        File[] candidates = new File(projectBase, "target").listFiles((dir, name) ->
-                name.startsWith("flowtrace-otel-extension-")
-                        && name.endsWith(".jar")
-                        && !name.startsWith("original-"));
-        if (candidates == null || candidates.length == 0) return null;
-        File newest = candidates[0];
-        for (File f : candidates) {
-            if (f.lastModified() > newest.lastModified()) newest = f;
-        }
-        return newest;
+        String version = System.getProperty("project.version");
+        if (version == null || version.trim().isEmpty()) return null;
+        File jar = new File(new File(projectBase, "target"),
+                "flowtrace-otel-extension-" + version.trim() + ".jar");
+        return jar.isFile() ? jar : null;
+    }
+
+    /** The name {@link #findExtensionJar} looked for, for error messages. */
+    private static String expectedExtensionJarName() {
+        String version = System.getProperty("project.version");
+        return "flowtrace-otel-extension-"
+                + (version == null || version.trim().isEmpty() ? "<project.version unset>" : version.trim())
+                + ".jar";
     }
 
     private static void requireArtifact(boolean present, String message) {

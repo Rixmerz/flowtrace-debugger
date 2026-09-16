@@ -142,9 +142,15 @@
           <includes>
             <include>**/*Test.java</include>
           </includes>
-          <!-- Pass basedir so FlowtraceIntegrationTest can locate jars -->
+          <!-- basedir so the integration tests can locate target/, and version
+               so they load the jar THIS build produced. Without the version they
+               resolved the jar by filename prefix and took the newest by mtime,
+               which after a version bump is the previous release's jar still
+               sitting in target/ — the tests then exercised old code and failed
+               with assertions blaming the product. -->
           <systemPropertyVariables>
             <project.basedir>${project.basedir}</project.basedir>
+            <project.version>${project.version}</project.version>
           </systemPropertyVariables>
         </configuration>
       </plugin>

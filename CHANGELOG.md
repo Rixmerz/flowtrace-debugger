@@ -9,6 +9,28 @@ independently; each release names them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Java build tested, and could ship, the previous release's jar.** `mvn
+  package` does not clean `target/`, so after a version bump the old shaded jar
+  is still sitting there — and every one of the four places that located it
+  resolved it by the `flowtrace-otel-extension-` filename prefix, taking the
+  newest by mtime. The test phase of `mvn package` runs *before* the new jar is
+  written, so on the first build after a bump the only candidate was the stale
+  one: `make build-java` failed on
+  `VirtualThreadIntegrationTest.virtual_thread_call_path_attributed_to_parent_span`,
+  and `make check-golden` failed on `java`, `truncation/java` and `error/java`
+  with `arg0`/`arg1` in place of parameter names and arrays serialized as the
+  string `"[]"`. All four read as product regressions in virtual-thread context
+  propagation and in the serializer; the only thing wrong was which jar was
+  loaded. The jar is now named by the pom — surefire passes `project.version`
+  to the integration tests, and `assets.js` and `scripts/vendor.mjs` read it
+  from `pom.xml` — and an older version's jar is ignored rather than accepted
+  as a substitute, so a missing build says so instead of quietly answering with
+  old code. Two earlier attempts at this lookup each traded one silent wrong
+  answer for another; the regression test in
+  `flowtrace-cli/test/test-java-jar-resolution.js` pins the rule.
+
 ## [4.1.0] - 2026-09-16 — capture layers 2.2.0, browser 2.3.0, plugin 2.8.0
 
 ### Fixed

@@ -28,9 +28,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       {@code target/dependency/opentelemetry-javaagent.jar} (downloaded by
  *       Maven dependency-plugin during the {@code prepare-integration-test}
  *       phase, or by running {@code mvn process-test-resources}).</li>
- *   <li>The extension jar must have been built. It is located by prefix rather
- *       than by an exact name, so a version bump does not silently un-find it —
- *       see {@link #findExtensionJar}.</li>
+ *   <li>The extension jar must have been built, at the version in the pom —
+ *       an older version's jar left in {@code target/} is ignored, not used
+ *       as a fallback. See {@link #findExtensionJar}.</li>
  *   <li>The Calculator class must be compiled to
  *       {@code target/test-classes/} — achieved by the test-compile phase
  *       picking up {@code src/test/java/com/example/golden/Calculator.java}.</li>
@@ -62,8 +62,10 @@ class FlowtraceIntegrationTest {
 
         File extensionJar = findExtensionJar(projectBase);
         requireArtifact(extensionJar != null,
-                "Extension jar not built under " + new File(projectBase, "target")
-                        + " — run 'mvn package' first.");
+                expectedExtensionJarName() + " not present under "
+                        + new File(projectBase, "target")
+                        + " — run 'mvn package' first. An older version's jar in "
+                        + "target/ does NOT count: see findExtensionJar.");
 
         // Calculator is compiled to target/test-classes during test-compile phase.
         File testClasses = new File(projectBase, "target/test-classes");
@@ -225,30 +227,40 @@ class FlowtraceIntegrationTest {
     // ---- helpers ----
 
     /**
-     * Locate the shaded extension jar without hardcoding a version.
+     * The jar this Maven build produced, by exact name.
      *
-     * <p>The previous form looked for a literal
-     * {@code flowtrace-otel-extension-2.0.0-SNAPSHOT.jar}. When the pom moved to
-     * the {@code 2.0.0} release the file became
-     * {@code flowtrace-otel-extension-2.0.0.jar}, the lookup missed, and the whole
-     * integration test skipped itself silently on every run.
+     * <p>{@code project.version} comes from the pom via surefire's
+     * {@code systemPropertyVariables}, so the name is never guessed. Two
+     * earlier attempts both shipped a silent wrong answer: an exact hardcoded
+     * {@code flowtrace-otel-extension-2.0.0-SNAPSHOT.jar} went stale when the
+     * pom moved to the {@code 2.0.0} release, and the whole integration test
+     * skipped itself on every run; resolving by the
+     * {@code flowtrace-otel-extension-} prefix and taking the newest by mtime
+     * then made a version bump load the PREVIOUS release's jar, because
+     * {@code mvn package} runs the test phase before it writes the new jar and
+     * {@code target/} is not cleaned between builds. That one produced
+     * failures that read as product regressions — virtual-thread context
+     * propagation, parameter names in {@code args}, array serialization — when
+     * the only thing wrong was which jar was loaded.
+     *
+     * <p>Missing is now a clean answer, not a fallback: {@link
+     * #requireArtifact} skips, or fails hard under {@code
+     * flowtrace.it.required}.
      */
     private static File findExtensionJar(File projectBase) {
-        File[] candidates = new File(projectBase, "target").listFiles((dir, name) ->
-                name.startsWith("flowtrace-otel-extension-")
-                        && name.endsWith(".jar")
-                        // shade leaves the pre-shading jar behind as original-*.jar
-                        && !name.startsWith("original-"));
-        if (candidates == null || candidates.length == 0) return null;
-        // Most recently modified, not candidates[0]: after a version bump target/
-        // holds the old jar alongside the new one and File.listFiles() order is
-        // filesystem-dependent, so the fixed index could silently test the
-        // previous release.
-        File newest = candidates[0];
-        for (File f : candidates) {
-            if (f.lastModified() > newest.lastModified()) newest = f;
-        }
-        return newest;
+        String version = System.getProperty("project.version");
+        if (version == null || version.trim().isEmpty()) return null;
+        File jar = new File(new File(projectBase, "target"),
+                "flowtrace-otel-extension-" + version.trim() + ".jar");
+        return jar.isFile() ? jar : null;
+    }
+
+    /** The name {@link #findExtensionJar} looked for, for error messages. */
+    private static String expectedExtensionJarName() {
+        String version = System.getProperty("project.version");
+        return "flowtrace-otel-extension-"
+                + (version == null || version.trim().isEmpty() ? "<project.version unset>" : version.trim())
+                + ".jar";
     }
 
     /**

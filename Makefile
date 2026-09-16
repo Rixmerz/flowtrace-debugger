@@ -62,6 +62,12 @@ test: validate-schema check-golden test-java test-python test-node test-go test-
 	@echo "==> test: all suites passed"
 
 # Java capture module
+# No `clean`, so target/ keeps every version ever built here. That is harmless
+# now — the tests, flowtrace-cli/lib/assets.js and flowtrace-cli/scripts/vendor.mjs
+# all resolve the jar by the version in pom.xml and ignore the rest — but it does
+# mean the FIRST build after a version bump runs the test phase before the new
+# jar exists, so the integration tests skip themselves. test-java below is what
+# turns that skip into a failure.
 build-java:
 	@echo "==> build-java: flowtrace-otel-extension"
 	@cd capture/java/flowtrace-otel-extension && mvn -q package
