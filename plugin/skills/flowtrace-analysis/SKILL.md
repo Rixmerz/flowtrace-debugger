@@ -51,10 +51,16 @@ When the FlowTrace plugin is installed its MCP server provides:
 | `log_schema` | Field inventory — check this before assuming a field exists |
 | `log_search` | Filter events by field predicates |
 | `log_aggregate` | Group and count/sum — the fastest route to "where did time go" |
-| `trace_tree` | Rebuild the nested call tree for one `trace_id` |
+| `trace_search` | One summary per `trace_id` (root, duration, span/error counts) — start here |
+| `trace_topology` | Shape of one trace: flat span list with ancestry `path` and `self_ns`, no payloads |
+| `trace_span_details` | Full args/result/error for span ids you picked from the topology |
+| `trace_errors` | Every failing span with its path; `total_error_count` shows truncation |
+| `trace_critical_path` | The spans that determined end-to-end duration, ranked by their own time |
+| `trace_tree` | Nested call tree with everything at once — fine for a small trace |
 | `trace_find_error` | Locate a failing span and walk its parents back to the root |
 | `trace_private_calls` | Just the private-method calls |
 | `trace_diff` | Compare two runs — spans only in one, duration deltas |
+| `read_skill` | The same playbooks for any MCP client (`SKILL.md` first) |
 
 It also serves one resource, **`flowtrace://runtimes`** — which runtimes are
 supported, their minimum versions, how each is invoked, where the package

@@ -159,6 +159,12 @@ The MCP server exposes tools so AI agents can analyze traces directly:
 
 | Tool | Description |
 |---|---|
+| `trace_search` | Per-trace summary: root, duration, span and error counts |
+| `trace_topology` | Shape of one trace without payloads (ancestry path, self time) |
+| `trace_span_details` | Full detail for chosen spans |
+| `trace_errors` | Every error with its path to the root |
+| `trace_critical_path` | Critical path: which spans determined total duration |
+| `read_skill` | Analysis playbooks for any MCP client |
 | `trace_tree` | Call tree for a trace |
 | `trace_find_error` | Find the first exception in the log |
 | `trace_private_calls` | List internal methods not exposed in the API |
@@ -180,6 +186,15 @@ The plugin also puts `flowtrace` on the PATH, so `flowtrace run -- ...` works
 with no global install.
 
 ---
+
+## Sharing and exporting
+
+- `flowtrace anonymize <file>` replaces every captured value with a hash
+  (equal values stay equal). `--salt` keeps hashes stable across runs so they
+  can be compared; `--names` also hides module/class/method.
+- `flowtrace export <file>` converts the trace to OTLP/JSON. With
+  `--endpoint http://localhost:4318` it sends it to Jaeger, Tempo or any OTLP
+  collector. Ids are already W3C, so the tree survives intact.
 
 ## Dashboard
 

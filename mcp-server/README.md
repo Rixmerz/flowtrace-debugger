@@ -32,6 +32,12 @@ the returned `sessionId`; every other tool takes that id.
 | `log_schema` | Discovered fields plus one sample row |
 | `log_search` | Filter events by field (`where`) or free text, with paging |
 | `log_aggregate` | Group and count / sum / avg / max / min over a field, with the same `where`, paged |
+| `trace_search` | One summary per `trace_id` — root, duration, span and error counts. Start here |
+| `trace_topology` | Flat depth-first span list with ancestry `path`, `duration_ns`, `self_ns` — no payloads |
+| `trace_span_details` | Full enter/exit events for chosen span ids |
+| `trace_errors` | Every failing span with args and path to root; `total_error_count` exposes truncation |
+| `trace_critical_path` | Spans that determined end-to-end duration (last-finishing-child walk), ranked by own time |
+| `read_skill` | Analysis playbooks, progressive disclosure from `SKILL.md` |
 | `trace_tree` | Rebuild the call tree for one `trace_id` from `parent_id` links |
 | `trace_find_error` | First failing call, with the path from the root down to it |
 | `trace_private_calls` | Calls whose `visibility` is not public — what the public API did internally |

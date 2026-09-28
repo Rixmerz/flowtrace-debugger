@@ -452,9 +452,9 @@ var require_codegen = __commonJS({
       }
     };
     var Label = class extends Node {
-      constructor(label) {
+      constructor(label2) {
         super();
-        this.label = label;
+        this.label = label2;
         this.names = {};
       }
       render({ _n }) {
@@ -462,14 +462,14 @@ var require_codegen = __commonJS({
       }
     };
     var Break = class extends Node {
-      constructor(label) {
+      constructor(label2) {
         super();
-        this.label = label;
+        this.label = label2;
         this.names = {};
       }
       render({ _n }) {
-        const label = this.label ? ` ${this.label}` : "";
-        return `break${label};` + _n;
+        const label2 = this.label ? ` ${this.label}` : "";
+        return `break${label2};` + _n;
       }
     };
     var Throw = class extends Node {
@@ -881,12 +881,12 @@ var require_codegen = __commonJS({
         return this._endBlockNode(For);
       }
       // `label` statement
-      label(label) {
-        return this._leafNode(new Label(label));
+      label(label2) {
+        return this._leafNode(new Label(label2));
       }
       // `break` statement
-      break(label) {
-        return this._leafNode(new Break(label));
+      break(label2) {
+        return this._leafNode(new Break(label2));
       }
       // `return` statement
       return(value) {
@@ -21441,6 +21441,286 @@ function traceDiff(a, b, options = {}) {
   duration_deltas.sort((x, y) => Math.abs(y.delta_ns) - Math.abs(x.delta_ns));
   return { only_in_a, only_in_b, duration_deltas };
 }
+function spansOf(events, traceId) {
+  const spans = /* @__PURE__ */ new Map();
+  for (const e of events) {
+    if (traceId !== void 0 && e.trace_id !== traceId) continue;
+    if (isEnter(e)) {
+      const cur = spans.get(e.span_id);
+      if (cur) cur.enter = e;
+      else spans.set(e.span_id, { enter: e });
+    }
+  }
+  for (const e of events) {
+    if (traceId !== void 0 && e.trace_id !== traceId) continue;
+    if (isExit(e)) {
+      const cur = spans.get(e.span_id);
+      if (cur) cur.exit = e;
+    }
+  }
+  return spans;
+}
+function label(e) {
+  return [e.module, e.class, e.method].filter(Boolean).join(".");
+}
+function traceSearch(events, options = {}) {
+  const limit = options.limit ?? 50;
+  const acc = /* @__PURE__ */ new Map();
+  for (const e of events) {
+    let a = acc.get(e.trace_id);
+    if (!a) {
+      a = {
+        start: e.ts,
+        end: e.ts,
+        spans: 0,
+        errors: 0,
+        root: null,
+        rootExit: null,
+        threads: /* @__PURE__ */ new Set(),
+        langs: /* @__PURE__ */ new Set(),
+        methods: /* @__PURE__ */ new Set()
+      };
+      acc.set(e.trace_id, a);
+    }
+    a.start = Math.min(a.start, e.ts);
+    a.end = Math.max(a.end, e.ts);
+    a.threads.add(e.thread);
+    a.langs.add(e.lang);
+    a.methods.add(label(e).toLowerCase());
+    if (isEnter(e)) {
+      a.spans++;
+      if (e.parent_id === null && (!a.root || e.ts < a.root.ts)) a.root = e;
+    } else if (isExit(e)) {
+      if (e.error) a.errors++;
+    }
+  }
+  for (const e of events) {
+    if (!isExit(e)) continue;
+    const a = acc.get(e.trace_id);
+    if (a?.root && a.root.span_id === e.span_id) a.rootExit = e;
+  }
+  const needle = options.method?.toLowerCase();
+  const all = [];
+  for (const [trace_id, a] of acc) {
+    if (options.has_error === true && a.errors === 0) continue;
+    if (options.has_error === false && a.errors > 0) continue;
+    if (needle && ![...a.methods].some((m) => m.includes(needle))) continue;
+    const duration3 = a.rootExit?.duration_ns ?? null;
+    if (options.min_duration_ns !== void 0 && (duration3 ?? 0) < options.min_duration_ns) continue;
+    all.push({
+      trace_id,
+      root: a.root ? label(a.root) : null,
+      start_ts: a.start,
+      duration_ns: duration3,
+      span_count: a.spans,
+      error_count: a.errors,
+      threads: [...a.threads].sort(),
+      langs: [...a.langs].sort()
+    });
+  }
+  all.sort((x, y) => x.start_ts - y.start_ts || x.trace_id.localeCompare(y.trace_id));
+  const traces = all.slice(0, limit);
+  return { total: all.length, returned: traces.length, truncated: traces.length < all.length, traces };
+}
+function childIndex(spans) {
+  const childrenOf = /* @__PURE__ */ new Map();
+  const roots = [];
+  for (const s of spans.values()) {
+    const p = s.enter.parent_id;
+    if (p && spans.has(p)) {
+      const list = childrenOf.get(p) ?? [];
+      list.push(s);
+      childrenOf.set(p, list);
+    } else roots.push(s);
+  }
+  const byTs = (a, b) => a.enter.ts - b.enter.ts;
+  roots.sort(byTs);
+  for (const list of childrenOf.values()) list.sort(byTs);
+  return { roots, childrenOf };
+}
+function selfNs(s, childrenOf) {
+  if (!s.exit) return null;
+  let kids = 0;
+  for (const c of childrenOf.get(s.enter.span_id) ?? []) kids += c.exit?.duration_ns ?? 0;
+  return Math.max(0, s.exit.duration_ns - kids);
+}
+function traceTopology(events, traceId, options = {}) {
+  const limit = options.limit ?? 2e3;
+  const spans = spansOf(events, traceId);
+  const { roots, childrenOf } = childIndex(spans);
+  const out = [];
+  const stack = roots.slice().reverse().map((s) => ({ s, prefix: "", depth: 0 }));
+  while (stack.length && out.length < limit) {
+    const { s, prefix, depth } = stack.pop();
+    const path = prefix ? `${prefix}/${s.enter.span_id}` : s.enter.span_id;
+    out.push({
+      span_id: s.enter.span_id,
+      path,
+      depth,
+      name: label(s.enter),
+      visibility: s.enter.visibility,
+      duration_ns: s.exit?.duration_ns ?? null,
+      self_ns: selfNs(s, childrenOf),
+      error: Boolean(s.exit?.error)
+    });
+    const kids = childrenOf.get(s.enter.span_id) ?? [];
+    for (let i = kids.length - 1; i >= 0; i--) stack.push({ s: kids[i], prefix: path, depth: depth + 1 });
+  }
+  return { trace_id: traceId, total: spans.size, returned: out.length, truncated: out.length < spans.size, spans: out };
+}
+function traceSpanDetails(events, spanIds, options = {}) {
+  const limit = options.limit ?? 20;
+  const wanted = [...new Set(spanIds)];
+  const spans = spansOf(events.filter((e) => wanted.includes(e.span_id)));
+  const not_found = wanted.filter((id) => !spans.has(id));
+  const found = wanted.filter((id) => spans.has(id));
+  const picked = found.slice(0, limit).map((id) => {
+    const s = spans.get(id);
+    return { span_id: id, enter: s.enter, exit: s.exit ?? null };
+  });
+  return { requested: wanted.length, returned: picked.length, truncated: picked.length < found.length, not_found, spans: picked };
+}
+function traceErrors(events, options = {}) {
+  const limit = options.limit ?? 20;
+  const scoped = options.trace_id ? events.filter((e) => e.trace_id === options.trace_id) : events;
+  const failing = scoped.filter((e) => isExit(e) && Boolean(e.error)).sort((a, b) => a.ts - b.ts);
+  const enterByKey = /* @__PURE__ */ new Map();
+  for (const e of scoped) if (isEnter(e)) enterByKey.set(`${e.trace_id}|${e.span_id}`, e);
+  const errors = failing.slice(0, limit).map((x) => {
+    const path = [];
+    let cursor = x.span_id;
+    const seen = /* @__PURE__ */ new Set();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      const en = enterByKey.get(`${x.trace_id}|${cursor}`);
+      if (!en) break;
+      path.unshift({ span_id: en.span_id, class: en.class, method: en.method, module: en.module });
+      cursor = en.parent_id;
+    }
+    return {
+      trace_id: x.trace_id,
+      span_id: x.span_id,
+      method: label(x),
+      args: enterByKey.get(`${x.trace_id}|${x.span_id}`)?.args,
+      error: x.error,
+      path
+    };
+  });
+  return { total_error_count: failing.length, returned: errors.length, truncated: errors.length < failing.length, errors };
+}
+function traceCriticalPath(events, traceId) {
+  const spans = spansOf(events, traceId);
+  const { roots, childrenOf } = childIndex(spans);
+  const rootSpan = roots.find((r) => r.exit) ?? null;
+  if (!rootSpan) return { trace_id: traceId, root: null, total_ns: 0, sections: [], by_span: [] };
+  const t0 = rootSpan.enter.ts;
+  const startNs = (s) => Math.round((s.enter.ts - t0) * 1e9);
+  const endNs = (s) => startNs(s) + (s.exit?.duration_ns ?? 0);
+  const sections = [];
+  const emit = (s, depth, from, to) => {
+    if (to > from) sections.push({ span_id: s.enter.span_id, name: label(s.enter), depth, self_ns: to - from, start_ns: from, end_ns: to });
+  };
+  const walk = (span, depth, spanEnd) => {
+    const spanStart = startNs(span);
+    let cursor = Math.min(spanEnd, endNs(span));
+    const kids = (childrenOf.get(span.enter.span_id) ?? []).filter((k) => k.exit);
+    while (cursor > spanStart) {
+      let lfc = null;
+      let lfcEnd = -Infinity;
+      for (const k of kids) {
+        const kEnd = Math.min(endNs(k), cursor);
+        if (startNs(k) < cursor && kEnd > lfcEnd) {
+          lfc = k;
+          lfcEnd = kEnd;
+        }
+      }
+      if (!lfc) {
+        emit(span, depth, spanStart, cursor);
+        break;
+      }
+      emit(span, depth, lfcEnd, cursor);
+      walk(lfc, depth + 1, lfcEnd);
+      cursor = Math.max(spanStart, startNs(lfc));
+    }
+  };
+  walk(rootSpan, 0, endNs(rootSpan));
+  sections.sort((a, b) => a.start_ns - b.start_ns);
+  const total = rootSpan.exit.duration_ns;
+  const per = /* @__PURE__ */ new Map();
+  for (const s of sections) {
+    const cur = per.get(s.span_id) ?? { name: s.name, self_ns: 0 };
+    cur.self_ns += s.self_ns;
+    per.set(s.span_id, cur);
+  }
+  const by_span = [...per.entries()].map(([span_id, v]) => ({ span_id, name: v.name, self_ns: v.self_ns, pct: total ? Math.round(v.self_ns / total * 1e3) / 10 : 0 })).sort((a, b) => b.self_ns - a.self_ns);
+  return { trace_id: traceId, root: label(rootSpan.enter), total_ns: total, sections, by_span };
+}
+
+// src/skills.ts
+var SKILLS = {
+  "SKILL.md": `# FlowTrace trace analysis
+
+Every question starts the same way:
+
+1. \`log_open\` the trace, keep the \`sessionId\`.
+2. \`trace_search\` \u2014 one line per trace_id. A file often holds many
+   executions; pick one before reasoning about anything.
+3. Then read the sub-skill that matches the question:
+
+| Question | Read |
+|---|---|
+| Something threw / returned the wrong thing | \`errors.md\` |
+| Something is slow | \`latency.md\` |
+| It worked before and not now | \`compare.md\` |
+
+Spend context cheapest-first: \`trace_topology\` (shape, no payloads) before
+\`trace_span_details\` (full args/result for spans you chose). \`trace_tree\`
+returns both at once and is only worth it for a small trace.
+
+Every list tool reports \`total\` and \`truncated\`. When \`truncated\` is true
+you are looking at a fragment \u2014 narrow the query instead of concluding.`,
+  "errors.md": `# Errors
+
+1. \`trace_errors\` with the trace_id. Compare \`total_error_count\` with
+   \`returned\`: several errors are often one root cause re-thrown up the stack.
+2. Take the earliest error (the list is in time order). Its \`path\` runs from
+   the root to the failing span.
+3. \`trace_span_details\` on the span ids along that path, top down. The
+   first span whose \`args\` are already wrong is where to look \u2014 usually
+   several frames above where the exception surfaced.
+4. A value shown as \`<truncated:...>\` or \`<redacted>\` is not evidence.
+   Re-capture with a larger max-arg-length rather than guessing at it.`,
+  "latency.md": `# Latency
+
+1. \`trace_search\` with \`min_duration_ns\` to find the slow executions.
+2. \`trace_critical_path\` on one of them. \`by_span\` ranks the spans whose
+   own time made up the end-to-end duration; the top entries are the answer
+   to "where did the time go" for that execution.
+3. Do not sum \`duration_ns\` across spans: it is inclusive, so a nested call
+   is counted once per ancestor. Use \`self_ns\` (\`trace_topology\`) or the
+   critical path.
+4. A span with high \`self_ns\` and no children is doing the work itself; a
+   span whose time is all in one child is just waiting on it \u2014 follow the
+   child.
+5. Work started without being awaited can outlive its parent. Such a child is
+   not on the critical path even when it is long.`,
+  "compare.md": `# Comparing two runs
+
+1. \`log_open\` both traces.
+2. \`trace_diff\` \u2014 methods present in only one run, and average-duration
+   deltas grouped by module+class+method, largest absolute delta first.
+3. A method only in the failing run is a branch the good run did not take:
+   \`trace_errors\` / \`trace_span_details\` on it in that run.
+4. For a regression, \`trace_critical_path\` on one trace from each run and
+   compare the \`by_span\` rankings.`
+};
+function readSkill(name) {
+  const text = SKILLS[name];
+  if (text === void 0) {
+    throw new Error(`Unknown skill ${name}. Available: ${Object.keys(SKILLS).join(", ")}`);
+  }
+  return text;
+}
 
 // src/runtimes.ts
 var RUNTIMES = [
@@ -21881,6 +22161,63 @@ mcp.tool(
     const b = getSession(sessionId_b);
     return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b), { min_abs_delta_ns }));
   }
+);
+mcp.tool(
+  "trace_search",
+  "List the traces (one per trace_id) in a v2 session as lightweight summaries: root method, duration, span and error counts. No spans or args. Start here.",
+  {
+    sessionId: external_exports.string().describe("Session id from log_open"),
+    has_error: external_exports.boolean().optional().describe("true = only traces with a failing span, false = only clean ones"),
+    method: external_exports.string().optional().describe("Only traces containing a span whose module.class.method includes this (case-insensitive)"),
+    min_duration_ns: external_exports.number().nonnegative().optional().describe("Only traces whose root took at least this long"),
+    limit: external_exports.number().int().positive().optional().describe("Max summaries (default 50); compare with total")
+  },
+  async ({ sessionId, ...opts }) => ok(traceSearch(v2OnlyEvents(getSession(sessionId)), opts))
+);
+mcp.tool(
+  "trace_topology",
+  "Structural overview of one trace as a flat depth-first span list. Each span has a 'path' of slash-delimited ancestor span ids, duration_ns, self_ns and an error flag. Does NOT include args, results or stacks \u2014 use trace_span_details for those.",
+  {
+    sessionId: external_exports.string().describe("Session id from log_open"),
+    trace_id: external_exports.string().describe("Trace id from trace_search"),
+    limit: external_exports.number().int().positive().optional().describe("Max spans (default 2000); compare returned with total")
+  },
+  async ({ sessionId, trace_id, limit }) => ok(traceTopology(v2OnlyEvents(getSession(sessionId)), trace_id, { limit }))
+);
+mcp.tool(
+  "trace_span_details",
+  "Full enter and exit events (args, result, error with stack) for specific span ids. Verbose: request only the spans you need.",
+  {
+    sessionId: external_exports.string().describe("Session id from log_open"),
+    span_ids: external_exports.array(external_exports.string()).min(1).describe("Span ids, e.g. from trace_topology or trace_errors"),
+    limit: external_exports.number().int().positive().optional().describe("Max spans returned (default 20)")
+  },
+  async ({ sessionId, span_ids, limit }) => ok(traceSpanDetails(v2OnlyEvents(getSession(sessionId)), span_ids, { limit }))
+);
+mcp.tool(
+  "trace_errors",
+  "Every failing span (optionally within one trace), in time order, each with its args and path to the root. Results may be truncated; compare total_error_count with returned.",
+  {
+    sessionId: external_exports.string().describe("Session id from log_open"),
+    trace_id: external_exports.string().optional().describe("Restrict to one trace"),
+    limit: external_exports.number().int().positive().optional().describe("Max errors returned (default 20)")
+  },
+  async ({ sessionId, trace_id, limit }) => ok(traceErrors(v2OnlyEvents(getSession(sessionId)), { trace_id, limit }))
+);
+mcp.tool(
+  "trace_critical_path",
+  "The chain of spans that determined one trace's end-to-end duration. by_span ranks spans by the time they themselves contributed; the top entries are where the time went.",
+  {
+    sessionId: external_exports.string().describe("Session id from log_open"),
+    trace_id: external_exports.string().describe("Trace id from trace_search")
+  },
+  async ({ sessionId, trace_id }) => ok(traceCriticalPath(v2OnlyEvents(getSession(sessionId)), trace_id))
+);
+mcp.tool(
+  "read_skill",
+  `Read a trace-analysis playbook. Start with SKILL.md, which says which of the others to read. Available: ${Object.keys(SKILLS).join(", ")}`,
+  { name: external_exports.string().optional().describe("Skill file name (default SKILL.md)") },
+  async ({ name }) => ({ content: [{ type: "text", text: readSkill(name ?? "SKILL.md") }] })
 );
 mcp.resource(
   "runtimes",

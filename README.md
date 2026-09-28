@@ -159,6 +159,12 @@ El servidor MCP expone herramientas para que agentes de IA analicen trazas direc
 
 | Herramienta | Descripcion |
 |---|---|
+| `trace_search` | Resumen por traza: raiz, duracion, spans y errores |
+| `trace_topology` | Forma de una traza sin argumentos (ruta de ancestros, self time) |
+| `trace_span_details` | Detalle completo de spans elegidos |
+| `trace_errors` | Todos los errores con su ruta a la raiz |
+| `trace_critical_path` | Camino critico: que spans determinaron la duracion total |
+| `read_skill` | Guias de analisis para cualquier cliente MCP |
 | `trace_tree` | Arbol de llamadas de una traza |
 | `trace_find_error` | Localiza la primera excepcion en el log |
 | `trace_private_calls` | Lista metodos internos no expuestos en la API |
@@ -180,6 +186,15 @@ El plugin también deja `flowtrace` en el PATH, así que `flowtrace run -- ...`
 funciona sin instalación global.
 
 ---
+
+## Compartir y exportar
+
+- `flowtrace anonymize <archivo>` reemplaza cada valor capturado por un hash
+  (los valores iguales quedan iguales). `--salt` fija el hash entre corridas
+  para poder compararlas; `--names` también oculta module/class/method.
+- `flowtrace export <archivo>` convierte la traza a OTLP/JSON. Con
+  `--endpoint http://localhost:4318` la envía a Jaeger, Tempo o cualquier
+  collector OTLP. Los ids ya son W3C, así que no se pierde nada del árbol.
 
 ## Dashboard
 

@@ -9,6 +9,8 @@ went astray, not that the report was ignored.
 
 There is no bounty program. Credit in the CHANGELOG if you want it.
 
+See [THREAT-MODEL.md](./THREAT-MODEL.md) for the reasoning behind these mitigations.
+
 ## What a trace contains, and why that matters
 
 FlowTrace records the **arguments and return values of your functions**, and
