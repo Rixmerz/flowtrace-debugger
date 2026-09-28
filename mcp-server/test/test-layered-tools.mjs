@@ -14,6 +14,7 @@ import {
   traceCriticalPath,
 } from '../dist/trace-tools.js';
 import { SKILLS, readSkill } from '../dist/skills.js';
+import { generate } from '../../scripts/tracegen.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -118,6 +119,25 @@ for (const lang of ['java', 'node', 'python', 'go']) {
     assert.equal(sum, cp.total_ns, 'critical path tiles the root');
   });
 }
+
+test('layered tools hold up on a large synthetic trace (scripts/tracegen.mjs)', () => {
+  const events = generate({ traces: 300, depth: 8, fanout: 3, errorRate: 0.05, seed: 7 });
+  const t0 = Date.now();
+  const { total, traces } = traceSearch(events, { limit: 1000 });
+  assert.equal(total, 300);
+  for (const t of traces) {
+    const cp = traceCriticalPath(events, t.trace_id);
+    const sum = cp.sections.reduce((n, s) => n + s.self_ns, 0);
+    // ts is float epoch seconds (~200ns resolution at this magnitude), so
+    // tiling is exact only up to that rounding per section.
+    assert.ok(Math.abs(sum - cp.total_ns) <= cp.sections.length * 1000, `${t.trace_id}: ${sum} vs ${cp.total_ns}`);
+    assert.equal(traceTopology(events, t.trace_id).total, t.span_count);
+  }
+  const errs = traceErrors(events, { limit: 5 });
+  assert.equal(errs.returned, 5);
+  assert.ok(errs.total_error_count > 5 && errs.truncated);
+  assert.ok(Date.now() - t0 < 20000, 'well under a timeout even walking every trace');
+});
 
 test('read_skill serves an index that names every sub-skill', () => {
   const index = readSkill('SKILL.md');

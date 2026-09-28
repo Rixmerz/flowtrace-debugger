@@ -41,7 +41,7 @@ file.
 | `capture/browser/` | Browser capture (HTTP / router / errors) + Angular bindings | pnpm |
 | `schema/flowtrace-v2.json` | **The contract.** JSON Schema for every emitted event | — |
 | `examples/golden/` | Golden fixtures: real capture output, committed and diffed in CI | — |
-| `scripts/` | Golden runners/normalizer, schema validation, plugin checks | pnpm |
+| `scripts/` | Golden runners/normalizer, schema validation, plugin checks, `tracegen.mjs` (synthetic load traces) | pnpm |
 | `flowtrace-cli/` | Cross-language installer (`flowtrace` binary) | pnpm |
 | `flowtrace-dashboard/` | Express server + static perf UI | pnpm |
 | `mcp-server/` | MCP server exposing `log_*` and `trace_*` tools | pnpm + tsc |
