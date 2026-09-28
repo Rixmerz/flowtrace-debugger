@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * FlowTrace v2 CLI — slim dispatcher.
- * Three commands only: init, run, analyze.
+ * Commands: init, run, analyze, anonymize, export.
  */
 
 'use strict';
@@ -74,6 +74,37 @@ program
   .action(async (file, options) => {
     try {
       await require('../lib/commands/analyze')(file, options);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('anonymize <file>')
+  .description('Reemplaza los valores capturados por hashes para compartir la traza')
+  .option('-o, --out <path>', 'Ruta de salida (default: <file>.anon.jsonl)')
+  .option('--salt <salt>', 'Salt fijo: mismos valores → mismos hashes entre corridas (para trace_diff)')
+  .option('--names', 'También anonimiza module/class/method/thread')
+  .option('--numbers', 'También anonimiza números')
+  .action(async (file, options) => {
+    try {
+      await require('../lib/commands/anonymize')(file, options);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('export <file>')
+  .description('Convierte la traza a OTLP/JSON (Jaeger, Tempo, cualquier backend OTLP)')
+  .option('-o, --out <path>', 'Ruta de salida (default: <file>.otlp.json)')
+  .option('--endpoint <url>', 'Envía por OTLP/HTTP en vez de escribir archivo (ej: http://localhost:4318)')
+  .option('--service <name>', 'service.name del recurso (default: flowtrace)')
+  .action(async (file, options) => {
+    try {
+      await require('../lib/commands/export')(file, options);
     } catch (err) {
       console.error(chalk.red('Error:'), err.message);
       process.exit(1);

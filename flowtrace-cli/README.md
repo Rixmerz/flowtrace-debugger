@@ -49,6 +49,8 @@ a module into someone's bundler graph.
 | `flowtrace init` | Detect the project type and write `.flowtrace/config.json` |
 | `flowtrace run -- <cmd>` | Run a command under instrumentation |
 | `flowtrace analyze` | Open the trace in the dashboard |
+| `flowtrace anonymize <file>` | Replace every captured value with a keyed hash, so the trace can be shared |
+| `flowtrace export <file>` | Convert to OTLP/JSON, or send it with `--endpoint http://localhost:4318` (Jaeger, Tempo, …) |
 
 `run` auto-detects the language and the package prefix, and honours what
 `init` wrote to `.flowtrace/config.json` (`capture.packagePrefix`,

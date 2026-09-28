@@ -187,6 +187,15 @@ with no global install.
 
 ---
 
+## Sharing and exporting
+
+- `flowtrace anonymize <file>` replaces every captured value with a hash
+  (equal values stay equal). `--salt` keeps hashes stable across runs so they
+  can be compared; `--names` also hides module/class/method.
+- `flowtrace export <file>` converts the trace to OTLP/JSON. With
+  `--endpoint http://localhost:4318` it sends it to Jaeger, Tempo or any OTLP
+  collector. Ids are already W3C, so the tree survives intact.
+
 ## Dashboard
 
 ```bash

@@ -187,6 +187,15 @@ funciona sin instalación global.
 
 ---
 
+## Compartir y exportar
+
+- `flowtrace anonymize <archivo>` reemplaza cada valor capturado por un hash
+  (los valores iguales quedan iguales). `--salt` fija el hash entre corridas
+  para poder compararlas; `--names` también oculta module/class/method.
+- `flowtrace export <archivo>` convierte la traza a OTLP/JSON. Con
+  `--endpoint http://localhost:4318` la envía a Jaeger, Tempo o cualquier
+  collector OTLP. Los ids ya son W3C, así que no se pierde nada del árbol.
+
 ## Dashboard
 
 ```bash
