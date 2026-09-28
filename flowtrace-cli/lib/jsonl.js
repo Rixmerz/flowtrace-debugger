@@ -11,7 +11,7 @@ function readJsonl(file) {
     try {
       out.push(JSON.parse(line));
     } catch (err) {
-      throw new Error(`${file}:${i + 1}: JSON inválido (${err.message})`);
+      throw new Error(`${file}:${i + 1}: JSON inválido (${err.message})`, { cause: err });
     }
   });
   return out;
