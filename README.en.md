@@ -159,6 +159,12 @@ The MCP server exposes tools so AI agents can analyze traces directly:
 
 | Tool | Description |
 |---|---|
+| `trace_search` | Per-trace summary: root, duration, span and error counts |
+| `trace_topology` | Shape of one trace without payloads (ancestry path, self time) |
+| `trace_span_details` | Full detail for chosen spans |
+| `trace_errors` | Every error with its path to the root |
+| `trace_critical_path` | Critical path: which spans determined total duration |
+| `read_skill` | Analysis playbooks for any MCP client |
 | `trace_tree` | Call tree for a trace |
 | `trace_find_error` | Find the first exception in the log |
 | `trace_private_calls` | List internal methods not exposed in the API |

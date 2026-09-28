@@ -15,7 +15,13 @@ import {
   traceFindError,
   tracePrivateCalls,
   traceDiff,
+  traceSearch,
+  traceTopology,
+  traceSpanDetails,
+  traceErrors,
+  traceCriticalPath,
 } from "./trace-tools";
+import { SKILLS, readSkill } from "./skills";
 import { renderRuntimes } from "./runtimes";
 
 const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.2.0" });
@@ -396,6 +402,69 @@ mcp.tool(
     const b = getSession(sessionId_b);
     return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b), { min_abs_delta_ns }));
   }
+);
+
+mcp.tool(
+  "trace_search",
+  "List the traces (one per trace_id) in a v2 session as lightweight summaries: root method, duration, span and error counts. No spans or args. Start here.",
+  {
+    sessionId: z.string().describe("Session id from log_open"),
+    has_error: z.boolean().optional().describe("true = only traces with a failing span, false = only clean ones"),
+    method: z.string().optional().describe("Only traces containing a span whose module.class.method includes this (case-insensitive)"),
+    min_duration_ns: z.number().nonnegative().optional().describe("Only traces whose root took at least this long"),
+    limit: z.number().int().positive().optional().describe("Max summaries (default 50); compare with total"),
+  },
+  async ({ sessionId, ...opts }) => ok(traceSearch(v2OnlyEvents(getSession(sessionId)), opts))
+);
+
+mcp.tool(
+  "trace_topology",
+  "Structural overview of one trace as a flat depth-first span list. Each span has a 'path' of slash-delimited ancestor span ids, duration_ns, self_ns and an error flag. Does NOT include args, results or stacks — use trace_span_details for those.",
+  {
+    sessionId: z.string().describe("Session id from log_open"),
+    trace_id: z.string().describe("Trace id from trace_search"),
+    limit: z.number().int().positive().optional().describe("Max spans (default 2000); compare returned with total"),
+  },
+  async ({ sessionId, trace_id, limit }) => ok(traceTopology(v2OnlyEvents(getSession(sessionId)), trace_id, { limit }))
+);
+
+mcp.tool(
+  "trace_span_details",
+  "Full enter and exit events (args, result, error with stack) for specific span ids. Verbose: request only the spans you need.",
+  {
+    sessionId: z.string().describe("Session id from log_open"),
+    span_ids: z.array(z.string()).min(1).describe("Span ids, e.g. from trace_topology or trace_errors"),
+    limit: z.number().int().positive().optional().describe("Max spans returned (default 20)"),
+  },
+  async ({ sessionId, span_ids, limit }) => ok(traceSpanDetails(v2OnlyEvents(getSession(sessionId)), span_ids, { limit }))
+);
+
+mcp.tool(
+  "trace_errors",
+  "Every failing span (optionally within one trace), in time order, each with its args and path to the root. Results may be truncated; compare total_error_count with returned.",
+  {
+    sessionId: z.string().describe("Session id from log_open"),
+    trace_id: z.string().optional().describe("Restrict to one trace"),
+    limit: z.number().int().positive().optional().describe("Max errors returned (default 20)"),
+  },
+  async ({ sessionId, trace_id, limit }) => ok(traceErrors(v2OnlyEvents(getSession(sessionId)), { trace_id, limit }))
+);
+
+mcp.tool(
+  "trace_critical_path",
+  "The chain of spans that determined one trace's end-to-end duration. by_span ranks spans by the time they themselves contributed; the top entries are where the time went.",
+  {
+    sessionId: z.string().describe("Session id from log_open"),
+    trace_id: z.string().describe("Trace id from trace_search"),
+  },
+  async ({ sessionId, trace_id }) => ok(traceCriticalPath(v2OnlyEvents(getSession(sessionId)), trace_id))
+);
+
+mcp.tool(
+  "read_skill",
+  `Read a trace-analysis playbook. Start with SKILL.md, which says which of the others to read. Available: ${Object.keys(SKILLS).join(", ")}`,
+  { name: z.string().optional().describe("Skill file name (default SKILL.md)") },
+  async ({ name }) => ({ content: [{ type: "text" as const, text: readSkill(name ?? "SKILL.md") }] })
 );
 
 // -- resources -------------------------------------------------------------
