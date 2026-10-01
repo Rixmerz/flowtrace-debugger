@@ -17,10 +17,10 @@
     "test": "node --test 'test/*.mjs'"
   },
   "dependencies": {
-    "@babel/generator": "^7.29.1",
-    "@babel/parser": "^7.29.3",
-    "@babel/traverse": "^7.29.0",
-    "@babel/types": "^7.29.0",
-    "@swc/core": "^1.7.0"
+    "@babel/generator": "^8.0.6",
+    "@babel/parser": "^7.29.9",
+    "@babel/traverse": "^8.0.6",
+    "@babel/types": "^8.0.6",
+    "@swc/core": "^1.16.2"
   }
 }
