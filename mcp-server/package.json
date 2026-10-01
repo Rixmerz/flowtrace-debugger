@@ -31,8 +31,8 @@
   },
   "homepage": "https://github.com/Rixmerz/flowtrace-debugger#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.20.2",
-    "zod": "^3.25.76"
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^24.9.2",
