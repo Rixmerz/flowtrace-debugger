@@ -94,6 +94,15 @@ trace. A `Drop` guard alone cannot see it. Details that matter:
   `&mut self` method returning `&mut T` fails with "captured variable cannot
   escape `FnMut` closure body" — found by the first fixture, then fixed once, in
   the shared splice.
+- Columns are kept as well as lines, but only where nothing follows a splice on
+  its line. A function whose body shares a line with its `{` (or with code after
+  its `}`), such as `fn f() -> u8 { 1 }`, is **not instrumented**: the prologue
+  would shift its panic column (a probe reported `13:208` instead of `13:24`).
+  The driver prints a note naming the file and the count; `rustfmt` puts every
+  body on its own lines, so formatted code is unaffected. Chosen over tracing
+  them with a wrong column, because the trace and the panic message must agree
+  with the source the user is reading. rustc warnings on a signature line still
+  show the spliced text after the `{`.
 - `-> impl Trait` and `-> !` cannot be written in a closure's return type, so
   those get the guard only: enter, exit, duration and panic, no result.
 - Not instrumented: `async fn` (a per-thread span stack is wrong across

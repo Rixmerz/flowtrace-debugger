@@ -343,6 +343,13 @@ fn mirror(from: &Path, to: &Path, module: &[String], p: &Planned, total: &mut us
             let out = match rewrite::instrument(&text, &opts) {
                 Ok(r) => {
                     *total += r.functions;
+                    if r.skipped_inline > 0 {
+                        eprintln!(
+                            "[flowtrace] note: {}: {} function(s) with code on the same line as their braces are not traced (instrumenting them would shift panic columns); run rustfmt",
+                            src.display(),
+                            r.skipped_inline
+                        );
+                    }
                     r.text
                 }
                 // A file syn cannot parse is passed through; rustc will say why.

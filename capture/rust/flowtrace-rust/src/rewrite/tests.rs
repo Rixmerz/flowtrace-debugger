@@ -19,7 +19,7 @@ fn keeps_every_line_where_it_was() {
 
 #[test]
 fn records_module_class_visibility_and_arguments() {
-    let src = "pub struct S;\nimpl S {\n    pub(crate) fn go(&self, n: u8, mut s: String) -> u8 { n }\n}\n";
+    let src = "pub struct S;\nimpl S {\n    pub(crate) fn go(&self, n: u8, mut s: String) -> u8 {\n        n\n    }\n}\n";
     let (out, _) = run(src, "");
     assert!(out.contains(r#"Meta::new("demo::wal", "S", "go", "internal")"#), "{out}");
     assert!(out.contains(r#"__ft_a.arg("n""#) && out.contains(r#"__ft_a.arg("s""#));
@@ -36,8 +36,12 @@ async fn a() {}
 #[track_caller] fn tc() {}
 #[test] fn t() {}
 #[cfg(test)] mod tests { fn helper() {} }
-fn it() -> impl Iterator<Item = u8> { std::iter::empty() }
-fn never() -> ! { loop {} }
+fn it() -> impl Iterator<Item = u8> {
+    std::iter::empty()
+}
+fn never() -> ! {
+    loop {}
+}
 fn plain() {}
 fn declared_only();
 "#;
@@ -55,8 +59,20 @@ struct P;
 impl std::fmt::Debug for P { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Ok(()) } }
 impl Drop for P { fn drop(&mut self) {} }
 impl Iterator for P { type Item = u8; fn next(&mut self) -> Option<u8> { None } }
-trait Shape { fn area(&self) -> u32 { 1 } fn name(&self) -> &str; }
-impl Shape for P { fn area(&self) -> u32 { 2 } fn name(&self) -> &str { "p" } }
+trait Shape {
+    fn area(&self) -> u32 {
+        1
+    }
+    fn name(&self) -> &str;
+}
+impl Shape for P {
+    fn area(&self) -> u32 {
+        2
+    }
+    fn name(&self) -> &str {
+        "p"
+    }
+}
 "#;
     let (out, n) = run(src, "");
     assert_eq!(n, 3, "Shape::area (default), Shape for P::{{area,name}}: {out}");
@@ -89,4 +105,16 @@ fn a_shebang_file_is_left_alone() {
 #[test]
 fn unparseable_source_is_an_error_not_a_panic() {
     assert!(instrument("fn (", &Options { package: "d", file_module: vec![], prefix: "" }).is_err());
+}
+
+#[test]
+fn code_stays_in_its_column_and_inline_bodies_are_skipped() {
+    let src = "fn ok() {\n    panic!(\"x\")\n}\nfn never() -> ! { panic!(\"boom\") }\nfn a() {} fn b() {\n    1;\n}\n";
+    let r = instrument(src, &Options { package: "d", file_module: vec![], prefix: "" }).expect("parses");
+    assert_eq!((r.functions, r.skipped_inline), (2, 2), "`ok` and `b` are traced: {}", r.text);
+    // Every original line is still a prefix of its output line, so no column moved.
+    for (o, n) in src.lines().zip(r.text.lines()) {
+        assert!(n.starts_with(o) || o == "}" , "{n:?} does not start with {o:?}");
+    }
+    assert!(r.text.lines().nth(1).unwrap().starts_with("    panic!(\"x\")"));
 }

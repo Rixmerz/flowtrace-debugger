@@ -5,6 +5,12 @@
 //! line numbers, comments and formatting survive, and a panic reports the
 //! original file at the original line.
 //!
+//! Columns survive only where nothing follows the insertion on its line. A
+//! function whose body shares a line with its `{` (or with code after its `}`)
+//! would report panics at a column shifted by the prologue's length, so it is
+//! left uninstrumented and counted in `Rewritten::skipped_inline`; `rustfmt`
+//! puts every body on its own lines, which makes the case rare in real code.
+//!
 //! Each instrumented body `{ ... }` becomes
 //!
 //! ```text
@@ -44,15 +50,17 @@ pub struct Options<'a> {
 pub struct Rewritten {
     pub text: String,
     pub functions: usize,
+    /// Functions left alone because instrumenting them would shift a column.
+    pub skipped_inline: usize,
 }
 
 pub fn instrument(src: &str, opts: &Options<'_>) -> Result<Rewritten, syn::Error> {
     // syn drops a leading `#!shebang` before lexing, which would shift every offset.
     if src.starts_with("#!") && !src.starts_with("#![") {
-        return Ok(Rewritten { text: src.to_owned(), functions: 0 });
+        return Ok(Rewritten { text: src.to_owned(), functions: 0, skipped_inline: 0 });
     }
     let file = syn::parse_file(src)?;
-    let mut rw = Rewriter { opts, mods: opts.file_module.clone(), edits: Vec::new(), functions: 0 };
+    let mut rw = Rewriter { src, opts, mods: opts.file_module.clone(), edits: Vec::new(), functions: 0, skipped_inline: 0 };
     rw.items(&file.items);
 
     let mut text = src.to_owned();
@@ -61,14 +69,26 @@ pub fn instrument(src: &str, opts: &Options<'_>) -> Result<Rewritten, syn::Error
     for (at, s) in rw.edits {
         text.insert_str(at, &s);
     }
-    Ok(Rewritten { text, functions: rw.functions })
+    Ok(Rewritten { text, functions: rw.functions, skipped_inline: rw.skipped_inline })
 }
 
 struct Rewriter<'a> {
+    src: &'a str,
     opts: &'a Options<'a>,
     mods: Vec<String>,
     edits: Vec<(usize, String)>,
     functions: usize,
+    skipped_inline: usize,
+}
+
+/// True if code shares a line with the body's `{` or follows its `}`: the
+/// spliced text would move that code to another column.
+fn shifts_columns(src: &str, open: usize, close: usize) -> bool {
+    let code = |rest: &str, allowed: &str| {
+        let line = rest.lines().next().unwrap_or("").trim();
+        !line.is_empty() && !line.starts_with("//") && !line.chars().all(|c| allowed.contains(c))
+    };
+    code(&src[open + 1..close - 1], "") || code(&src[close..], "})];,")
 }
 
 fn attr_words(a: &Attribute) -> Vec<String> {
@@ -225,6 +245,11 @@ impl Rewriter<'_> {
         let close = block.brace_token.span.close().byte_range().end;
         // Offsets of 0 mean the span carried no location (a macro-expanded body).
         if close <= open || close == 0 {
+            return;
+        }
+
+        if shifts_columns(self.src, open, close) {
+            self.skipped_inline += 1;
             return;
         }
 
