@@ -1,0 +1,25 @@
+# The Rust capture layer. Three crates, one workspace:
+#
+#   flowtrace          the runtime. Standard library only, no dependencies: it is
+#                      compiled once and linked into the traced program, so a
+#                      dependency here is a dependency of every user.
+#   flowtrace-tracing  a `tracing_subscriber::Layer` that writes the same events,
+#                      for programs that already use `tracing`.
+#   flowtrace-rust     the driver + rustc wrapper behind `flowtrace run` for Rust.
+#
+# The fixtures under examples/golden/rust are deliberately NOT members: they are
+# standalone workspaces, because they are the thing the driver is pointed at.
+[workspace]
+resolver = "2"
+members = ["flowtrace", "flowtrace-tracing", "flowtrace-rust"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Rixmerz/flowtrace-debugger"
+publish = false
+
+[profile.release]
+opt-level = 3
+codegen-units = 1

@@ -12,13 +12,13 @@ const pkg = require('../package.json');
 
 program
   .name('flowtrace')
-  .description('FlowTrace v2 — captura full call trace sin tocar tu código (Java, Python, Node, TS, Go)')
+  .description('FlowTrace v2 — captura full call trace sin tocar tu código (Java, Python, Node, TS, Go, Rust)')
   .version(pkg.version, '-v, --version', 'imprime la versión actual');
 
 program
   .command('init')
   .description('Inicializa FlowTrace en el proyecto actual (.flowtrace/config.json)')
-  .option('--lang <lang>', 'Forza el lenguaje: java|python|node|ts|go')
+  .option('--lang <lang>', 'Forza el lenguaje: java|python|node|ts|go|rust')
   .option('-y, --yes', 'No pregunta: acepta el primer lenguaje detectado')
   .action(async (options) => {
     try {
@@ -34,7 +34,7 @@ program
   .description('Ejecuta la app con instrumentación FlowTrace y emite JSONL v2')
   .addHelpText('after', `
 Opciones:
-  --lang <java|python|node|ts|go>   Lenguaje del proyecto (auto-detectado si se omite)
+  --lang <java|python|node|ts|go|rust>   Lenguaje del proyecto (auto-detectado si se omite)
   --package-prefix <pkg>            Prefijo a instrumentar (paquete en Java/Python/Go, ruta en Node/TS)
   --inject <mvn|gradle|java>        Estrategia de inyección JVM (default: auto)
   -o, --out <path>                  Ruta del JSONL (default: .flowtrace/<ISO-UTC>.jsonl)
@@ -45,6 +45,7 @@ Auto-detección:
     Python : pyproject.toml, setup.py, requirements.txt
     Node   : package.json (ts si tsconfig.json también existe)
     Go     : go.mod
+    Rust   : Cargo.toml
 
 Ejemplos:
   flowtrace run -- node app.js
@@ -52,9 +53,10 @@ Ejemplos:
   flowtrace run -- java -jar app.jar
   flowtrace run --lang java --package-prefix com.example -- java -jar app.jar
   flowtrace run --lang java -- mvn spring-boot:run
-  flowtrace run --lang go -- go run ./cmd/api`)
-  .option('--lang <lang>', 'Lenguaje de la app: java|python|node|ts|go (auto-detectado si se omite)')
-  .option('--package-prefix <pkg>', 'Prefijo a instrumentar (paquete en Java/Python/Go, ruta en Node/TS)')
+  flowtrace run --lang go -- go run ./cmd/api
+  flowtrace run --lang rust -- cargo run --release`)
+  .option('--lang <lang>', 'Lenguaje de la app: java|python|node|ts|go|rust (auto-detectado si se omite)')
+  .option('--package-prefix <pkg>', 'Prefijo a instrumentar (paquete en Java/Python/Go, ruta en Node/TS, nombre de crate en Rust)')
   .option('--inject <strategy>', 'Estrategia de inyección JVM: mvn|gradle|java (default: auto)')
   .option('-o, --out <path>', 'Ruta de salida JSONL (default: .flowtrace/<ISO>.jsonl)')
   .allowUnknownOption(true)

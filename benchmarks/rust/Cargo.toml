@@ -1,0 +1,8 @@
+# Standalone workspace, built twice by run.sh: plainly, and through flowtrace-rust.
+[workspace]
+resolver = "2"
+members = ["bench-lib", "bench"]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1

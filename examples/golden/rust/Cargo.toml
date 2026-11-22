@@ -1,0 +1,5 @@
+# Standalone workspace: this fixture is the thing `flowtrace-rust` is pointed at,
+# so it must not be swallowed by any workspace above it.
+[workspace]
+resolver = "2"
+members = ["calc-core", "calc"]

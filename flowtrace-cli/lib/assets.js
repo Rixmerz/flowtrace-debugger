@@ -118,6 +118,31 @@ function extensionJarsIn(dir) {
 }
 
 /**
+ * capture/rust — a Cargo workspace: the `flowtrace` runtime crate that is linked
+ * into the traced program, the `flowtrace-tracing` layer, and `flowtrace-rust`,
+ * the driver + rustc wrapper `flowtrace run --lang rust` shells out to. Like Go
+ * there is nothing prebuilt to ship: the driver is built from source with the
+ * user's own cargo, on first use.
+ */
+function rustCaptureDir() {
+  return firstExisting(
+    path.join(REPO_ROOT, 'capture', 'rust'),
+    path.join(VENDOR, 'rust')
+  );
+}
+
+/**
+ * Where the driver binary is built. In a checkout that is capture/rust/target,
+ * where `make build-rust` also puts it. A published package lives under a
+ * node_modules that is often read-only, so it builds into the user's home.
+ */
+function rustDriverTargetDir(captureDir) {
+  return fs.existsSync(path.join(REPO_ROOT, 'capture', 'rust'))
+    ? path.join(captureDir, 'target')
+    : path.join(os.homedir(), '.flowtrace', 'rust-target');
+}
+
+/**
  * The shaded FlowTrace OTel extension jar.
  *
  * In a checkout the pom names it exactly. That matters because `mvn package`
@@ -311,6 +336,8 @@ module.exports = {
   pythonStubDir,
   pythonRuntimeParent,
   goCaptureDir,
+  rustCaptureDir,
+  rustDriverTargetDir,
   javaExtensionJar,
   javaExtensionVersion,
   _pickJavaExtensionJar,

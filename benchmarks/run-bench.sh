@@ -206,6 +206,38 @@ bench_node() {
 }
 
 # ---------------------------------------------------------------------------
+# Rust
+#
+# Different shape from the three above, on purpose: a Rust release loop of 10k
+# iterations runs in well under a millisecond, so the integer-millisecond figure
+# (and compute_overhead, which reports 0% for a 0 ms baseline) would say "no
+# overhead" about any tracer. benchmarks/rust/run.sh reports ns per call over
+# millions of calls instead, as a median of several runs, and the result file
+# keeps that shape.
+# ---------------------------------------------------------------------------
+
+bench_rust() {
+  if ! command -v cargo >/dev/null 2>&1 || [ ! -x "$REPO_ROOT/capture/rust/target/release/flowtrace-rust" ]; then
+    echo "[rust] skipped: needs cargo and 'make build-rust'" >&2
+    return 0
+  fi
+  local file="$BENCH_DIR/results-rust-${TIMESTAMP}.json"
+  bash "$BENCH_DIR/rust/run.sh" 3 > "$file"
+  echo "  Wrote: $file" >&2
+  echo ""
+  echo "Rust (ns per call; see benchmarks/rust/run.sh for the workloads)"
+  python3 - "$file" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+rows = [("baseline", r["baseline"]), ("instrumented", r["instrumented"]),
+        ("no values", r["instrumented_no_values"]), ("past event cap", r["instrumented_past_event_cap"])]
+print("%-15s | %10s | %10s | %10s" % ("mode", "root_ns", "nested_ns", "store_ns"))
+for name, v in rows:
+    print("%-15s | %10s | %10s | %10s" % (name, v["root_ns"], v["nested_ns"], v["store_ns"]))
+PY
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -242,3 +274,5 @@ for lang in java python node; do
 done
 echo ""
 echo "Gates (informational): Java <${JAVA_GATE}%, Python <${PYTHON_GATE}%, Node <${NODE_GATE}%"
+
+bench_rust

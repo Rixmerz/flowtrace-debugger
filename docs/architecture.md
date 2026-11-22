@@ -27,6 +27,7 @@ Each runtime uses its native hook point:
 | Node.js | An ESM loader registered via `module.register()` (Node 20.6+), plus a CJS `require` hook, rewriting each matching module's AST as it loads. |
 | TypeScript | The same Node.js loaders — TypeScript is transformed on the same path, not a separate mechanism. |
 | Go | No runtime hook exists, so rewriting happens *before* the compiler: `go list -json` enumerates packages, each matching file is byte-spliced at AST offsets, and the result reaches the compiler through `go build -overlay`. The runtime is injected as `<module>/internal/flowtracert`, a package the compiler sees but the disk never holds — the user's tree is never written to. Requires Go 1.24+. |
+| Rust | A `RUSTC_WORKSPACE_WRAPPER` (`flowtrace-rust`) runs in place of `rustc` for the workspace's own crates: it mirrors each package's `src/` into a shadow tree, byte-splices a span guard into every function body (closure form, so `?` and `return` reach the trace), and compiles the shadow with a dependency-free runtime crate linked via `--extern`. The user's tree and manifests are never written to. Programs that already use `tracing` can add the `flowtrace-tracing` layer instead. Requires a Unix host and Rust 1.81+. |
 
 Capture agents live in `capture/<lang>/`. The v1 agents have been deleted — see
 "Removed runtimes" in `migration-v1-v2.md`.
@@ -66,6 +67,7 @@ browser's `trace_id`.
 | Node / TS | automatic | automatic | `propagate.js` — patches `http.Server.prototype.emit` inbound, and `fetch` / `http.request` / `https.request` outbound |
 | Go | automatic for `func(http.ResponseWriter, *http.Request)` | manual | `transform/` injects the seed; `flowtracert.CurrentTraceparent()` for outbound |
 | Python | **env carrier only** | manual | `bootstrap.py` seeds from env; `remote_context` / `current_traceparent` are manual |
+| Rust | **env carrier only** | manual | `flowtrace::remote_context` / `current_traceparent`; a span on a new thread is a root |
 
 Every runtime additionally reads `FLOWTRACE_TRACEPARENT`, which is the carrier
 for a process launched by another rather than called over HTTP.

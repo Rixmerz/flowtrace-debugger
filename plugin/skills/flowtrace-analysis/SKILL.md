@@ -103,9 +103,9 @@ working trace from inside any single process.
 
 The two causes, in order of likelihood:
 
-- **The caller never attached `traceparent` outbound.** Go and Python do not
+- **The caller never attached `traceparent` outbound.** Go, Python and Rust do not
   attach it on their own; Java and Node do.
-- **The receiver never adopted it.** Python does not adopt an inbound header on
+- **The receiver never adopted it.** Python and Rust do not adopt an inbound header on
   its own — it needs a manual `remote_context` wrap.
 
 `flowtrace://runtimes` has the per-runtime matrix; read it rather than guessing

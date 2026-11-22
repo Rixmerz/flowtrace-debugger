@@ -6,25 +6,28 @@
 .PHONY: build test bench validate-schema check-golden gen-golden \
         build-java test-java build-python test-python build-node test-node \
         build-go test-go \
+        build-rust test-rust \
         build-mcp test-mcp test-browser test-dashboard test-cli bundle-mcp check-bundle check-docs \
         bundle-dashboard clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
-	@echo "  make build            Build all v2 subprojects (build-java + build-python + build-node + build-go)"
+	@echo "  make build            Build all v2 subprojects (build-java + build-python + build-node + build-go + build-rust)"
 	@echo "  make build-java       Build capture/java/flowtrace-otel-extension shaded jar"
 	@echo "  make build-python     Install capture/python flowtrace-runtime in editable mode"
 	@echo "  make build-node       Install capture/node dependencies"
 	@echo "  make build-go         go build ./... for capture/go (transform + flowtracert + driver)"
+	@echo "  make build-rust       cargo build --release for capture/rust (runtime + tracing layer + flowtrace-rust driver)"
 	@echo "  make build-mcp        Install + compile mcp-server (tsc -> dist/)"
 	@echo "  make bundle-mcp       Rebuild plugin/mcp/server.bundle.js from mcp-server/src"
 	@echo "  make bundle-dashboard Rebuild flowtrace-cli/vendor/dashboard from flowtrace-dashboard/server"
 	@echo "  make check-bundle     Verify the committed bundles are current and boot standalone"
-	@echo "  make test             Full suite: schema + golden + java + python + node + mcp + dashboard + cli"
+	@echo "  make test             Full suite: schema + golden + java + python + node + go + rust + browser + mcp + dashboard + cli"
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
 	@echo "  make test-python      Run pytest for the Python capture module"
 	@echo "  make test-node        Run node:test suite for the Node capture module"
 	@echo "  make test-go          Run go test ./... for the Go capture module"
+	@echo "  make test-rust        Run cargo test --workspace for the Rust capture workspace"
 	@echo "  make test-browser     Run the browser capture suite (incl. collector e2e)"
 	@echo "  make test-mcp         Build and test the MCP server"
 	@echo "  make test-dashboard   Run the dashboard analyzer tests"
@@ -57,8 +60,10 @@ gen-golden:
 	@node scripts/gen-golden.mjs
 
 # Top-level test aggregator. Every subproject that has tests runs here, so
-# `make test` and CI cover the same ground.
-test: validate-schema check-golden test-java test-python test-node test-go test-browser test-mcp test-dashboard test-cli check-docs check-bundle
+# `make test` and CI cover the same ground. build-rust comes first because the
+# Rust golden fixtures run through the prebuilt flowtrace-rust driver: without it
+# check-golden would skip them (or, under FLOWTRACE_GOLDEN_STRICT, fail).
+test: build-rust validate-schema check-golden test-java test-python test-node test-go test-rust test-browser test-mcp test-dashboard test-cli check-docs check-bundle
 	@echo "==> test: all suites passed"
 
 # Java capture module
@@ -107,6 +112,21 @@ build-go:
 test-go:
 	@echo "==> test-go: capture/go"
 	@cd capture/go && go test ./...
+
+# Rust capture workspace: the `flowtrace` runtime crate, the `flowtrace-tracing`
+# layer and the `flowtrace-rust` driver. The release build is what the golden
+# runner and the benchmark use. Plain `cargo` here; the driver switches off any
+# configured rustc wrapper (sccache) itself for the builds it instruments.
+build-rust:
+	@echo "==> build-rust: capture/rust (flowtrace + flowtrace-tracing + flowtrace-rust)"
+	@cd capture/rust && cargo build --release --workspace
+
+# Includes the cross-process test (a Python caller and a Rust callee in one
+# trace), which needs python3, and the corpus test, which builds a crate through
+# the driver — hence the dependency on a built driver.
+test-rust: build-rust
+	@echo "==> test-rust: capture/rust"
+	@cd capture/rust && cargo test --workspace
 
 # Browser capture. Its e2e test boots the dashboard collector, so this depends
 # on the dashboard's dependencies being installed.
@@ -172,7 +192,7 @@ test-cli:
 	@cd flowtrace-cli && pnpm install --silent && for t in test/*.js; do node $$t || exit 1; done
 
 # Build aggregator.
-build: build-java build-python build-node build-go build-mcp
+build: build-java build-python build-node build-go build-rust build-mcp
 	@echo "==> build: done"
 
 # Benchmark harness — Sprint 6.

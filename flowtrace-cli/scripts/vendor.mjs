@@ -2,8 +2,8 @@
  * Copies the capture layers into the package before it is published.
  *
  * The whole point of the single-package distribution: a user runs one
- * `npm i -g @rixmerz/flowtrace` and can trace Java, Node, TypeScript and
- * Python, with no Maven, no pip, and no clone. That only works if the assets
+ * `npm i -g @rixmerz/flowtrace` and can trace Java, Node, TypeScript,
+ * Python, Go and Rust, with no Maven, no pip, and no clone. That only works if the assets
  * travel inside the tarball, which is what this produces.
  *
  * Two of the three layers cost almost nothing to carry:
@@ -38,7 +38,7 @@ function fail(msg) {
 }
 
 /** Copies a directory, skipping the noise that must never ship. */
-function copyDir(from, to, label) {
+function copyDir(from, to, label, extraFilter = () => true) {
   if (!existsSync(from)) fail(`missing ${label}: ${from}`);
   mkdirSync(to, { recursive: true });
   cpSync(from, to, {
@@ -47,7 +47,7 @@ function copyDir(from, to, label) {
     // capture/go/flowtracert/emitter.go, capture/python's emitter.py) — a
     // run artifact that can be sitting in a checkout, never something to
     // ship in the tarball.
-    filter: (src) => !/(node_modules|__pycache__|\.pytest_cache|\.egg-info|\.flowtrace)/.test(src),
+    filter: (src) => !/(node_modules|__pycache__|\.pytest_cache|\.egg-info|\.flowtrace)/.test(src) && extraFilter(src),
   });
   console.log(`[vendor] ${label} -> ${to.replace(PKG, '<pkg>')}`);
 }
@@ -81,6 +81,12 @@ copyDir(join(REPO, 'capture', 'python', 'stub'),
 // Go: the whole module (driver, runtime source, transformer, go.mod). No
 // install needed either — `go run` builds it fresh, from source, every time.
 copyDir(join(REPO, 'capture', 'go'), join(VENDOR, 'go'), 'go capture');
+
+// Rust: the whole Cargo workspace (runtime crate, tracing layer, driver) as
+// source, with its lockfile. Like Go, nothing is prebuilt: the CLI builds the
+// driver from this with the user's own cargo on first use. `target/` is the one
+// thing that must never ship (it is gigabytes, and tied to this machine).
+copyDir(join(REPO, 'capture', 'rust'), join(VENDOR, 'rust'), 'rust capture', (src) => !/[\\/]target([\\/]|$)/.test(src));
 
 // Java: the shaded jar, named by the pom rather than found by searching
 // target/. `mvn package` does not clean, so after a version bump target/ holds

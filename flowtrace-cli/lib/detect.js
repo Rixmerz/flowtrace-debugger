@@ -1,6 +1,6 @@
 /**
  * Language auto-detection for flowtrace-cli.
- * detectLang(cwd)          -> 'java'|'python'|'node'|'ts'|null|string[]
+ * detectLang(cwd)          -> 'java'|'python'|'node'|'ts'|'go'|'rust'|null|string[]
  * detectPackagePrefix(cwd, lang) -> string|null
  */
 'use strict';
@@ -9,9 +9,10 @@ const fs   = require('fs');
 const path = require('path');
 const { detectPythonPrefix } = require('./python-prefix');
 const { detectGoModulePath } = require('./go-module');
+const { detectRustPackageName } = require('./rust-package');
 
 /**
- * Returns 'java'|'python'|'node'|'ts'|'go'|null
+ * Returns 'java'|'python'|'node'|'ts'|'go'|'rust'|null
  * or string[] if multiple languages are detected.
  */
 function detectLang(cwd) {
@@ -36,6 +37,11 @@ function detectLang(cwd) {
   // Go: go.mod
   if (has('go.mod')) {
     detected.push('go');
+  }
+
+  // Rust: Cargo.toml
+  if (has('Cargo.toml')) {
+    detected.push('rust');
   }
 
   if (detected.length === 0) return null;
@@ -68,7 +74,7 @@ function detectLang(cwd) {
  * whether a tsconfig.json happens to sit next to the package.json.
  *
  * @param {string[]} argv - The tokens after `--`.
- * @returns {'java'|'python'|'node'|'go'|null}
+ * @returns {'java'|'python'|'node'|'go'|'rust'|null}
  */
 function langFromCommand(argv) {
   const first = argv?.[0];
@@ -85,6 +91,7 @@ function langFromCommand(argv) {
     return 'java';
   }
   if (bin === 'go') return 'go';
+  if (bin === 'cargo') return 'rust';
   return null;
 }
 
@@ -103,6 +110,7 @@ function detectPackagePrefix(cwd, lang) {
   if (lang === 'python') return _pythonPrefix(cwd);
   if (lang === 'node' || lang === 'ts') return _nodePrefix(cwd);
   if (lang === 'go') return detectGoModulePath(cwd);
+  if (lang === 'rust') return detectRustPackageName(cwd);
   return null;
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "flowtrace",
-  "description": "Trace what your code actually did. Instruments Java, Python, Node, TypeScript and Go without touching the source, then reads the resulting flowtrace.jsonl to answer where a call came from, what it returned, and where the time went.",
+  "description": "Trace what your code actually did. Instruments Java, Python, Node, TypeScript, Go and Rust without touching the source, then reads the resulting flowtrace.jsonl to answer where a call came from, what it returned, and where the time went.",
   "version": "2.8.0",
   "author": {
     "name": "Juan Pablo Diaz",
@@ -16,6 +16,7 @@
     "observability",
     "java",
     "go",
+    "rust",
     "python",
     "nodejs",
     "typescript"

@@ -12,11 +12,13 @@ the program actually did, rather than have it infer behaviour from source.
 
 Supported runtimes: **Java** (OpenTelemetry javaagent extension), **Node /
 TypeScript** (CJS hook + ESM loader + SWC transform), **Python** (import hook +
-AST transform) and **Go** (source rewrite before compilation via
-`go build -overlay`). Each layer has its own README with the knobs and the
-caveats that layer alone has. Rust and .NET were v1 experiments and have been removed;
-Go was too, and came back in a different shape — do not "restore" the v1 Go
-agent, `capture/go/` is a v2 layer emitting schema v2.
+AST transform), **Go** (source rewrite before compilation via
+`go build -overlay`) and **Rust** (a `rustc` wrapper that splices spans into a
+shadow copy of each workspace crate). Each layer has its own README with the
+knobs and the caveats that layer alone has. .NET was a v1 experiment and has
+been removed; Go and Rust were too, and came back in a different shape — do not
+"restore" the v1 agents, `capture/go/` and `capture/rust/` are v2 layers
+emitting schema v2.
 
 The authoritative capability list is `mcp-server/src/runtimes.ts`, served as
 the `flowtrace://runtimes` MCP resource. When support changes, change it there
@@ -38,6 +40,7 @@ file.
 | `capture/node/` | CJS `Module._load` hook, ESM loader, SWC transform, runtime | pnpm |
 | `capture/python/` | `sitecustomize` bootstrap, import hook, AST transformer, runtime | setuptools |
 | `capture/go/` | `cmd/flowtrace-go` driver, `transform/` (AST byte-splice), `flowtracert/` runtime | go build |
+| `capture/rust/` | Rust: `flowtrace` runtime crate (std only), `flowtrace-tracing` layer, `flowtrace-rust` driver + rustc wrapper | cargo |
 | `capture/browser/` | Browser capture (HTTP / router / errors) + Angular bindings | pnpm |
 | `schema/flowtrace-v2.json` | **The contract.** JSON Schema for every emitted event | — |
 | `examples/golden/` | Golden fixtures: real capture output, committed and diffed in CI | — |
@@ -59,6 +62,8 @@ make test             # schema + golden + java + python + node + go + browser + 
 
 make test-java        # JUnit 5 (capture/java)
 make test-go          # go test ./... (capture/go)
+make test-rust        # cargo test --workspace (capture/rust); needs python3 for the cross-process test
+make build-rust       # builds flowtrace-rust, which the Rust golden fixtures and the CLI run
 make test-python      # pytest (capture/python)
 make test-node        # node:test (capture/node)
 make test-browser     # capture/browser + collector e2e
@@ -88,7 +93,7 @@ that emits. Two event variants, `enter` and `exit`, with
 
 ```json
 {"ts":<epoch seconds, float>,"trace_id":"<32 hex>","span_id":"<16 hex>","parent_id":"<16 hex>|null",
- "event":"enter|exit","thread":"<name>","lang":"java|node|python|ts","module":"<m>","class":"<C>",
+ "event":"enter|exit","thread":"<name>","lang":"java|node|python|ts|go|rust","module":"<m>","class":"<C>",
  "method":"<m>","visibility":"public|private|internal|unknown","args":{...},"depth":<n>}
 ```
 
@@ -106,7 +111,7 @@ Two rules that have each already been broken once:
 
 The ids are W3C Trace Context compatible, so a trace survives a process hop:
 `traceparent` is parsed on the way in and rendered on the way out.
-`FLOWTRACE_TRACEPARENT` is honoured by every runtime. For an inbound HTTP
+`FLOWTRACE_TRACEPARENT` is honoured by every runtime (Rust reads it once, at its first span). For an inbound HTTP
 header, Java (OTel), Node/TS (`propagate.js` patches
 `http.Server.prototype.emit`) and Go (the transformer seeds every
 `func(http.ResponseWriter, *http.Request)`) are automatic; **Python is not** —
@@ -116,8 +121,9 @@ Go has no seam at all because `net/http` resolves at compile time.
 
 Two rules that follow, both already broken once:
 
-- **Do not describe Python inbound-over-HTTP, or Go/Python outbound, as
-  automatic.** A wrong claim here is worse than no claim: a split trace looks
+- **Do not describe Python or Rust inbound-over-HTTP, or Go/Python/Rust outbound,
+  as automatic.** Rust has no ambient context across threads or `.await`: a span
+  on a new thread is a root with a new `trace_id`. A wrong claim here is worse than no claim: a split trace looks
   exactly like a working trace until someone compares ids across processes.
 - **Never tell a user to call `flowtracert` from their own Go source.** It is
   injected as `<module>/internal/flowtracert` and exists only during an
@@ -209,6 +215,20 @@ truncated at all. When the rule changes, read the four layers together.
   needs a framework to test is the part least likely to be wrong. Browser work
   maps onto the existing schema fields (`module` = http|router|error) rather
   than extending the schema.
+- **Rust** — `flowtrace-rust` sets `RUSTC_WORKSPACE_WRAPPER` to itself, so cargo
+  runs it instead of `rustc` for workspace members only. It mirrors each
+  package's `src/` into a shadow tree under `<target>/flowtrace-<hash>/shadow`,
+  byte-splices a span guard into each function body (`rewrite.rs`: the body is
+  wrapped in an `FnOnce` closure with the function's return type, so `?` and
+  `return` reach the trace; line numbers are unchanged), and compiles the shadow
+  with the runtime linked via `--extern`. Two things break silently if touched:
+  the wrapper rewrites cargo's dep-info back to original paths (else edits to the
+  user's sources are never noticed), and a crate rustc rejects is rebuilt
+  *uninstrumented* with a warning (so `tests/corpus` must keep failing on that
+  warning). The `flowtrace` runtime must stay dependency-free and its hot path
+  (`enter`/`finish`) non-generic: generic code is compiled in the *user's* crate
+  at the user's opt level. `flowtrace-tracing` is the other entry point, for
+  programs that already use `tracing`.
 - **Python** — `stub/sitecustomize.py` bootstraps, `finder.py` / `loader.py`
   install an import hook, `transformer.py` rewrites the AST to call the same
   helper trio. Context propagation is `contextvars`. Note the deliberate

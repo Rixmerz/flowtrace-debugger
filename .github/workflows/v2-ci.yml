@@ -46,11 +46,19 @@ jobs:
         with:
           go-version: '1.25'
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capture/rust
+
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
 
+      # build-rust produces the flowtrace-rust driver the Rust fixtures run through.
+      # STRICT golden below turns a missing driver into a failure, not a skip.
       - name: Build capture layers needed by the golden runners
-        run: make build-java build-python build-go
+        run: make build-java build-python build-go build-rust
 
       - name: Validate fixtures against schema v2
         run: make validate-schema
@@ -169,6 +177,54 @@ jobs:
 
       - name: Build and test Go capture module
         run: make build-go test-go
+
+  # The Rust capture workspace: runtime and tracing-layer unit tests, the driver's
+  # rewriter tests, the corpus of function shapes built through the driver, and
+  # the cross-process test (a Python caller and a Rust callee sharing one
+  # trace_id), which needs python3 on PATH.
+  rust-tests:
+    name: Rust tests (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    needs: golden
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ['stable']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capture/rust
+
+      - name: Build and test Rust capture workspace
+        run: make build-rust test-rust
+
+  # The runtime is linked into the user's program, so the oldest compiler it
+  # promises (rust-version in capture/rust/flowtrace/Cargo.toml) is checked on
+  # its own: building the lib only, since the driver and the test dependencies
+  # may need a newer one.
+  rust-msrv:
+    name: Rust runtime builds on its minimum version
+    runs-on: ubuntu-latest
+    needs: golden
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.81'
+
+      - name: Build the runtime crate
+        run: cd capture/rust && cargo build --release -p flowtrace
 
   # The browser capture layer plus its end-to-end test, which boots the real
   # dashboard collector and asserts that browser spans land on disk as valid
@@ -348,6 +404,11 @@ jobs:
       # and reports 0% overhead for a run that never instrumented anything.
       - name: Build the capture layers being measured
         run: make build-java build-python build-node
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the Rust driver
+        run: make build-rust
 
       - name: Run bench
         run: make bench

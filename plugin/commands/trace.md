@@ -13,7 +13,8 @@ one before doing anything.
 
 1. **Detect the language** from what is present: `pom.xml` / `build.gradle` →
    Java; `pyproject.toml` / `setup.py` / `requirements.txt` → Python;
-   `package.json` → Node, plus `tsconfig.json` → TypeScript; `go.mod` → Go.
+   `package.json` → Node, plus `tsconfig.json` → TypeScript; `go.mod` → Go;
+   `Cargo.toml` → Rust.
 
 2. **Determine the package prefix** — the scope of instrumentation. Without one
    the capture instruments frameworks and stdlib and the trace becomes
@@ -27,6 +28,13 @@ one before doing anything.
    - Go: the `module` line from `go.mod` (Go needs 1.24 or newer, and the
      target module's own `go` directive must be 1.24+ too — FlowTrace refuses
      before touching anything otherwise, rather than failing mid-build)
+   - Rust: the package names of the Cargo workspace, which `flowtrace run`
+     derives itself from `cargo metadata` (one package: its name; a workspace:
+     the longest common prefix, e.g. `kerno` for `kerno_core` + `kerno_storage`).
+     Pass `--package-prefix` to narrow to one module (`kerno_storage::wal`): on a
+     storage engine, tracing every function drowns the signal and hits the
+     100000-event cap. Run it as `flowtrace run -- cargo run --release` (`build`
+     and `test` work too; `--target` cross builds and Windows hosts do not).
 
    State the prefix you chose. If detection is ambiguous, ask rather than guess —
    a wrong prefix produces an empty trace that looks like a bug in the code.
@@ -79,6 +87,12 @@ Context compatible, so this works:
   `func(http.ResponseWriter, *http.Request)`. Outbound is manual. Never tell
   the user to call `flowtracert` from their own source — it exists only during
   an instrumented build, so importing it breaks their plain `go build`.
+- **Rust** reads `FLOWTRACE_TRACEPARENT` once and every root span of the process
+  joins it; there is no HTTP seam, so an inbound header is **not** adopted on its
+  own. A span started on a new thread (`std::thread::spawn`, `tokio::spawn`) is a
+  root with a new `trace_id`. A Rust library called in-process over FFI needs
+  `flowtrace::remote_context(header)` around the call; outbound is
+  `flowtrace::current_traceparent()`.
 - **Python** does **not** adopt an inbound header on its own. It must be
   wrapped in `flowtrace_runtime.remote_context(header)` by hand, and that
   import only resolves under `flowtrace run`.

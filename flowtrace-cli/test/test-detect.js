@@ -168,7 +168,7 @@ console.log('\n[detectPackagePrefix]');
 // Unknown lang
 {
   const d = mkTmp();
-  assert(detectPackagePrefix(d, 'rust') === null, 'unknown lang -> null');
+  assert(detectPackagePrefix(d, 'cobol') === null, 'unknown lang -> null');
 }
 
 // Go go.mod module path
@@ -183,6 +183,28 @@ console.log('\n[detectPackagePrefix]');
 {
   const d = mkTmp();
   assert(detectPackagePrefix(d, 'go') === null, 'go: no go.mod -> null');
+}
+
+// Rust: Cargo.toml -> rust, prefix is the [package] name with - as _
+{
+  const d = mkTmp();
+  fs.writeFileSync(path.join(d, 'Cargo.toml'), `[package]\nname = "kerno-core"\nversion = "0.1.0"\n\n[[bin]]\nname = "other"\n`);
+  assert(detectLang(d) === 'rust', 'Cargo.toml -> rust');
+  assert(detectPackagePrefix(d, 'rust') === 'kerno_core', 'rust: [package] name, hyphens as underscores, not a later [[bin]] name');
+}
+
+// Rust: a virtual workspace has no package name; the driver derives the prefix itself
+{
+  const d = mkTmp();
+  fs.writeFileSync(path.join(d, 'Cargo.toml'), `[workspace]\nmembers = ["crates/*"]\n`);
+  assert(detectLang(d) === 'rust', 'virtual workspace -> rust');
+  assert(detectPackagePrefix(d, 'rust') === null, 'rust: workspace root has no [package] -> null');
+}
+
+// Rust: no Cargo.toml -> null
+{
+  const d = mkTmp();
+  assert(detectPackagePrefix(d, 'rust') === null, 'rust: no Cargo.toml -> null');
 }
 
 // ---- Summary ----

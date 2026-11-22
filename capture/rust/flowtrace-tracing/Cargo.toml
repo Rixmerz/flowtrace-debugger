@@ -1,0 +1,17 @@
+[package]
+name = "flowtrace-tracing"
+description = "A tracing_subscriber Layer that writes FlowTrace v2 JSONL"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+flowtrace = { path = "../flowtrace" }
+tracing-core = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+
+[dev-dependencies]
+tracing = "0.1"
+serde_json = "1"

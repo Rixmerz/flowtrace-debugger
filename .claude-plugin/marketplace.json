@@ -13,7 +13,7 @@
     {
       "name": "flowtrace",
       "source": "./plugin",
-      "description": "Trace Java, Python, Node, TypeScript and Go execution without modifying source, then analyze the resulting trace. Ships the flowtrace CLI on PATH and a flowtrace://runtimes capability resource.",
+      "description": "Trace Java, Python, Node, TypeScript, Go and Rust execution without modifying source, then analyze the resulting trace. Ships the flowtrace CLI on PATH and a flowtrace://runtimes capability resource.",
       "category": "debugging",
       "keywords": [
         "tracing",

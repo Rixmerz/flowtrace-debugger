@@ -8,21 +8,25 @@ const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
 const readline = require('readline');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const chalk = require('chalk');
 const assets = require('../assets');
 const { detectLang, detectPackagePrefix, langFromCommand, sameCaptureLayer } = require('../detect');
 const { detectPythonPrefix } = require('../python-prefix');
 const { detectGoModulePath } = require('../go-module');
+const { detectRustPackageName } = require('../rust-package');
 const { ensureGitignore } = require('../gitignore');
 
-const SUPPORTED_LANGS = new Set(['java', 'python', 'node', 'ts', 'go']);
+const SUPPORTED_LANGS = new Set(['java', 'python', 'node', 'ts', 'go', 'rust']);
 
 /** `go run`/`go build`/`go test` are the only subcommands flowtrace-go can
  * splice `-overlay` into — see capture/go/cmd/flowtrace-go's own
  * validSubcommands for the second line of defense. */
 const GO_SUBCOMMANDS = new Set(['run', 'build', 'test']);
+
+/** `cargo run|build|test` are the subcommands the Rust driver can instrument. */
+const CARGO_SUBCOMMANDS = new Set(['run', 'build', 'test']);
 
 // ---------- helpers ----------
 
@@ -219,8 +223,8 @@ async function runCommand(options = {}, restArgs = []) {
     const detected = detectLang(cwd);
     if (detected === null && cmdLang === null) {
       console.error(chalk.red('Error:'), 'No se pudo detectar el lenguaje del proyecto.');
-      console.log(chalk.gray('Archivos reconocidos: pom.xml, build.gradle, pyproject.toml, setup.py, requirements.txt, package.json, go.mod'));
-      console.log(chalk.gray('O usa: flowtrace run --lang <java|python|node|ts|go> -- <cmd>'));
+      console.log(chalk.gray('Archivos reconocidos: pom.xml, build.gradle, pyproject.toml, setup.py, requirements.txt, package.json, go.mod, Cargo.toml'));
+      console.log(chalk.gray('O usa: flowtrace run --lang <java|python|node|ts|go|rust> -- <cmd>'));
       process.exit(1);
     }
     if (Array.isArray(detected)) {
@@ -296,6 +300,11 @@ async function runCommand(options = {}, restArgs = []) {
   // ---- Go path ----
   if (lang === 'go') {
     return runGo({ options, restArgs, cwd, outPath, config });
+  }
+
+  // ---- Rust path ----
+  if (lang === 'rust') {
+    return runRust({ options, restArgs, cwd, outPath, config });
   }
 
   // ---- Other langs: stub (S3-S4) ----
@@ -688,6 +697,120 @@ async function runGo({ options, restArgs, cwd, outPath, config = {} }) {
   return exitWithChild(child);
 }
 
+// ---------- Rust injection ----------
+
+/**
+ * Whether `args` is `cargo [+toolchain] run|build|test ...`, and the subcommand.
+ * A prebuilt binary has nothing left to splice into, so anything else is refused
+ * up front instead of producing an empty trace.
+ */
+function parseCargoCommand(args) {
+  const [first, second, third] = args;
+  if (!first || path.basename(first) !== 'cargo') return null;
+  const sub = second && second.startsWith('+') ? third : second;
+  return CARGO_SUBCOMMANDS.has(sub) ? sub : null;
+}
+
+/**
+ * Build the invocation of the flowtrace-rust driver.
+ *
+ * The driver is the other half of this command: it builds the runtime crate,
+ * points cargo at itself as RUSTC_WORKSPACE_WRAPPER, and runs `cargo` on the
+ * user's own workspace. This only composes its argv; the package prefix is
+ * optional because the driver derives one from `cargo metadata` when it is
+ * omitted (the longest common prefix of the workspace's package names).
+ */
+function buildRustInvocation({ driver, captureDir, moduleDir, prefix, cargoArgs, outPath, captureKnobs = {} }) {
+  const args = ['--dir', moduleDir, '--capture-dir', captureDir];
+  if (prefix) args.push('--package-prefix', prefix);
+  args.push(...cargoArgs);
+  const env = { ...process.env, FLOWTRACE_OUTPUT: outPath, ...captureKnobs };
+  return { cmd: driver, args, env };
+}
+
+async function runRust({ options, restArgs, cwd, outPath, config = {} }) {
+  // 1. Validate the user command before building anything.
+  if (!restArgs.length) {
+    console.error(chalk.red('Error:'), 'Provide the command to run after --.');
+    console.log(chalk.gray('Example: flowtrace run --lang rust -- cargo run --release'));
+    process.exit(1);
+  }
+  const sub = parseCargoCommand(restArgs);
+  if (!sub) {
+    console.error(chalk.red('Error:'), 'flowtrace instruments `cargo run`, `cargo build` or `cargo test` — not an already-built binary, which has nothing left to splice into.');
+    console.log(chalk.gray('Example: flowtrace run --lang rust -- cargo run --release'));
+    process.exit(1);
+  }
+
+  // 2. The toolchain and the capture sources.
+  if (spawnSync('cargo', ['--version'], { stdio: 'ignore' }).status !== 0) {
+    console.error(chalk.red('Error:'), '`cargo` was not found on PATH. Tracing Rust builds your workspace with your own toolchain: install it from https://rustup.rs.');
+    process.exit(1);
+  }
+  const captureDir = assets.rustCaptureDir();
+  if (!captureDir) {
+    console.error(chalk.red('Error:'), 'capture/rust was not found.');
+    console.log(chalk.gray(assets.isVendored()
+      ? 'The installation looks incomplete — reinstall the package.'
+      : 'Make sure capture/rust exists in the checkout.'));
+    process.exit(1);
+  }
+
+  // 3. Build the driver (a no-op once built).
+  const targetDir = assets.rustDriverTargetDir(captureDir);
+  console.log(chalk.gray('  building the Rust driver (first run only)...'));
+  const built = spawnSync('cargo', [
+    'build', '--release', '--quiet', '-p', 'flowtrace-rust',
+    '--manifest-path', path.join(captureDir, 'Cargo.toml'),
+    '--target-dir', targetDir,
+  ], { stdio: 'inherit', env: { ...process.env, RUSTC_WRAPPER: '' } });
+  if (built.status !== 0) {
+    console.error(chalk.red('Error:'), 'could not build the flowtrace-rust driver.');
+    process.exit(built.status || 1);
+  }
+  const driver = path.join(targetDir, 'release', 'flowtrace-rust');
+
+  // 4. Package prefix: explicit, or the one package's name; a workspace is left to the driver.
+  const prefix = resolvePrefix({ options, config, cwd, lang: 'rust' });
+
+  const { cmd, args, env } = buildRustInvocation({
+    driver, captureDir, moduleDir: cwd, prefix, cargoArgs: restArgs, outPath,
+    captureKnobs: captureEnv(config),
+  });
+
+  console.log(chalk.cyan('FlowTrace v2 — Rust instrumented'));
+  console.log(chalk.gray(`  output  : ${outPath}`));
+  console.log(chalk.gray(`  command : ${restArgs.join(' ')}`));
+  if (sub === 'build') {
+    console.log(chalk.gray('  the built binary writes the trace when you run it (set FLOWTRACE_OUTPUT to choose the file)'));
+  }
+
+  const child = spawn(cmd, args, { cwd, env, stdio: 'inherit' });
+  process.on('SIGINT', () => child.kill('SIGINT'));
+
+  return new Promise((resolve) => {
+    child.on('close', async (code, signal) => {
+      // An empty trace reads as "my code never ran", the most misleading result
+      // this tool can give: say so when a run that should have traced did not.
+      if (sub !== 'build' && code === 0) {
+        try {
+          if ((await _countJsonlLines(outPath)) === 0) {
+            console.error(chalk.yellow('Warning:'), `0 events captured in ${outPath}.`);
+            console.log(chalk.gray(`  Does the package prefix match your crates' names? prefix used: ${prefix || '(derived by the driver)'}`));
+          }
+        } catch (err) {
+          console.error(chalk.yellow('Warning:'), `could not check ${outPath}: ${err.message}`);
+        }
+      }
+      if (signal) {
+        console.error(chalk.yellow('Aviso:'), `el proceso terminó por señal ${signal}.`);
+      }
+      process.exit(exitStatusFor(code, signal));
+      resolve();
+    });
+  });
+}
+
 // Export internals for testing
 runCommand._buildJavaInjection = buildJavaInjection;
 runCommand._buildNodeEnv = buildNodeEnv;
@@ -701,5 +824,8 @@ runCommand._buildPythonEnv = buildPythonEnv;
 runCommand._countJsonlLines = _countJsonlLines;
 runCommand._buildGoInvocation = buildGoInvocation;
 runCommand._detectGoModulePath = detectGoModulePath;
+runCommand._buildRustInvocation = buildRustInvocation;
+runCommand._parseCargoCommand = parseCargoCommand;
+runCommand._detectRustPackageName = detectRustPackageName;
 
 module.exports = runCommand;

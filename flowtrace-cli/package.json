@@ -1,7 +1,7 @@
 {
   "name": "@rixmerz/flowtrace",
   "version": "4.1.0",
-  "description": "Trace what Java, Node, TypeScript, Python and Go actually did \u2014 one install, no Maven, no pip.",
+  "description": "Trace what Java, Node, TypeScript, Python, Go and Rust actually did \u2014 one install, no Maven, no pip.",
   "bin": {
     "flowtrace": "./bin/flowtrace.js"
   },
@@ -22,6 +22,7 @@
     "typescript",
     "python",
     "go",
+    "rust",
     "opentelemetry",
     "mcp",
     "ai-debugging"

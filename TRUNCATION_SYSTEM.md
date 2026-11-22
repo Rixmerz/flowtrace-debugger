@@ -39,6 +39,7 @@ on the JSON serialization rather than on the raw object.
 | Node / TypeScript | `FLOWTRACE_MAX_ARG_LENGTH` | 512 |
 | Python | `FLOWTRACE_MAX_ARG_LENGTH` | 512 |
 | Go | `FLOWTRACE_MAX_ARG_LENGTH` | 512 |
+| Rust | `FLOWTRACE_MAX_ARG_LENGTH` | 512 |
 | Browser | — (no per-value truncation; it records URLs and error messages, not arbitrary arguments) | — |
 
 `0` disables truncation entirely. An unparseable value falls back to the
@@ -50,7 +51,7 @@ application.
 
 ## Redaction runs before truncation
 
-Every file-writing capture layer — **Java, Node/TypeScript, Python and Go** —
+Every file-writing capture layer — **Java, Node/TypeScript, Python, Go and Rust** —
 redacts values whose *name* matches a redact-key list, before the truncation
 rule above ever sees them. A matching value is replaced in place with
 `"<redacted>"`, at any nesting depth (not just top-level argument names), in
@@ -62,6 +63,13 @@ The built-in list — applied even when `FLOWTRACE_REDACT_KEYS` is unset — is:
 `FLOWTRACE_REDACT_KEYS` is a comma-separated list of ADDITIONAL substrings,
 matched case-insensitively, appended to the built-in list — it does not
 replace it. Java also accepts `-Dflowtrace.redact-keys`.
+
+Rust sees a value only through its `Debug` text, so it reads that text: a
+struct field or map key matching the list (`password: "x"`, `{"token": 1}`) has
+its value replaced with `"<redacted>"` at any depth, in `args` and `result`, and
+an argument whose *name* matches is never formatted at all. A hand-written
+`Debug` that does not print `name: value` is outside what this can see. Rust
+(like Go) also measures the limit in bytes of the JSON, not characters.
 
 The browser layer applies the same list to its event args, with one deliberate
 exemption: the URL-valued keys `url`, `from` and `to`, which are the point of a
@@ -76,7 +84,7 @@ traced HTTP handler.
 
 ## Parity across layers
 
-`examples/golden/truncation/{java,node,python,go}` run the same scenario — a
+`examples/golden/truncation/{java,node,python,go}` (Rust is pinned by `capture/rust/flowtrace` unit tests, not a fixture) run the same scenario — a
 long string value with the limit set to 64 — through each capture layer and
 commit the real output. `make check-golden` diffs them.
 

@@ -8,7 +8,7 @@
 
 Trazador de llamadas multi-lenguaje sin modificar el código fuente. Genera logs JSONL estructurados de cada método instrumentado, listos para análisis con IA.
 
-**Runtimes soportados**: Java 11+ | Python 3.9+ | Node.js 20.6+ | TypeScript 5+ | Go 1.24+
+**Runtimes soportados**: Java 11+ | Python 3.9+ | Node.js 20.6+ | TypeScript 5+ | Go 1.24+ | Rust 1.81+
 
 Más el **navegador**, que es una capa aparte y más angosta: sin
 `AsyncLocalStorage` no hay contexto asíncrono ambiente, así que no instrumenta
@@ -38,7 +38,7 @@ los proyectos que esto existe para trazar. El plugin de Claude Code deja
 `flowtrace` en el PATH sin instalación global (se instala en su propia caché,
 por la misma razón).
 
-`@rixmerz/flowtrace` es el **único** paquete que hace falta para los cinco
+`@rixmerz/flowtrace` es el **único** paquete que hace falta para los seis
 runtimes. Trae dentro las capas de captura: no hace falta Maven, ni pip, ni
 instalar `@flowtrace/capture-node` (ese nombre no existe en npm — es un paquete
 interno del workspace, y la CLI ya lo lleva vendorizado). El navegador es la
@@ -73,6 +73,22 @@ flowtrace run -- go run ./cmd/api
 Requiere Go 1.24+. La instrumentacion ocurre antes de compilar (via `go build
 -overlay`): tu arbol de fuentes no se modifica, ni un byte.
 
+### Rust
+```bash
+flowtrace run -- cargo run --release
+# `cargo build` and `cargo test` work too
+```
+Needs `cargo` on a Unix host (the build uses your own toolchain, Rust 1.81+).
+Instrumentation happens at build time through a `rustc` wrapper: a rewritten
+copy of each workspace crate's `src/` is what gets compiled, so your source tree
+is never written to. The package prefix is derived from the workspace (`kerno`
+covers `kerno_core` and `kerno_storage`); give a longer one, such as
+`--package-prefix kerno_storage::wal`, to trace one module of a hot path.
+`async fn`, `const fn` and `#[test]` code are not instrumented; a returned
+`Err` and a panic both become the call's `error`. A program that already uses
+`tracing` can add the `flowtrace-tracing` layer to its own subscriber instead.
+Design, limits and measured overhead: `docs/changes/2026-11-22-rust-capture-layer.md`.
+
 ### Dónde queda la traza
 
 `flowtrace run` escribe en `.flowtrace/<timestamp>.jsonl` dentro del directorio
@@ -94,9 +110,10 @@ adopta en vez de empezar una traza nueva. Ambas mitades quedan bajo un mismo
 | Java | Automático — el agente OTel | Automático dentro de lo que instrumenta OTel |
 | Node / TS | Automático — se parcha el server HTTP (express, fastify, koa, `http` pelado) | Automático — parcha `fetch` y `http.request` |
 | Go | Automático — el transformer siembra todo `func(http.ResponseWriter, *http.Request)` | Manual |
+| Rust | **Sólo `FLOWTRACE_TRACEPARENT`** — sin seam HTTP; FFI en proceso necesita `flowtrace::remote_context` | Manual — `flowtrace::current_traceparent()`; los hilos nuevos abren trazas nuevas |
 | Python | **Sólo `FLOWTRACE_TRACEPARENT`** — el header HTTP no se adopta solo | Manual |
 
-Los cuatro leen además `FLOWTRACE_TRACEPARENT`, así que para encadenar procesos
+Todos los runtimes de arriba leen además `FLOWTRACE_TRACEPARENT`, así que para encadenar procesos
 sin HTTP de por medio basta exportarlo antes de lanzar el hijo.
 
 El **navegador** suele ser el origen de la cadena, no un salto intermedio: el
@@ -126,6 +143,16 @@ En Go no hace falta escribir nada para la entrada, y **no debes** llamar a
 instrumentado, así que importarlo rompería tu `go build` normal. Para la
 salida, la propagación se adjunta a mano desde código ya instrumentado — no hay
 dónde engancharse, `net/http` se resuelve en tiempo de compilación.
+
+Rust reads `FLOWTRACE_TRACEPARENT` once at startup: every root span of the
+process joins that trace, parented to the span that launched it. There is no HTTP
+seam. A Rust library called in-process over FFI must wrap the call in
+`flowtrace::remote_context(header)` with a header the caller hands it, otherwise
+its roots hang off the process-level span, not the calling frame. A span started
+on a new thread (`std::thread::spawn`, `tokio::spawn`) is a root with a new
+`trace_id`: carry `flowtrace::current_traceparent()` across and open
+`remote_context` there. `capture/rust/flowtrace-rust/tests/cross_process.rs`
+asserts the Python-to-Rust hop on two real processes.
 
 ### Verificar que la cadena quedó unida
 

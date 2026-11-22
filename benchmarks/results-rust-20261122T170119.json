@@ -1,0 +1,14 @@
+{
+  "lang": "rust",
+  "runs": 5,
+  "workloads": {
+    "root_ns": "1M calls of a trivial fn, each its own root span (worst case)",
+    "nested_ns": "1M calls of a trivial fn inside one root span",
+    "store_ns": "200k point-read-like calls (2 spans each: get -> checksum), ~hundreds of ns of work"
+  },
+  "unit": "ns per call of the workload (store_ms: total milliseconds)",
+  "baseline": { "root_ns": 1.2, "nested_ns": 1.6, "store_ns": 73.4, "store_ms": 15 },
+  "instrumented": { "root_ns": 537.9, "nested_ns": 447.4, "store_ns": 1010.5, "store_ms": 215 },
+  "instrumented_no_values": { "root_ns": 307.7, "nested_ns": 301.7, "store_ns": 697.5, "store_ms": 139 },
+  "instrumented_past_event_cap": { "root_ns": 11.7, "nested_ns": 11.9, "store_ns": 89.6, "store_ms": 18 }
+}

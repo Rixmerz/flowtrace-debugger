@@ -1,0 +1,15 @@
+[package]
+name = "flowtrace"
+description = "FlowTrace v2 capture runtime for Rust: writes enter/exit events as JSONL"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+# PanicHookInfo (1.81) is the newest API the runtime uses; OnceLock needs 1.70.
+rust-version = "1.81"
+
+# No [dependencies], on purpose. See the workspace manifest.
+
+[dev-dependencies]
+serde_json = "1"

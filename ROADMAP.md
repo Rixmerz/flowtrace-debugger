@@ -21,6 +21,7 @@ authoritative version is the `flowtrace://runtimes` MCP resource
 | Python capture (import hook + AST rewrite, 3.9/3.11/3.13 in CI) | `capture/python/` |
 | Node + TypeScript capture (CJS hook, ESM loader, SWC/Babel transform) | `capture/node/` |
 | Go capture (source rewrite via `go build -overlay`, 1.24/1.25 in CI) | `capture/go/` |
+| Rust capture (`rustc` wrapper, shadow-copy splice, MSRV 1.81) | `capture/rust/` |
 | Browser capture (HTTP, navigation, errors) | `capture/browser/` |
 | Cross-process tracing over W3C Trace Context | every layer |
 | Secret redaction and value truncation | every file-writing layer |
@@ -55,9 +56,9 @@ authoritative version is the `flowtrace://runtimes` MCP resource
 
 ## Not planned
 
-- **Rust and .NET capture.** Both were v1 experiments, removed in v2. They
-  emitted a different schema and nothing in the v2 pipeline can read their
-  output. Reopening either means writing a new layer, not restoring one.
+- **.NET capture.** A v1 experiment, removed in v2. It emitted a different
+  schema and nothing in the v2 pipeline can read its output. Reopening it means
+  writing a new layer, not restoring one.
 - **A `--schema-v1` compatibility mode.** Floated for 2.0.0, never built, not
   wanted three majors later. v1 logs still open and report `schemaVersion:
   "v1"`; the v2-only tools return empty rather than inventing structure.
@@ -69,4 +70,4 @@ authoritative version is the `flowtrace://runtimes` MCP resource
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The highest-value contributions are
 usually a golden fixture that pins behaviour nobody had pinned, and a fix to a
-layer that disagrees with the other four.
+layer that disagrees with the other five.

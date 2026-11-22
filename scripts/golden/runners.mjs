@@ -26,6 +26,8 @@ const PY_PKG = join(REPO_ROOT, 'capture', 'python');
 const GO_CAPTURE = join(REPO_ROOT, 'capture', 'go');
 const GO_DRIVER = join(GO_CAPTURE, 'cmd', 'flowtrace-go');
 const GO_RUNTIME_SRC = join(GO_CAPTURE, 'flowtracert');
+const RUST_CAPTURE = join(REPO_ROOT, 'capture', 'rust');
+const RUST_DRIVER = join(RUST_CAPTURE, 'target', 'release', 'flowtrace-rust');
 const JAVA_MODULE = join(REPO_ROOT, 'capture', 'java', 'flowtrace-otel-extension');
 const OTEL_AGENT = join(JAVA_MODULE, 'target', 'dependency', 'opentelemetry-javaagent.jar');
 
@@ -150,6 +152,49 @@ function goRunner({ id, maxArgLength }) {
   };
 }
 
+/**
+ * Rust fixture: a standalone Cargo workspace built through the real
+ * flowtrace-rust driver, exactly as `flowtrace run --lang rust` does. The driver
+ * is prebuilt by `make build-rust`: compiling it (syn and friends) takes longer
+ * than the runner's timeout, and a runner that silently built its own tool would
+ * hide a broken `make build-rust`.
+ *
+ * `cargoArgs` is what follows `cargo run` (a --bin selector, say). The build
+ * directory is shared across fixtures and runs, under capture/rust/target, so
+ * only the first run pays for compiling.
+ */
+function rustRunner({ id, cargoArgs = [], maxArgLength, driver = true }) {
+  const dir = join(GOLDEN_ROOT, ...id.split('/'));
+  return {
+    id,
+    dir,
+    available() {
+      if (!existsSync(join(dir, 'Cargo.toml'))) return { ok: false, reason: 'Cargo.toml missing' };
+      if (driver && !existsSync(RUST_DRIVER)) return { ok: false, reason: 'flowtrace-rust not built — run `make build-rust`' };
+      return { ok: true };
+    },
+    run(outPath) {
+      // `driver: false` is the `tracing` entry point: plain cargo, no rewriting.
+      const [cmd, args] = driver
+        ? [RUST_DRIVER, ['--dir', dir, '--capture-dir', RUST_CAPTURE, 'cargo', 'run', '--quiet', '--locked', ...cargoArgs]]
+        : ['cargo', ['run', '--quiet', '--locked', ...cargoArgs]];
+      return spawnSync(cmd, args, {
+        cwd: dir,
+        encoding: 'utf8',
+        timeout: TIMEOUT_MS,
+        env: {
+          ...process.env,
+          CARGO_TARGET_DIR: join(RUST_CAPTURE, 'target', 'golden'),
+          // A configured sccache would sit in front of the driver's wrapper.
+          RUSTC_WRAPPER: '',
+          FLOWTRACE_OUTPUT: outPath,
+          ...(maxArgLength ? { FLOWTRACE_MAX_ARG_LENGTH: String(maxArgLength) } : {}),
+        },
+      });
+    },
+  };
+}
+
 /** Shared JVM invocation: OTel agent + FlowTrace extension. */
 function javaSpawn({ classpath, mainClass, prefix, outPath, maxArgLength }) {
   const jar = extensionJar();
@@ -253,6 +298,8 @@ function javaSourceRunner({ id, source, maxArgLength }) {
 export const FIXTURES = [
   pythonRunner({ id: 'python', script: 'calculator.py', prefix: 'calculator' }),
   goRunner({ id: 'go' }),
+  rustRunner({ id: 'rust' }),
+  rustRunner({ id: 'tracing/rust', driver: false }),
   nodeRunner({ id: 'node', script: 'calculator.js' }),
   nodeRunner({ id: 'ts', script: 'calculator.ts' }),
   // Express: user code inside a real framework request cycle. The prefix scopes
