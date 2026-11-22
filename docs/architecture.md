@@ -114,7 +114,7 @@ Every agent emits one JSON object per line. Field names are stable — renaming 
 ```
 ts            float   Unix timestamp in seconds (float, microsecond precision)
 event         string  "enter" | "exit"
-lang          string  "java" | "python" | "node" | "ts" | "go"
+lang          string  "java" | "python" | "node" | "ts" | "go" | "rust"
 class         string  Class or module name
 method        string  Method or function name
 module        string  File path or package (optional, L1-dependent)

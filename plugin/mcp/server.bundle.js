@@ -21502,7 +21502,7 @@ var RUNTIMES = [
   {
     lang: "rust",
     label: "Rust",
-    minVersion: "1.70+ (the runtime crate's MSRV); crates on edition 2018+; Unix hosts only",
+    minVersion: "1.81+ (the runtime crate's MSRV); crates on edition 2018+; Unix hosts only",
     mechanism: "a rustc wrapper (RUSTC_WORKSPACE_WRAPPER) that splices spans into the function bodies of your workspace's crates, in a shadow copy of each package's src/ that goes to the compiler; a std-only runtime crate is linked in with --extern. Your source tree is never written to, and dependencies outside the workspace compile untouched. Context is a per-thread stack. A program that already uses `tracing` can instead add the `flowtrace-tracing` Layer to its own subscriber registry.",
     invoke: "flowtrace run -- cargo run   (cargo build and cargo test work too)",
     prefix: "the workspace's package names with `-` as `_`: the package name for a single package, otherwise the longest common prefix (kerno_core + kerno_storage -> kerno). A longer prefix such as kerno_storage::wal narrows to a module, which is how to keep a hot path's trace small",
