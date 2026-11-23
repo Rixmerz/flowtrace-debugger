@@ -21,8 +21,8 @@ fn setup() -> std::path::PathBuf {
 
 fn events(prefix: &str) -> Vec<Value> {
     let path = setup();
-    flowtrace::flush();
-    std::fs::read_to_string(path)
+    // Other test threads write to this file concurrently: a plain read can end mid-line.
+    flowtrace::__rt::read_complete_lines(&path)
         .unwrap_or_default()
         .lines()
         .map(|l| serde_json::from_str::<Value>(l).unwrap())

@@ -149,12 +149,62 @@ pub fn flush() {
     lock().flush();
 }
 
-/// Test support: flushes, then runs `f` with the sink lock still held, so a
-/// reader of the trace file cannot overlap another thread's `write(2)`. The
-/// kernel lets a plain `read` observe a multi-line append half done.
+/// Flushes, then reads the trace file at `path` and returns its complete lines,
+/// for a process that reads its own trace while it is still writing it (tests).
+///
+/// A plain read of a file that is being appended to can end mid-line: the
+/// kernel publishes a `write(2)` to readers page by page, so a read that
+/// overlaps one sees a prefix of it. The read happens under the sink lock, so
+/// no write of this process is in flight, and anything after the last newline
+/// is dropped, which covers another process appending to the same file.
+///
+/// # Errors
+/// Whatever reading `path` returns, e.g. `NotFound` before the first flush.
+pub fn read_complete_lines(path: &std::path::Path) -> std::io::Result<String> {
+    let bytes = {
+        let mut s = lock();
+        s.flush();
+        std::fs::read(path)?
+    };
+    Ok(complete_lines(bytes))
+}
+
+/// The text up to and including the last newline.
+fn complete_lines(mut bytes: Vec<u8>) -> String {
+    let end = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    bytes.truncate(end);
+    // Every line the sink writes is UTF-8; lossy only guards a foreign writer.
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
 #[cfg(test)]
-pub(crate) fn flushed<R>(f: impl FnOnce() -> R) -> R {
-    let mut s = lock();
-    s.flush();
-    f()
+mod tests {
+    use super::complete_lines;
+
+    /// The shape of the flake: a whole line, then one cut inside a string by a
+    /// read that overlapped an append. Only the whole line may come back.
+    #[test]
+    fn a_line_cut_mid_write_is_not_returned() {
+        let whole = r#"{"event":"enter","method":"a"}"#;
+        let torn = format!("{whole}\n{{\"event\":\"exit\",\"error\":{{\"type\":\"pan");
+        let text = complete_lines(torn.into_bytes());
+        assert_eq!(text, format!("{whole}\n"));
+        for line in text.lines() {
+            serde_json::from_str::<serde_json::Value>(line).expect("only whole lines are returned");
+        }
+    }
+
+    /// A cut can also fall inside a multi-byte character; that must not turn the
+    /// whole read into an error (or into nothing).
+    #[test]
+    fn a_cut_inside_a_multibyte_character_keeps_the_whole_lines() {
+        let mut bytes = "{\"s\":\"ñ\"}\n{\"s\":\"ñ".as_bytes().to_vec();
+        bytes.pop(); // half of the trailing `ñ`
+        assert_eq!(complete_lines(bytes), "{\"s\":\"ñ\"}\n");
+    }
+
+    #[test]
+    fn a_file_with_no_newline_yet_has_no_lines() {
+        assert_eq!(complete_lines(b"{\"ts\":1".to_vec()), "");
+    }
 }

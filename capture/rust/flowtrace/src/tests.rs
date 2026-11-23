@@ -23,11 +23,11 @@ fn setup() -> std::path::PathBuf {
 /// Events whose `method` starts with `prefix`, in file order.
 fn events(prefix: &str) -> Vec<Value> {
     let path = setup();
-    // Read under the sink lock: another test thread's flush is a single `write(2)`
-    // of several lines, and a reader that overlaps it can see the file cut
+    // Other test threads write to this file concurrently: a plain read can end
     // mid-line (the "EOF while parsing a string" flake).
-    let text = crate::sink::flushed(|| std::fs::read_to_string(&path).unwrap_or_default());
-    text.lines()
+    crate::sink::read_complete_lines(&path)
+        .unwrap_or_default()
+        .lines()
         .map(|l| serde_json::from_str::<Value>(l).expect("every line is valid JSON"))
         .filter(|e| e["method"].as_str().is_some_and(|m| m.starts_with(prefix)))
         .collect()
@@ -301,30 +301,15 @@ fn spans_on_new_threads_are_roots_with_their_own_thread_name() {
     assert_eq!(child["parent_id"], Value::Null, "no ambient context across threads");
 }
 
-/// While one thread holds the sink lock, `flushed` (what `events` reads under)
-/// must wait: that is what keeps a reader out of another thread's half-done
-/// multi-line `write(2)`.
+/// The reader the tests (and `flowtrace-tracing`'s) use must hand back whole
+/// lines only, whatever state an append left the file in.
 #[test]
-fn flushed_waits_for_whoever_holds_the_sink_lock() {
-    use std::sync::{mpsc, Arc};
-    use std::sync::atomic::{AtomicBool, Ordering};
+fn read_complete_lines_drops_a_tail_cut_by_an_overlapping_write() {
     setup();
-    let (locked_tx, locked_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel::<()>();
-    let holder = std::thread::spawn(move || {
-        crate::sink::flushed(|| {
-            locked_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-        });
-    });
-    locked_rx.recv().unwrap();
-    let entered = Arc::new(AtomicBool::new(false));
-    let flag = entered.clone();
-    let reader = std::thread::spawn(move || crate::sink::flushed(|| flag.store(true, Ordering::SeqCst)));
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    assert!(!entered.load(Ordering::SeqCst), "the reader got in while the lock was held");
-    release_tx.send(()).unwrap();
-    holder.join().unwrap();
-    reader.join().unwrap();
-    assert!(entered.load(Ordering::SeqCst));
+    let torn = std::env::temp_dir().join(format!("flowtrace-torn-{}.jsonl", std::process::id()));
+    let whole = r#"{"event":"enter","method":"torn_a"}"#;
+    std::fs::write(&torn, format!("{whole}\n{{\"event\":\"exit\",\"error\":{{\"type\":\"pan")).unwrap();
+    let text = crate::sink::read_complete_lines(&torn);
+    let _ = std::fs::remove_file(&torn);
+    assert_eq!(text.expect("the file exists"), format!("{whole}\n"));
 }

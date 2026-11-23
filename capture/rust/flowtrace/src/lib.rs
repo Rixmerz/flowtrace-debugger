@@ -41,7 +41,7 @@ pub mod __rt {
     pub use crate::event::{fragment, write_enter, write_exit, ErrorInfo, Identity};
     pub use crate::ids::{new_span_id, new_trace_id, SpanId, TraceId};
     pub use crate::json::{redact_debug, str_lit, truncate};
-    pub use crate::sink::{admit, ensure_init};
+    pub use crate::sink::{admit, ensure_init, read_complete_lines};
     pub use crate::panic::{current as panic_info, PanicInfo};
     pub use crate::span::{enter, thread_name, ArgsBuf, Meta, SpanGuard};
     pub use crate::traceparent::{format as format_traceparent, parse as parse_traceparent};
