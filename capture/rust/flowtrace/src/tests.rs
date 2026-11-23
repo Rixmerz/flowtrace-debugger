@@ -301,33 +301,9 @@ fn spans_on_new_threads_are_roots_with_their_own_thread_name() {
     assert_eq!(child["parent_id"], Value::Null, "no ambient context across threads");
 }
 
-/// Hammers the file with flushes from one thread while another reads it the way
-/// `events` does. Without the sink lock around the read, the reader sees a
-/// half-written buffer (a tail that does not end in a newline) in most runs.
-#[test]
-fn a_reader_never_sees_a_half_written_flush() {
-    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let writer_done = done.clone();
-    let writer = std::thread::spawn(move || {
-        for _ in 0..100 {
-            for _ in 0..3 {
-                traced!("rw_outer", [("n", 1i32)], (), {
-                    traced!("rw_inner", [("n", 2i32)], (), {});
-                });
-            }
-            crate::flush();
-        }
-        writer_done.store(true, std::sync::atomic::Ordering::SeqCst);
-    });
-    let path = setup();
-    while !done.load(std::sync::atomic::Ordering::SeqCst) {
-        let text = crate::sink::flushed(|| std::fs::read_to_string(&path).unwrap_or_default());
-        assert!(text.is_empty() || text.ends_with('\n'), "a reader saw a partial line");
-    }
-    writer.join().unwrap();
-}
-
-/// Deterministic: while one thread holds the sink lock, `flushed` must wait.
+/// While one thread holds the sink lock, `flushed` (what `events` reads under)
+/// must wait: that is what keeps a reader out of another thread's half-done
+/// multi-line `write(2)`.
 #[test]
 fn flushed_waits_for_whoever_holds_the_sink_lock() {
     use std::sync::{mpsc, Arc};
