@@ -7,7 +7,7 @@ By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## Setup
 
-Prerequisites — all five toolchains, because `make test` exercises all five
+Prerequisites — all six toolchains, because `make test` exercises all six
 capture layers:
 
 | Tool | Version | Why |
@@ -18,6 +18,7 @@ capture layers:
 | Maven | 3.9+ | the Java capture module |
 | Python | ≥ 3.9 | the Python capture module |
 | Go | ≥ 1.24 | `runtime/pprof` label layout — see `capture/go/README.md` |
+| Rust | ≥ 1.81 (MSRV), `cargo` | the Rust capture workspace; python3 is also needed for its cross-process test |
 
 The first Java run downloads the ~24 MB OpenTelemetry javaagent into
 `~/.flowtrace/` and verifies it against a pinned SHA-256, so that step needs
@@ -38,6 +39,7 @@ test-java         JUnit, with -Dflowtrace.it.required=true so the integration
 test-python       pytest
 test-node         node --test
 test-go           go test ./...
+test-rust         cargo test --workspace (after build-rust)
 test-browser      the browser layer plus a real collector end-to-end
 test-mcp          the MCP server
 test-dashboard    the dashboard API and analyzer
@@ -80,7 +82,7 @@ product for anyone installing from the marketplace.
 FlowTrace supports. Change it first; the READMEs, the plugin command file and
 the skill restate it, and `make check-docs` fails when they drift.
 
-**4. The schema is a contract across five layers.** `schema/flowtrace-v2.json`
+**4. The schema is a contract across six layers.** `schema/flowtrace-v2.json`
 has `additionalProperties: false`. Renaming or adding a field means changing
 every capture layer, the schema, every golden fixture and every consumer
 (`mcp-server`, `flowtrace-dashboard`) **in one commit**. Two rules that have

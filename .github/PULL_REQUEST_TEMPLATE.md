@@ -23,6 +23,7 @@ Fixes # (issue)
 - [ ] Python capture layer
 - [ ] Node.js / TypeScript capture layer
 - [ ] Go capture layer
+- [ ] Rust capture layer
 - [ ] Browser capture layer
 - [ ] CLI (`@rixmerz/flowtrace`)
 - [ ] MCP server
@@ -41,7 +42,7 @@ Fixes # (issue)
 - [ ] Touched `flowtrace-dashboard/` → ran `make bundle-dashboard` and committed it
 - [ ] Touched `mcp-server/src/runtimes.ts` → the READMEs, `plugin/commands/trace.md`
       and the skill still agree (`make check-docs`)
-- [ ] Changed an emitted field → the schema, all five capture layers, the
+- [ ] Changed an emitted field → the schema, all six capture layers, the
       fixtures and both consumers move in this commit
 - [ ] Added tests for the behaviour this changes
 
