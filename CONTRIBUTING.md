@@ -7,8 +7,8 @@ By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## Setup
 
-Prerequisites — all five toolchains, because `make test` exercises all five
-capture layers:
+Prerequisites — every toolchain below, because `make test` exercises every
+capture layer:
 
 | Tool | Version | Why |
 |---|---|---|
@@ -18,6 +18,7 @@ capture layers:
 | Maven | 3.9+ | the Java capture module |
 | Python | ≥ 3.9 | the Python capture module |
 | Go | ≥ 1.24 | `runtime/pprof` label layout — see `capture/go/README.md` |
+| Rust | ≥ 1.81 (`cargo`) | the Rust capture workspace in `capture/rust/` — the MSRV in `capture/rust/flowtrace/Cargo.toml` |
 
 The first Java run downloads the ~24 MB OpenTelemetry javaagent into
 `~/.flowtrace/` and verifies it against a pinned SHA-256, so that step needs
@@ -38,6 +39,7 @@ test-java         JUnit, with -Dflowtrace.it.required=true so the integration
 test-python       pytest
 test-node         node --test
 test-go           go test ./...
+test-rust         cargo test --workspace in capture/rust (the cross-process test needs python3)
 test-browser      the browser layer plus a real collector end-to-end
 test-mcp          the MCP server
 test-dashboard    the dashboard API and analyzer
