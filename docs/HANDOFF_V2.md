@@ -7,8 +7,9 @@
 > **Historical document.** This is the plan as approved, kept as a record of
 > intent — it is deliberately not rewritten to match what shipped. Two points
 > have since changed: the `legacy/` directory it calls for was created and has
-> now been deleted outright (the v1 Go, Rust and .NET agents with it), and the
-> Go/Rust/.NET port it anticipates is not planned. For current structure read
+> now been deleted outright (the v1 Go, Rust and .NET agents with it). Go
+> (`capture/go/`) and Rust (`capture/rust/`, since 4.2.0) were later rebuilt as
+> v2 capture layers; a .NET port is not planned. For current structure read
 > `CLAUDE.md` and `architecture.md`.
 
 ---
