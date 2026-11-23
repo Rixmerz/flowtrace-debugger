@@ -1,6 +1,6 @@
 {
   "name": "flowtrace-workspace",
-  "version": "4.0.0",
+  "version": "4.2.0",
   "private": true,
   "description": "FlowTrace v2 workspace root \u2014 orchestrates the JS/TS subprojects. Java and Python builds stay in the Makefile.",
   "packageManager": "pnpm@9.15.4",

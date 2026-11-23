@@ -9,8 +9,74 @@ independently; each release names them.
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-11-23 — capture layers 2.2.0, Rust 0.1.0, browser 2.3.0, plugin 2.9.0
+
+Rust joins Java, Python, Node/TypeScript and Go as a capture layer.
+
+### Versions in this release
+
+Every manifest in the repository, so none is left to be guessed:
+
+| Manifest | Version | |
+|---|---|---|
+| `flowtrace-cli/package.json` (`@rixmerz/flowtrace`) | 4.2.0 | bumped; the plugin shim `plugin/bin/flowtrace` pins it |
+| `package.json` (root, private) | 4.2.0 | bumped to match the CLI |
+| `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` | 2.9.0 | bumped together (`scripts/check-plugin.mjs` fails if they differ) |
+| `mcp-server/package.json` (`@flowtrace/mcp-server`) and the server string in `src/server.ts` | 2.3.0 | bumped: the runtime registry and the `Lang` type gained Rust |
+| `capture/rust/Cargo.toml` (`flowtrace`, `flowtrace-tracing`, `flowtrace-rust`) | 0.1.0 | new, `publish = false`, MSRV 1.81 |
+| `capture/node/package.json` | 2.2.0 | unchanged |
+| `capture/python/pyproject.toml` and `flowtrace_runtime/__init__.py` | 2.2.0 | unchanged |
+| `capture/java/flowtrace-otel-extension/pom.xml` | 2.2.0 | unchanged |
+| `capture/go/go.mod` | — | no version: a module path only, unchanged |
+| `capture/browser/package.json` (`@rixmerz/flowtrace-browser`) | 2.3.0 | unchanged |
+| `flowtrace-dashboard/package.json` | 2.2.0 | unchanged |
+| `scripts/package.json` | 0.0.0 | private, unchanged |
+| `schema/flowtrace-v2.json` | 2.0.0 | the contract version is unchanged; its `lang` enum gained `rust` |
+
+### Added
+
+- **Rust is a supported runtime** (`capture/rust`, `lang: "rust"` in schema v2).
+  `flowtrace run -- cargo run|build|test` builds your workspace through a
+  `RUSTC_WORKSPACE_WRAPPER`: each workspace crate's `src/` is mirrored into a
+  shadow tree, a span guard is byte-spliced into every function body (line
+  numbers unchanged) and the result is compiled with a dependency-free runtime
+  crate linked in. Your source tree and manifests are never written to. A
+  returned `Err` (including one propagated by `?`) and a panic both become the
+  exit's `error`. `FLOWTRACE_TRACEPARENT` is honoured, and
+  `flowtrace::remote_context` / `current_traceparent` cover FFI and thread hops
+  by hand; inbound HTTP and outbound calls are not automatic. A Python-to-Rust
+  test asserts one `trace_id` across the two processes.
+- **`flowtrace-tracing`**: a `tracing_subscriber::Layer` that writes the same
+  events, for programs that already use `tracing`.
+- The Rust layer follows the truncation and redaction rules the other layers
+  were aligned to in 4.0.0: `FLOWTRACE_MAX_ARG_LENGTH` applies to `args` and
+  `result` independently, on the JSON form, with the `<truncated:{first N}...>`
+  marker; `FLOWTRACE_REDACT_KEYS` extends the built-in list; a redacted
+  argument is never formatted; and a field or map key inside a value's `Debug`
+  text that matches the list is redacted at any depth, in arguments and
+  results, before truncation. Like Go, it counts bytes of the JSON rather than
+  characters. `capture.maxArgLength`, `capture.redactKeys` and
+  `capture.packagePrefix` from `.flowtrace/config.json` reach it through
+  `flowtrace run`, and `flowtrace run -- cargo ...` now selects the Rust layer
+  from the command itself, as it does for the other runtimes.
+- Golden fixtures `rust` (two-crate workspace) and `tracing/rust`; `make
+  build-rust` / `make test-rust`; CI jobs for both plus a minimum-version build.
+- `benchmarks/rust`: ns-per-call overhead. Measured: about 300 ns per traced call
+  with no values, 450-540 ns with an argument and a result, 12 ns once the
+  100000-event cap is reached. Narrow the prefix and use `--release` to profile.
+
 ### Fixed
 
+- **The stated Rust MSRV was 1.70, not 1.81.** The runtime crate needs 1.81
+  (`PanicHookInfo`), so `flowtrace://runtimes` would have told an agent that a
+  1.75 toolchain was supported. `runtimes.ts` now says 1.81, and
+  `docs/architecture.md` lists `rust` in the `lang` enum the schema allows.
+- **Panic columns were wrong for one-line functions.** The prologue was spliced
+  after the body's opening brace, which moved any code sharing that line: a
+  panic reported column 208 instead of 24 in the message and `error.stack`.
+  Splicing keeps line numbers but cannot keep columns for code on the brace
+  line, so a one-line body is now left uninstrumented and the driver says so.
+  rustfmt-formatted code is unaffected.
 - **The Java build tested, and could ship, the previous release's jar.** `mvn
   package` does not clean `target/`, so after a version bump the old shaded jar
   is still sitting there — and every one of the four places that located it

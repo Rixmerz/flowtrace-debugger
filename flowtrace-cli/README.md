@@ -1,6 +1,6 @@
 # @rixmerz/flowtrace
 
-Trace what your program actually did — Java, Python, Node, TypeScript and Go —
+Trace what your program actually did — Java, Python, Node, TypeScript, Go and Rust —
 and read the result with an AI agent instead of guessing from source.
 
 ```bash
@@ -10,6 +10,7 @@ flowtrace run -- python app.py
 flowtrace run -- node server.js
 flowtrace run -- java -jar app.jar
 flowtrace run -- go run ./cmd/api      # go build and go test work too
+flowtrace run -- cargo run             # cargo build and cargo test work too
 ```
 
 That is the whole setup. **No Maven, no pip, no clone.**
@@ -21,11 +22,12 @@ That is the whole setup. **No Maven, no pip, no clone.**
 | Node.js | 20.6+ | `module.register()` landed there; below it the CLI refuses rather than tracing nothing |
 | TypeScript | 5+ on Node 20.6+ | Same loaders as Node; events carry `lang: "ts"` |
 | Go | 1.24+ | Source rewrite before compilation via `go build -overlay`. **Your tree is never written to**, and you must never `import` `flowtracert` yourself — it only exists during an instrumented build, so importing it breaks a plain `go build`. |
+| Rust | 1.81+, Unix hosts | A `rustc` wrapper that splices spans into a shadow copy of each workspace crate. **Your tree and manifests are never written to.** Builds with your own `cargo` (it compiles the runtime crate and the driver on first use), so it is the one runtime that needs its toolchain installed. |
 
 ## Why one package
 
 The capture layers ship inside this package: the Python runtime as plain `.py`
-files placed on `PYTHONPATH` (it needs no installation at all), the Node, Go
+files placed on `PYTHONPATH` (it needs no installation at all), the Node, Go, Rust
 and browser layers as source, and the Java extension as its shaded jar. One `npm i`
 therefore installs every runtime's capture at once, and — more importantly —
 they can never drift out of version with each other, which matters because all
@@ -57,7 +59,7 @@ a module into someone's bundler graph.
 The prefix matters more than it sounds, since without one every framework and
 stdlib call lands in the trace. What it matches depends on the runtime: a
 package/module name in Java, Python and Go (`com.acme`, `myapp`,
-`github.com/acme/svc`), and a **path** in Node and TypeScript, where the layer
+`github.com/acme/svc`), a crate name in Rust (`my_crate`), and a **path** in Node and TypeScript, where the layer
 tests it against the file's path.
 
 Output goes to `.flowtrace/<timestamp>.jsonl` — one JSON object per line,
@@ -97,6 +99,7 @@ looks exactly like a healthy one until you compare ids:
 | Node / TS | automatic (the HTTP server edge is patched), plus `FLOWTRACE_TRACEPARENT` | automatic (`fetch`, `http`/`https`, child processes, workers) |
 | Go | automatic for `func(http.ResponseWriter, *http.Request)`, plus `FLOWTRACE_TRACEPARENT` | **manual**, and only from instrumented code — `net/http` resolves at compile time, so there is no seam to patch |
 | Python | `FLOWTRACE_TRACEPARENT` only — an inbound HTTP header is **not** adopted on its own; wrap the request in `flowtrace_runtime.remote_context(header)` | **manual** — `flowtrace_runtime.current_traceparent()` |
+| Rust | `FLOWTRACE_TRACEPARENT` only, read once at the first span — an inbound HTTP header is **not** adopted on its own; call `flowtrace::remote_context` | **manual** — `flowtrace::current_traceparent()`. A span started on a new thread is a root with a new `trace_id` |
 
 ## Developing
 

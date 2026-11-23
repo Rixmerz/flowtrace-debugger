@@ -18,7 +18,7 @@ import {
 } from "./trace-tools";
 import { renderRuntimes } from "./runtimes";
 
-const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.2.0" });
+const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.3.0" });
 
 /**
  * Open sessions, newest-touched last.

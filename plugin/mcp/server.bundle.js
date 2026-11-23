@@ -21576,7 +21576,7 @@ function renderRuntimes() {
 }
 
 // src/server.ts
-var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.2.0" });
+var mcp = new McpServer({ name: "flowtrace-mcp", version: "2.3.0" });
 var sessions = /* @__PURE__ */ new Map();
 var MAX_REMEMBERED_IDS = 1e3;
 var RecentIds = class {
