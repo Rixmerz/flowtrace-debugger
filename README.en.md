@@ -82,12 +82,14 @@ flowtrace run -- cargo run --release
 Needs `cargo` on a Unix host (the build uses your own toolchain, Rust 1.81+).
 Instrumentation happens at build time through a `rustc` wrapper: a rewritten
 copy of each workspace crate's `src/` is what gets compiled, so your source tree
-is never written to. The package prefix is derived from the workspace (`kerno`
-covers `kerno_core` and `kerno_storage`); give a longer one, such as
-`--package-prefix kerno_storage::wal`, to trace one module of a hot path.
-`async fn`, `const fn` and `#[test]` code are not instrumented; a returned
-`Err` and a panic both become the call's `error`. A program that already uses
-`tracing` can add the `flowtrace-tracing` layer to its own subscriber instead.
+is never written to. The package prefix is derived from the workspace (`app`
+covers `app_core` and `app_cli`); give a longer one, such as
+`--package-prefix app::engine`, to trace one module of a hot path.
+`async fn`, `const fn` and `#[test]` code are not instrumented, and neither is a
+function whose body sits on the same line as its braces, so panic columns stay
+exact; `rustfmt` splits it. A returned `Err` and a panic both become the call's
+`error`. A program that already uses `tracing` can add the `flowtrace-tracing`
+layer to its own subscriber instead.
 Design, limits and measured overhead: `docs/changes/2026-11-22-rust-capture-layer.md`.
 
 ### Where the trace lands
@@ -234,7 +236,7 @@ If you use v1 logs (`ENTER`/`EXIT`, `durationMicros`), see:
 ## Development
 
 Prerequisites: Node ≥ 20.6, pnpm 9.15.4 (`corepack enable`), JDK 21+, Maven 3.9+,
-Python ≥ 3.9, Go ≥ 1.24. The first Java test downloads ~24 MB (the OTel agent,
+Python ≥ 3.9, Go ≥ 1.24, Rust ≥ 1.81 (`cargo`). The first Java test downloads ~24 MB (the OTel agent,
 verified against a pinned sha256).
 
 ```bash

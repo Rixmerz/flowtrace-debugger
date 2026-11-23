@@ -76,18 +76,20 @@ Requiere Go 1.24+. La instrumentacion ocurre antes de compilar (via `go build
 ### Rust
 ```bash
 flowtrace run -- cargo run --release
-# `cargo build` and `cargo test` work too
+# `cargo build` y `cargo test` también funcionan
 ```
-Needs `cargo` on a Unix host (the build uses your own toolchain, Rust 1.81+).
-Instrumentation happens at build time through a `rustc` wrapper: a rewritten
-copy of each workspace crate's `src/` is what gets compiled, so your source tree
-is never written to. The package prefix is derived from the workspace (`kerno`
-covers `kerno_core` and `kerno_storage`); give a longer one, such as
-`--package-prefix kerno_storage::wal`, to trace one module of a hot path.
-`async fn`, `const fn` and `#[test]` code are not instrumented; a returned
-`Err` and a panic both become the call's `error`. A program that already uses
-`tracing` can add the `flowtrace-tracing` layer to its own subscriber instead.
-Design, limits and measured overhead: `docs/changes/2026-11-22-rust-capture-layer.md`.
+Requiere `cargo` en un host Unix; la compilación usa tu propio toolchain, Rust 1.81+.
+La instrumentación ocurre en tiempo de compilación mediante un wrapper de `rustc`:
+se compila una copia reescrita del `src/` de cada crate del workspace, así que tu
+árbol de fuentes nunca se modifica. El prefijo de paquete se deriva del workspace
+(`app` cubre `app_core` y `app_cli`). Para trazar un solo módulo de un camino
+caliente, usa un prefijo más largo, por ejemplo `--package-prefix app::engine`.
+`async fn`, `const fn` y el código `#[test]` no se instrumentan. Una función con
+el cuerpo en la misma línea que sus llaves tampoco se instrumenta, para no
+desplazar las columnas del `panic`; `rustfmt` la separa. Un `Err` devuelto y un
+`panic` quedan ambos como `error` de la llamada. Un programa que ya usa `tracing`
+puede añadir la capa `flowtrace-tracing` a su propio subscriber en su lugar.
+Diseño, límites y overhead medido: `docs/changes/2026-11-22-rust-capture-layer.md`.
 
 ### Dónde queda la traza
 
@@ -144,15 +146,15 @@ instrumentado, así que importarlo rompería tu `go build` normal. Para la
 salida, la propagación se adjunta a mano desde código ya instrumentado — no hay
 dónde engancharse, `net/http` se resuelve en tiempo de compilación.
 
-Rust reads `FLOWTRACE_TRACEPARENT` once at startup: every root span of the
-process joins that trace, parented to the span that launched it. There is no HTTP
-seam. A Rust library called in-process over FFI must wrap the call in
-`flowtrace::remote_context(header)` with a header the caller hands it, otherwise
-its roots hang off the process-level span, not the calling frame. A span started
-on a new thread (`std::thread::spawn`, `tokio::spawn`) is a root with a new
-`trace_id`: carry `flowtrace::current_traceparent()` across and open
-`remote_context` there. `capture/rust/flowtrace-rust/tests/cross_process.rs`
-asserts the Python-to-Rust hop on two real processes.
+Rust lee `FLOWTRACE_TRACEPARENT` una sola vez al arrancar: cada span raíz del
+proceso se une a esa traza, con padre el span que lo lanzó. No hay seam HTTP.
+Una biblioteca Rust llamada en proceso por FFI tiene que envolver la llamada en
+`flowtrace::remote_context(header)` con un header que le pase el llamador; si no,
+sus raíces cuelgan del span del proceso, no del marco que hizo la llamada. Un span
+iniciado en un hilo nuevo (`std::thread::spawn`, `tokio::spawn`) es una raíz con
+un `trace_id` nuevo: pasa `flowtrace::current_traceparent()` y abre
+`remote_context` allí. `capture/rust/flowtrace-rust/tests/cross_process.rs`
+verifica el salto Python-a-Rust entre dos procesos reales.
 
 ### Verificar que la cadena quedó unida
 
@@ -234,7 +236,7 @@ Si usas logs v1 (`ENTER`/`EXIT`, `durationMicros`), consulta:
 ## Desarrollo
 
 Requisitos: Node ≥ 20.6, pnpm 9.15.4 (`corepack enable`), JDK 21+, Maven 3.9+,
-Python ≥ 3.9, Go ≥ 1.24. La primera prueba de Java descarga ~24 MB (el agente
+Python ≥ 3.9, Go ≥ 1.24, Rust ≥ 1.81 (`cargo`). La primera prueba de Java descarga ~24 MB (el agente
 OTel, verificado por sha256).
 
 ```bash
