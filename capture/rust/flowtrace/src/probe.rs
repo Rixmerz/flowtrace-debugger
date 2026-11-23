@@ -122,7 +122,13 @@ pub fn render_debug<T: Debug + ?Sized>(v: &T, out: &mut String) {
     if cfg.is_redacted(&out[start..]) {
         redact_rendered(out, start, !overflowed, &|k| cfg.is_redacted(k));
     }
-    truncate_from(out, start, max());
+    if overflowed {
+        // The text was cut at the limit, so the value is truncated even when
+        // redaction then shortened what is left to under it.
+        crate::json::force_truncate_from(out, start, max());
+    } else {
+        truncate_from(out, start, max());
+    }
 }
 
 #[doc(hidden)]

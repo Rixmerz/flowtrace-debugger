@@ -71,7 +71,14 @@ pub fn truncate_from(out: &mut String, start: usize, max: usize) {
     if max == 0 || out.len() - start <= max {
         return;
     }
-    let mut cut = start + max;
+    force_truncate_from(out, start, max);
+}
+
+/// [`truncate_from`] for a value known to have been cut short already: the
+/// marker is written even when `out[start..]` is within `max`. An unterminated
+/// string (a cut that left the closing quote off) is never left behind.
+pub(crate) fn force_truncate_from(out: &mut String, start: usize, max: usize) {
+    let mut cut = if max == 0 { out.len() } else { (start + max).min(out.len()) };
     while !out.is_char_boundary(cut) {
         cut -= 1;
     }
@@ -307,6 +314,15 @@ mod tests {
         let mut out = String::from("\"S { password: \\\"x\\ny\\\", n: 1 }\"");
         redact_rendered(&mut out, 0, true, &red);
         assert_eq!(out, "\"S { password: \\\"<redacted>\\\", n: 1 }\"");
+    }
+
+    #[test]
+    fn a_cut_value_stays_valid_json_when_redaction_shortens_it() {
+        let red = |k: &str| k == "password";
+        let mut out = String::from("\"Login { user: \\\"ann\\\", password: \\\"xxxxxxxxxxxxxxxx");
+        redact_rendered(&mut out, 0, false, &red);
+        force_truncate_from(&mut out, 0, 40);
+        assert!(out.starts_with("\"<truncated:") && out.ends_with("...>\""), "{out}");
     }
 
     #[test]

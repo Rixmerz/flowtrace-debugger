@@ -32,6 +32,7 @@ Every manifest in the repository, so none is left to be guessed:
 | `flowtrace-dashboard/package.json` | 2.2.0 | unchanged |
 | `scripts/package.json` | 0.0.0 | private, unchanged |
 | `schema/flowtrace-v2.json` | 2.0.0 | the contract version is unchanged; its `lang` enum gained `rust` |
+| Fixtures, examples and benchmark crates (`benchmarks/rust`, `examples/**/package.json`, `examples/golden/**/Cargo.toml`, `capture/rust/flowtrace-rust/tests/{corpus,xproc}`) | — | not released, unchanged |
 
 ### Added
 
