@@ -148,3 +148,13 @@ pub(crate) fn write_line(line: &str, root_exit: bool) {
 pub fn flush() {
     lock().flush();
 }
+
+/// Test support: flushes, then runs `f` with the sink lock still held, so a
+/// reader of the trace file cannot overlap another thread's `write(2)`. The
+/// kernel lets a plain `read` observe a multi-line append half done.
+#[cfg(test)]
+pub(crate) fn flushed<R>(f: impl FnOnce() -> R) -> R {
+    let mut s = lock();
+    s.flush();
+    f()
+}

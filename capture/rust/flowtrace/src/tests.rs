@@ -23,10 +23,11 @@ fn setup() -> std::path::PathBuf {
 /// Events whose `method` starts with `prefix`, in file order.
 fn events(prefix: &str) -> Vec<Value> {
     let path = setup();
-    crate::flush();
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
+    // Read under the sink lock: another test thread's flush is a single `write(2)`
+    // of several lines, and a reader that overlaps it can see the file cut
+    // mid-line (the "EOF while parsing a string" flake).
+    let text = crate::sink::flushed(|| std::fs::read_to_string(&path).unwrap_or_default());
+    text.lines()
         .map(|l| serde_json::from_str::<Value>(l).expect("every line is valid JSON"))
         .filter(|e| e["method"].as_str().is_some_and(|m| m.starts_with(prefix)))
         .collect()
@@ -298,4 +299,56 @@ fn spans_on_new_threads_are_roots_with_their_own_thread_name() {
     let child = ev.iter().find(|e| e["method"] == "thr_child").unwrap();
     assert_eq!(child["thread"], "worker-x");
     assert_eq!(child["parent_id"], Value::Null, "no ambient context across threads");
+}
+
+/// Hammers the file with flushes from one thread while another reads it the way
+/// `events` does. Without the sink lock around the read, the reader sees a
+/// half-written buffer (a tail that does not end in a newline) in most runs.
+#[test]
+fn a_reader_never_sees_a_half_written_flush() {
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer_done = done.clone();
+    let writer = std::thread::spawn(move || {
+        for _ in 0..100 {
+            for _ in 0..3 {
+                traced!("rw_outer", [("n", 1i32)], (), {
+                    traced!("rw_inner", [("n", 2i32)], (), {});
+                });
+            }
+            crate::flush();
+        }
+        writer_done.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let path = setup();
+    while !done.load(std::sync::atomic::Ordering::SeqCst) {
+        let text = crate::sink::flushed(|| std::fs::read_to_string(&path).unwrap_or_default());
+        assert!(text.is_empty() || text.ends_with('\n'), "a reader saw a partial line");
+    }
+    writer.join().unwrap();
+}
+
+/// Deterministic: while one thread holds the sink lock, `flushed` must wait.
+#[test]
+fn flushed_waits_for_whoever_holds_the_sink_lock() {
+    use std::sync::{mpsc, Arc};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    setup();
+    let (locked_tx, locked_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        crate::sink::flushed(|| {
+            locked_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+    });
+    locked_rx.recv().unwrap();
+    let entered = Arc::new(AtomicBool::new(false));
+    let flag = entered.clone();
+    let reader = std::thread::spawn(move || crate::sink::flushed(|| flag.store(true, Ordering::SeqCst)));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!entered.load(Ordering::SeqCst), "the reader got in while the lock was held");
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    reader.join().unwrap();
+    assert!(entered.load(Ordering::SeqCst));
 }
