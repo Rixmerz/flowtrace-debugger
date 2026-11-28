@@ -1,5 +1,6 @@
 package io.flowtrace.advice;
 
+import io.flowtrace.emitter.CaptureGuard;
 import io.flowtrace.emitter.ErrorInfo;
 import io.flowtrace.emitter.FlowtraceEmitter;
 import io.flowtrace.emitter.TraceEvent;
@@ -76,6 +77,10 @@ public class FlowtraceAdvice {
             @Advice.Local("flowtraceSpanId")  String spanId,
             @Advice.Local("flowtraceArgs")    Map<String, Object> args
     ) {
+        // The tracer is rendering a value (a toString() on a user object): not a
+        // call of the program. Same answer at enter and exit of the same call,
+        // since both sit inside the same serialisation.
+        if (CaptureGuard.active()) return;
         try {
             depth = DepthTracker.enterAndGet();
 
@@ -156,6 +161,7 @@ public class FlowtraceAdvice {
             @Advice.Local("flowtraceSpanId")  String spanId,
             @Advice.Local("flowtraceArgs")    Map<String, Object> args
     ) {
+        if (CaptureGuard.active()) return;
         try {
             long durationNs = System.nanoTime() - startNanos;
             int exitDepth   = DepthTracker.exitAndGet();

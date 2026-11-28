@@ -11,6 +11,22 @@ independently; each release names them.
 
 ### Fixed
 
+- **`flowtrace run -- mvn test` (and Gradle) now traces the forked test JVM.**
+  The agent was injected through `MAVEN_OPTS`, which only reaches Maven's own
+  JVM; surefire forks another one and the trace came out empty with no
+  message. Maven and Gradle now get `JAVA_TOOL_OPTIONS` (appended to any value
+  already set), which every child JVM inherits. A Java run that ends with a
+  missing or empty trace prints a warning naming the likely causes.
+- **`flowtrace init` on a Maven project no longer picks the parent POM's
+  groupId** (`org.springframework.boot` for a Spring Boot app). It uses the
+  project's own groupId, narrowed to the longest common package of
+  `src/main/java` when the code lives deeper, and falls back to that common
+  package when the POM has no groupId of its own.
+- **Java capture no longer records the tracer's own `toString()` calls as
+  spans.** Rendering args/results calls `toString()` on user objects, which are
+  instrumented too, producing false caller -> callee edges. A per-thread
+  `CaptureGuard` now suppresses advice while serialising (as Python does).
+
 - **`flowtrace run -o <relative path>` no longer loses the trace when the traced
   command changes directory.** The path was handed to the capture layer as
   written and resolved in the child's working directory. `run` now resolves

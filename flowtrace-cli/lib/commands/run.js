@@ -47,9 +47,10 @@ function exitStatusFor(code, signal) {
 }
 
 /** Waits for the child and exits with the status the shell would report. */
-function exitWithChild(child) {
+function exitWithChild(child, onClose) {
   return new Promise((resolve) => {
     child.on('close', (code, signal) => {
+      if (onClose) onClose();
       if (signal) {
         console.error(chalk.yellow('Aviso:'), `el proceso terminó por señal ${signal}.`);
       }
@@ -115,12 +116,13 @@ function buildJavaInjection({ otelAgent, flExt, prefix, outPath, strategy, userA
   const optsFlags = jvmFlags.map(quoteJvmFlag).join(' ');
 
   // Explicit strategy overrides
-  if (strategy === 'mvn') {
-    const existing = env.MAVEN_OPTS || '';
-    env.MAVEN_OPTS = (existing + ' ' + optsFlags).trim();
-    return { cmd: first, args: rest, env };
-  }
-  if (strategy === 'gradle') {
+  // Maven and Gradle fork the JVMs that run the tests (surefire/failsafe, Gradle
+  // test workers). MAVEN_OPTS / GRADLE_OPTS only reach the build tool's own JVM,
+  // so the agent never loaded where the code under test runs and the trace came
+  // out empty. JAVA_TOOL_OPTIONS is inherited by every child JVM and, unlike a
+  // surefire `argLine`, composes with whatever the user already configured
+  // (JaCoCo). Any existing value is kept and ours appended.
+  if (strategy === 'mvn' || strategy === 'gradle') {
     const existing = env.JAVA_TOOL_OPTIONS || '';
     env.JAVA_TOOL_OPTIONS = (existing + ' ' + optsFlags).trim();
     return { cmd: first, args: rest, env };
@@ -133,12 +135,7 @@ function buildJavaInjection({ otelAgent, flExt, prefix, outPath, strategy, userA
     // Splice flags immediately after "java", before any -jar / main class
     return { cmd: first, args: [...jvmFlags, ...rest], env };
   }
-  if (bin === 'mvn' || bin === 'mvnw') {
-    const existing = env.MAVEN_OPTS || '';
-    env.MAVEN_OPTS = (existing + ' ' + optsFlags).trim();
-    return { cmd: first, args: rest, env };
-  }
-  if (bin === 'gradle' || bin === 'gradlew') {
+  if (bin === 'mvn' || bin === 'mvnw' || bin === 'gradle' || bin === 'gradlew') {
     const existing = env.JAVA_TOOL_OPTIONS || '';
     env.JAVA_TOOL_OPTIONS = (existing + ' ' + optsFlags).trim();
     return { cmd: first, args: rest, env };
@@ -397,7 +394,23 @@ async function runJava({ options, restArgs, cwd, outPath, config = {} }) {
   // 6. Forward SIGINT so child can flush JSONL
   process.on('SIGINT', () => child.kill('SIGINT'));
 
-  return exitWithChild(child);
+  return exitWithChild(child, () => warnIfJavaTraceEmpty(outPath));
+}
+
+/**
+ * A Java run that wrote nothing looks exactly like a run that worked. Say so.
+ * @returns {boolean} true when a warning was printed
+ */
+function warnIfJavaTraceEmpty(outPath) {
+  let size = 0;
+  try { size = fs.statSync(outPath).size; } catch { /* missing = empty */ }
+  if (size > 0) return false;
+  console.error(chalk.yellow('Aviso:'), `la traza está vacía o no existe: ${outPath}`);
+  console.error(chalk.gray('  Causas probables:'));
+  console.error(chalk.gray('  - el package prefix no coincide con ninguna clase ejecutada (revisa --package-prefix)'));
+  console.error(chalk.gray('  - el código corre en una JVM hija (surefire, test workers de Gradle) que no heredó el agente'));
+  console.error(chalk.gray('  - el comando no llegó a ejecutar código Java (p. ej. pruebas ya en caché)'));
+  return true;
 }
 
 // ---------- Python injection ----------
@@ -831,6 +844,7 @@ async function runRust({ options, restArgs, cwd, outPath, config = {} }) {
 
 // Export internals for testing
 runCommand._buildJavaInjection = buildJavaInjection;
+runCommand._warnIfJavaTraceEmpty = warnIfJavaTraceEmpty;
 runCommand._buildNodeEnv = buildNodeEnv;
 runCommand._ensureGitignore = ensureGitignore;
 runCommand._exitStatusFor = exitStatusFor;
