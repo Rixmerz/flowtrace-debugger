@@ -51,6 +51,7 @@ a module into someone's bundler graph.
 | `flowtrace init` | Detect the project type and write `.flowtrace/config.json` |
 | `flowtrace run -- <cmd>` | Run a command under instrumentation |
 | `flowtrace analyze` | Open the trace in the dashboard |
+| `flowtrace diff <base> <current>` | Compare the behaviour of two traces of the same flow (exit 0 same, 1 different, 2 error) |
 
 `run` auto-detects the language and the package prefix, and honours what
 `init` wrote to `.flowtrace/config.json` (`capture.packagePrefix`,

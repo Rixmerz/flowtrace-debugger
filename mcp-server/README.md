@@ -35,7 +35,8 @@ the returned `sessionId`; every other tool takes that id.
 | `trace_tree` | Rebuild the call tree for one `trace_id` from `parent_id` links |
 | `trace_find_error` | First failing call, with the path from the root down to it |
 | `trace_private_calls` | Calls whose `visibility` is not public — what the public API did internally |
-| `trace_diff` | Compare two traces: calls only in one, and duration deltas |
+| `trace_diff` | Compare two traces by timing: calls only in one, and duration deltas |
+| `trace_behavior_diff` | Characterisation check: compare two sessions' behaviour (args, results, errors, call structure). Params: `sessionId_a` (baseline), `sessionId_b`, `ignore_methods`, `ignore_keys`, `ignore_order`, `compare_error_msg`, `limit` |
 
 `trace_find_error` looks for an `exit` event carrying a top-level `error`.
 Schema v2 has no `event: "error"` variant.

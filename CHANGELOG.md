@@ -11,6 +11,22 @@ independently; each release names them.
 
 ### Added
 
+- **Behavioural trace comparison** — a characterisation (golden-master) check.
+  `trace_behavior_diff` (MCP) and `flowtrace diff <base> <current>` (CLI) align
+  the two call trees (identity `lang|module|class|method`, sibling lists by a
+  bounded LCS) and report exact counts plus bounded samples of calls
+  added/removed/reordered, changed args, changed result for the same args,
+  errors appearing/disappearing/changing type, and per-method count changes.
+  `ts`, durations, ids, threads and `file`/`line` are ignored; `<redacted>`
+  compares equal, `<truncated:…>` compares by prefix and is flagged, identity
+  hashes and memory addresses are normalised. Ignores: `ignore_methods` globs,
+  `ignore_keys`, `ignore_order`. The CLI exits 0 same / 1 different / 2 usage,
+  I/O error or incomplete comparison, reads default ignores from
+  `characterisation.json` (next to the baseline, or in `.flowtrace/`), and
+  `--json` prints the MCP tool's object. The CLI runs a committed bundle
+  (`flowtrace-cli/vendor/trace-diff/`, `make bundle-diff`, checked by
+  `make check-bundle`). `trace_diff` is unchanged. See
+  `docs/en/characterisation-with-traces.md`.
 - **`file` and `line` on `enter` events**, in every file-writing capture layer
   (Java, Python, Node/TypeScript, Go, Rust). Both are optional in
   `schema/flowtrace-v2.json`, so a trace written before this change still

@@ -54,7 +54,8 @@ When the FlowTrace plugin is installed its MCP server provides:
 | `trace_tree` | Rebuild the nested call tree for one `trace_id` |
 | `trace_find_error` | Locate a failing span and walk its parents back to the root |
 | `trace_private_calls` | Just the private-method calls |
-| `trace_diff` | Compare two runs — spans only in one, duration deltas |
+| `trace_diff` | Compare two runs by timing — spans only in one, duration deltas |
+| `trace_behavior_diff` | Compare two runs by behaviour — args, results, errors, call structure; verdict `same`/`different` |
 
 It also serves one resource, **`flowtrace://runtimes`** — which runtimes are
 supported, their minimum versions, how each is invoked, where the package
@@ -86,6 +87,16 @@ before drawing any conclusion: the parent did not do the work.
 **For a regression:** capture a trace on the good revision and one on the bad,
 then `trace_diff`. Spans present in only one run tell you about changed control
 flow; large duration deltas tell you about changed cost.
+
+**For "did my refactor change behaviour":** `trace_behavior_diff` (A = baseline,
+B = current), not `trace_diff`, which sees neither arguments nor results. Read
+`verdict` only together with `complete` (false means a cap left part
+uncompared, so "same" is unproven) and `truncated_values` (equal only up to a
+capture-truncated prefix). Name volatile fields with `ignore_keys` /
+`ignore_methods` rather than discounting a difference by eye. If the traces span
+several threads and differ only by added/removed/reordered calls, retry with
+`ignore_order: true` before calling it a regression. From a shell:
+`flowtrace diff base.jsonl current.jsonl` (exit 0 same, 1 different, 2 error).
 
 **For "what actually ran":** `trace_tree` on the relevant `trace_id` and read
 it top-down. This is the cheapest way to discover that the code you were

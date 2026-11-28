@@ -8,7 +8,7 @@
         build-go test-go \
         build-rust test-rust \
         build-mcp test-mcp test-browser test-dashboard test-cli bundle-mcp check-bundle check-docs \
-        bundle-dashboard clean help
+        bundle-dashboard bundle-diff clean help
 
 help:
 	@echo "FlowTrace v2 — top-level targets:"
@@ -21,6 +21,7 @@ help:
 	@echo "  make build-mcp        Install + compile mcp-server (tsc -> dist/)"
 	@echo "  make bundle-mcp       Rebuild plugin/mcp/server.bundle.js from mcp-server/src"
 	@echo "  make bundle-dashboard Rebuild flowtrace-cli/vendor/dashboard from flowtrace-dashboard/server"
+	@echo "  make bundle-diff      Rebuild flowtrace-cli/vendor/trace-diff from mcp-server/src/behavior-diff.ts"
 	@echo "  make check-bundle     Verify the committed bundles are current and boot standalone"
 	@echo "  make test             Full suite: schema + golden + java + python + node + go + rust + browser + mcp + dashboard + cli"
 	@echo "  make test-java        Run JUnit 5 tests for the Java capture module"
@@ -163,6 +164,13 @@ bundle-dashboard:
 	@echo "==> bundle-dashboard: flowtrace-cli/vendor/dashboard"
 	@cd flowtrace-cli && pnpm install --silent && pnpm run bundle:dashboard
 
+# `flowtrace diff` runs the same comparison as the MCP tool trace_behavior_diff,
+# from the same source (mcp-server/src/behavior-diff.ts), and for the same
+# reason as the dashboard it has to travel inside the CLI package as a bundle.
+bundle-diff:
+	@echo "==> bundle-diff: flowtrace-cli/vendor/trace-diff"
+	@cd flowtrace-cli && pnpm install --silent && pnpm run bundle:diff
+
 # Fails when a committed bundle no longer matches the source it was built
 # from. Without this, the plugin or the packaged CLI silently ships whatever
 # the bundle happened to contain the last time someone remembered to rebuild
@@ -171,7 +179,7 @@ check-docs: build-mcp
 	@echo "==> check-docs: READMEs restate the authoritative runtime list"
 	@node scripts/check-docs.mjs
 
-check-bundle: bundle-mcp bundle-dashboard
+check-bundle: bundle-mcp bundle-dashboard bundle-diff
 	@echo "==> check-bundle: committed bundles match source"
 	@git diff --exit-code --stat -- plugin/mcp/server.bundle.js \
 	  || { echo "ERROR: plugin/mcp/server.bundle.js is stale. Run 'make bundle-mcp' and commit."; exit 1; }
@@ -179,6 +187,10 @@ check-bundle: bundle-mcp bundle-dashboard
 	  || { echo "ERROR: flowtrace-cli/vendor/dashboard is stale. Run 'make bundle-dashboard' and commit."; exit 1; }
 	@[ -z "$$(git status --porcelain -- flowtrace-cli/vendor/dashboard flowtrace-cli/schema | grep '^??')" ] \
 	  || { echo "ERROR: flowtrace-cli/vendor/dashboard or flowtrace-cli/schema has untracked files. Run 'make bundle-dashboard' and 'git add' them."; exit 1; }
+	@git diff --exit-code --stat -- flowtrace-cli/vendor/trace-diff \
+	  || { echo "ERROR: flowtrace-cli/vendor/trace-diff is stale. Run 'make bundle-diff' and commit."; exit 1; }
+	@git ls-files --error-unmatch flowtrace-cli/vendor/trace-diff/behavior-diff.bundle.js >/dev/null 2>&1 \
+	  || { echo "ERROR: flowtrace-cli/vendor/trace-diff/behavior-diff.bundle.js is not tracked. Run 'make bundle-diff' and 'git add' it."; exit 1; }
 	@node scripts/check-plugin.mjs
 
 test-dashboard:
