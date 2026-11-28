@@ -277,7 +277,10 @@ async function runCommand(options = {}, restArgs = []) {
   const outDir = path.join(cwd, '.flowtrace');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+Z$/, 'Z');
-  const outPath = options.out || path.join(outDir, `${stamp}.jsonl`);
+  // Absolute, against the directory `flowtrace run` started in: a relative path
+  // handed on to the capture layer is resolved in the child's cwd, so a traced
+  // command that does `cd` wrote the trace somewhere else and it looked lost.
+  const outPath = path.resolve(cwd, options.out || config.output || path.join(outDir, `${stamp}.jsonl`));
 
   // The capture layers APPEND to the output file (several processes of one run
   // share it), so a second run into the same name doubled the trace and made a
@@ -286,8 +289,8 @@ async function runCommand(options = {}, restArgs = []) {
   // child process starts.
   if (!options.append) {
     try {
-      fs.mkdirSync(path.dirname(path.resolve(cwd, outPath)), { recursive: true });
-      if (fs.existsSync(path.resolve(cwd, outPath))) fs.writeFileSync(path.resolve(cwd, outPath), '');
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      if (fs.existsSync(outPath)) fs.writeFileSync(outPath, '');
     } catch (err) {
       console.error(chalk.red('Error:'), `No se pudo vaciar ${outPath}: ${err.message}`);
       process.exit(2);

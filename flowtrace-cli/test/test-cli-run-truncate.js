@@ -63,5 +63,22 @@ test('--append keeps what is there and adds to it', () => {
   assert.equal(run(d, ['--append']), first * 2, '--append must add to the existing trace');
 });
 
+// A relative -o must be resolved where `flowtrace run` was started, not in the
+// traced command's cwd: a child that `cd`s used to write the trace elsewhere.
+test('relative --out lands in the starting directory when the child changes directory', () => {
+  const d = nodeProject();
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-chdir-'));
+  fs.writeFileSync(path.join(d, 'chdir.js'),
+    `function evaluate(n) { return { n }; }\nprocess.chdir(${JSON.stringify(other)});\nevaluate(1);\n`);
+  const r = spawnSync(process.execPath, [BIN, 'run', '--lang', 'node', '--out', 'rel/trace.jsonl', '--', 'node', 'chdir.js'], {
+    cwd: d, encoding: 'utf8', timeout: 60000, env: { ...process.env, NODE_OPTIONS: '' },
+  });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const expected = path.join(d, 'rel', 'trace.jsonl');
+  assert.ok(fs.existsSync(expected), `trace missing at ${expected}`);
+  assert.ok(fs.readFileSync(expected, 'utf8').includes('evaluate'), 'trace must hold the call');
+  assert.ok(!fs.existsSync(path.join(other, 'rel', 'trace.jsonl')), 'trace must not land in the child cwd');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

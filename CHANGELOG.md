@@ -11,6 +11,13 @@ independently; each release names them.
 
 ### Fixed
 
+- **`flowtrace run -o <relative path>` no longer loses the trace when the traced
+  command changes directory.** The path was handed to the capture layer as
+  written and resolved in the child's working directory. `run` now resolves
+  `-o` (and a `config.json` `output`) against the directory it was started in,
+  before truncating and spawning, and passes the absolute path as
+  `FLOWTRACE_OUTPUT`.
+
 - **`flowtrace run -o <file>` starts from an empty file.** The capture layers
   append (several processes of one run share the file), so a second run into
   the same name doubled the trace and a later `flowtrace diff` reported a
