@@ -185,13 +185,30 @@ function captureEnv(config) {
   return env;
 }
 
+/**
+ * The directory whose `.flowtrace/` this run belongs to: the nearest ancestor
+ * of `cwd` (cwd included) holding `.flowtrace/config.json`, else `cwd`.
+ * A run started from a subdirectory (`cd tests && flowtrace run -- ...`) used
+ * to read no config and plant a second `.flowtrace/` there.
+ */
+function findFlowtraceRoot(cwd) {
+  let dir = cwd;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.flowtrace', 'config.json'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return cwd;
+    dir = parent;
+  }
+}
+
 // ---------- main command ----------
 
 async function runCommand(options = {}, restArgs = []) {
   const cwd = process.cwd();
 
   // Read config (optional in v2 — auto-init if missing)
-  const cfgPath = path.join(cwd, '.flowtrace', 'config.json');
+  const flowRoot = findFlowtraceRoot(cwd);
+  const cfgPath = path.join(flowRoot, '.flowtrace', 'config.json');
   let config = {};
   if (fs.existsSync(cfgPath)) {
     config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
@@ -271,7 +288,7 @@ async function runCommand(options = {}, restArgs = []) {
   }
 
   // Build output path with ISO-UTC-no-colons filename
-  const outDir = path.join(cwd, '.flowtrace');
+  const outDir = path.join(flowRoot, '.flowtrace');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+Z$/, 'Z');
   // Absolute, against the directory `flowtrace run` started in: a relative path
@@ -294,8 +311,8 @@ async function runCommand(options = {}, restArgs = []) {
     }
   }
 
-  // Auto-add .flowtrace/ to .gitignore
-  ensureGitignore(cwd);
+  // .gitignore is `flowtrace init`'s job: a run rewrote a tracked file in the
+  // user's tree every time it was started from a repository root.
 
   // ---- Java path ----
   if (lang === 'java') {
@@ -304,7 +321,7 @@ async function runCommand(options = {}, restArgs = []) {
 
   // ---- Python path ----
   if (lang === 'python') {
-    return runPython({ options, restArgs, cwd, outPath, config });
+    return runPython({ options, restArgs, cwd, flowRoot, outPath, config });
   }
 
   // ---- Node / TypeScript path ----
@@ -437,7 +454,7 @@ function buildPythonEnv({ prefix, outPath, stubDir, captureKnobs = {} }) {
   };
 }
 
-async function runPython({ options, restArgs, cwd, outPath, config = {} }) {
+async function runPython({ options, restArgs, cwd, flowRoot = cwd, outPath, config = {} }) {
   // 1. Resolve stub dir (vendored, or capture/python/stub/ in a checkout).
   const stubDir = assets.pythonStubDir();
   if (!fs.existsSync(stubDir)) {
@@ -447,7 +464,7 @@ async function runPython({ options, restArgs, cwd, outPath, config = {} }) {
   }
 
   // 2. Copy stub to .flowtrace/python-stub/ (project-local).
-  const localStub = path.join(cwd, '.flowtrace', 'python-stub');
+  const localStub = path.join(flowRoot, '.flowtrace', 'python-stub');
   if (!fs.existsSync(localStub)) fs.mkdirSync(localStub, { recursive: true });
   const srcSite = path.join(stubDir, 'sitecustomize.py');
   const dstSite = path.join(localStub, 'sitecustomize.py');
