@@ -121,7 +121,10 @@ That import only resolves under `flowtrace run`; guard it with
   the `repr` from the format. If a trace changes your program, redact the
   argument so it is never rendered: `FLOWTRACE_REDACT_KEYS=instance` made that
   suite pass. Narrowing `--package-prefix` away from the generic helper also
-  works.
+  works. Or set `FLOWTRACE_SAFE_REPR=1` (opt-in): a value whose class defines
+  `__repr__` in Python is never repr()'d and is written as
+  `<module.QualName>` (no address, so two runs compare equal); containers of
+  primitives and objects without a custom `__repr__` render as before.
 - **What the span of a generator means.** A generator function's span opens at
   the first `next()` and closes when the body finishes, raises or the generator
   is closed, so its duration covers creation to exhaustion. It is the *current

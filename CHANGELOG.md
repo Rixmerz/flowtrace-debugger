@@ -30,6 +30,9 @@ independently; each release names them.
   Django formset validates its management form), which changed a traced test's
   result. Inherent to the `repr` format; see `capture/python/README.md` for the
   `FLOWTRACE_REDACT_KEYS` workaround.
+- **Python capture: `FLOWTRACE_SAFE_REPR=1` (opt-in).** Values whose class
+  defines `__repr__` in Python are rendered as `<module.QualName>` without
+  calling it, so tracing cannot trigger its side effects. Default unchanged.
 - **`flowtrace run -- mvn test` (and Gradle) now traces the forked test JVM.**
   The agent was injected through `MAVEN_OPTS`, which only reaches Maven's own
   JVM; surefire forks another one and the trace came out empty with no

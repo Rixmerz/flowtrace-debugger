@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import traceback
+import types
 from typing import Any
 
 from contextvars import ContextVar
@@ -55,6 +56,13 @@ def _get_max_arg_length() -> int:
         except ValueError:
             _config["max_arg_length"] = _DEFAULT_MAX_ARG_LENGTH
     return _config["max_arg_length"]
+
+
+def _get_safe_repr() -> bool:
+    """FLOWTRACE_SAFE_REPR=1: never call a Python-defined __repr__ (opt-in)."""
+    if "safe_repr" not in _config:
+        _config["safe_repr"] = os.environ.get("FLOWTRACE_SAFE_REPR", "") in ("1", "true", "yes")
+    return _config["safe_repr"]
 
 
 def _get_redact_keys() -> list[str]:
@@ -112,6 +120,17 @@ def _safe_repr(v: Any) -> str:
         return repr(v)
     finally:
         _in_capture.reset(tok)
+
+
+def _render_opaque(v: Any) -> str:
+    """Render a non-primitive value. With FLOWTRACE_SAFE_REPR=1 an object whose
+    class defines ``__repr__`` in Python is NOT repr()'d (that is user code and
+    may have side effects): it is rendered as ``<module.QualName>``, no address."""
+    if _get_safe_repr():
+        t = type(v)
+        if isinstance(getattr(t, "__repr__", None), types.FunctionType):
+            return f"<{t.__module__}.{t.__qualname__}>"
+    return _safe_repr(v)
 
 
 def _safe_str(v: Any) -> str:
@@ -187,7 +206,7 @@ def _to_json_safe(v: Any, redact_keys: list[str] | None = None) -> Any:
                 out[sk] = _to_json_safe(vv, redact_keys)
         return out
     try:
-        return _safe_repr(v)
+        return _render_opaque(v)
     except Exception:
         return f"<unrepresentable: {type(v).__name__}>"
 
