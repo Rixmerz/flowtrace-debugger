@@ -308,6 +308,41 @@ class FlowtraceEmitterTest {
     }
 
     // -------------------------------------------------------------------------
+    // file / line: optional, after depth, never truncated, line never alone
+    // -------------------------------------------------------------------------
+
+    @Test
+    void fileAndLine_closeTheEvent_andAreNeverTruncated() throws Exception {
+        System.setProperty("flowtrace.max-arg-length", "8");
+        FlowtraceEmitter emitter = FlowtraceEmitter.getInstance();
+        String id = "aabbccddeeff00112233445566778899";
+
+        TraceEvent both = buildEnter(id, "0011223344556677", null);
+        both.setFile("com/acme/billing/InvoiceService.java");
+        both.setLine(42);
+        TraceEvent fileOnly = buildEnter(id, "0011223344556678", null);
+        fileOnly.setFile("com/acme/billing/InvoiceService.java");
+        TraceEvent lineOnly = buildEnter(id, "0011223344556679", null);
+        lineOnly.setLine(42);
+        emitter.emit(both);
+        emitter.emit(fileOnly);
+        emitter.emit(lineOnly);
+        emitter.emit(buildEnter(id, "001122334455667a", null));
+        emitter.close();
+
+        List<String> lines = Files.readAllLines(outFile);
+        assertEquals(4, lines.size());
+        assertTrue(lines.get(0).endsWith(
+                        ",\"depth\":0,\"file\":\"com/acme/billing/InvoiceService.java\",\"line\":42}"),
+                "the path is longer than max-arg-length and must still be whole: " + lines.get(0));
+        assertTrue(lines.get(1).endsWith(",\"depth\":0,\"file\":\"com/acme/billing/InvoiceService.java\"}"),
+                "no line table: file only: " + lines.get(1));
+        assertTrue(lines.get(2).endsWith(",\"depth\":0}"),
+                "a line with no file to resolve it in is not written: " + lines.get(2));
+        assertTrue(lines.get(3).endsWith(",\"depth\":0}"), lines.get(3));
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 

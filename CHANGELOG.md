@@ -9,6 +9,122 @@ independently; each release names them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tracing Python no longer breaks scripts that import their siblings.**
+  `flowtrace run -- python tests/runtests.py` failed with `No module named
+  ...` because the capture stub runs the script itself and the script's
+  directory was not on `sys.path[0]`. It is now, as with a plain `python`.
+- **`flowtrace run` no longer edits `.gitignore` or plants `.flowtrace/` in a
+  subdirectory.** Gitignoring is `flowtrace init`'s job. A run started below a
+  directory that holds `.flowtrace/config.json` uses that project's config,
+  output directory and Python stub.
+- **`flowtrace diff` / `trace_behavior_diff`: more address noise is normalised,
+  with an off switch.** An address cut in half by truncation (`at 0x7f727...>`)
+  and a low address after `at` (`at 0xbc0d210`) now compare as `0x<addr>`.
+  `--no-normalize-addresses` (MCP: `normalize_addresses: false`) compares them
+  verbatim. Decimal `id()` values (a `copy.deepcopy` `memo` dict's keys) are not
+  addresses to the diff; ignore them with `--ignore-key memo`.
+- **Python capture: documented that `repr()` of a user object runs user code.**
+  Serialising an argument can have the side effects of its `__repr__` (a
+  Django formset validates its management form), which changed a traced test's
+  result. Inherent to the `repr` format; see `capture/python/README.md` for the
+  `FLOWTRACE_REDACT_KEYS` workaround.
+- **Python capture: `FLOWTRACE_SAFE_REPR=1` (opt-in).** Values whose class
+  defines `__repr__` in Python are rendered as `<module.QualName>` without
+  calling it, so tracing cannot trigger its side effects. Default unchanged.
+- **`flowtrace run -- mvn test` (and Gradle) now traces the forked test JVM.**
+  The agent was injected through `MAVEN_OPTS`, which only reaches Maven's own
+  JVM; surefire forks another one and the trace came out empty with no
+  message. Maven and Gradle now get `JAVA_TOOL_OPTIONS` (appended to any value
+  already set), which every child JVM inherits. A Java run that ends with a
+  missing or empty trace prints a warning naming the likely causes.
+- **`flowtrace init` on a Maven project no longer picks the parent POM's
+  groupId** (`org.springframework.boot` for a Spring Boot app). It uses the
+  project's own groupId, narrowed to the longest common package of
+  `src/main/java` when the code lives deeper, and falls back to that common
+  package when the POM has no groupId of its own.
+- **Java capture no longer records the tracer's own `toString()` calls as
+  spans.** Rendering args/results calls `toString()` on user objects, which are
+  instrumented too, producing false caller -> callee edges. A per-thread
+  `CaptureGuard` now suppresses advice while serialising (as Python does).
+
+- **`flowtrace run -o <relative path>` no longer loses the trace when the traced
+  command changes directory.** The path was handed to the capture layer as
+  written and resolved in the child's working directory. `run` now resolves
+  `-o` (and a `config.json` `output`) against the directory it was started in,
+  before truncating and spawning, and passes the absolute path as
+  `FLOWTRACE_OUTPUT`.
+
+- **`flowtrace run -o <file>` starts from an empty file.** The capture layers
+  append (several processes of one run share the file), so a second run into
+  the same name doubled the trace and a later `flowtrace diff` reported a
+  difference between two runs of the same program. `run` now truncates the
+  target once, before the child starts; `--append` restores the old behaviour.
+
+- **Python and Node/TypeScript capture no longer emit spans the program did not
+  cause.** Serialising an argument, result or error runs the program's own
+  `__repr__` / `__str__` (Python) or `toJSON` / getters / `toString` /
+  `Symbol.toPrimitive` (Node). When that class was instrumented, the call
+  became a span: an `enter` written *before* the `enter` of the function being
+  serialised, with that function's caller (Python: the function itself) as
+  parent. Measured on real code this was 27.8% of all spans on click and 16.8% on
+  flask, and it produced caller → callee pairs that do not exist. A re-entrancy
+  guard (`ContextVar` in Python, a synchronous flag in Node) now makes
+  instrumented functions invoked by the capture layer's own serialisation emit
+  nothing and leave the span context alone; the callback still runs and its text
+  still appears in `args` / `result` / `error.msg`. A `__repr__` or `toJSON`
+  that user code calls itself is still traced.
+- **Python: a generator's span no longer stays the current parent after it
+  yields.** With `@contextmanager def ctx(): yield`, the body of
+  `with ctx(): work()` was recorded as a child of `ctx` instead of its real
+  caller, and so was any call made between two `next()` calls. The transformer
+  now brackets every `yield` / `yield from` with `_ft_pause` / `_ft_resume`. The
+  span still opens at the first `next()` and closes when the generator
+  finishes, is closed or raises (duration = creation to exhaustion, enter/exit
+  pairing and schema unchanged), but it is the current parent only while the
+  generator's own frame executes. Known limit: the body of a `yield from`
+  sub-generator is attributed to whoever drives the outer generator, not to it.
+  Node does not instrument generators, so it was never affected.
+
+### Added
+
+- **`flowtrace diff` ignore entries can carry the reason they are ignored.**
+  In the ignores file, `ignoreMethods` / `ignoreKeys` entries are strings as
+  before or `{"name"|"key": ..., "reason": "..."}`; a top-level `reasons` map
+  covers entries kept as strings. Reasons are printed under the ignored counts
+  and returned by `--json` as `ignored.reasons.{methods,keys}`. Unknown keys
+  (top level or inside an entry) are still exit 2.
+
+- **Behavioural trace comparison** — a characterisation (golden-master) check.
+  `trace_behavior_diff` (MCP) and `flowtrace diff <base> <current>` (CLI) align
+  the two call trees (identity `lang|module|class|method`, sibling lists by a
+  bounded LCS) and report exact counts plus bounded samples of calls
+  added/removed/reordered, changed args, changed result for the same args,
+  errors appearing/disappearing/changing type, and per-method count changes.
+  `ts`, durations, ids, threads and `file`/`line` are ignored; `<redacted>`
+  compares equal, `<truncated:…>` compares by prefix and is flagged, identity
+  hashes and memory addresses are normalised. Ignores: `ignore_methods` globs,
+  `ignore_keys`, `ignore_order`. The CLI exits 0 same / 1 different / 2 usage,
+  I/O error or incomplete comparison, reads default ignores from
+  `characterisation.json` (next to the baseline, or in `.flowtrace/`), and
+  `--json` prints the MCP tool's object. The CLI runs a committed bundle
+  (`flowtrace-cli/vendor/trace-diff/`, `make bundle-diff`, checked by
+  `make check-bundle`). `trace_diff` is unchanged. See
+  `docs/en/characterisation-with-traces.md`.
+- **`file` and `line` on `enter` events**, in every file-writing capture layer
+  (Java, Python, Node/TypeScript, Go, Rust). Both are optional in
+  `schema/flowtrace-v2.json`, so a trace written before this change still
+  validates and every consumer keeps reading it. `file` is a POSIX path
+  relative to the project root (`FLOWTRACE_ROOT` overrides it); `line` is the
+  function's declaration line, or the first line of its body in Java, where
+  only bytecode is visible. They exist so a static index can join a span to
+  the symbol that declares it: `module` is a package, a crate or a file's
+  basename depending on the runtime, and none of those identifies a function
+  once two files share a name or a class has overloads.
+- `trace_find_error` returns `file` and `line` on each step of the failing
+  path when the trace carries them: the place to open, without a second lookup.
+
 ## [4.2.0] - 2026-11-23 — capture layers 2.2.0, Rust 0.1.0, browser 2.3.0, plugin 2.9.0
 
 Rust joins Java, Python, Node/TypeScript and Go as a capture layer.

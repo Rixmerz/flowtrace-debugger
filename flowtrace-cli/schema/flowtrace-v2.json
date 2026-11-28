@@ -40,6 +40,16 @@
       "required": ["type", "msg", "stack"],
       "additionalProperties": false
     },
+    "sourceFile": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional. Source file that declares the function: a POSIX path relative to the project root the capture ran in (Java: relative to the source root, i.e. package path + SourceFile attribute). Emitted on 'enter' only. It exists so a consumer can join a span to a static index; pairing enter with exit never needs it."
+    },
+    "sourceLine": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional. 1-indexed line inside the function's own span in 'file': its declaration line (def/function/func/fn, not a decorator) where the layer rewrites source, the first executed line of the body where it only sees bytecode (Java). Never the call site. Omitted when the layer cannot know it."
+    },
     "commonProps": {
       "type": "object",
       "properties": {
@@ -54,7 +64,9 @@
         "method":     { "type": "string" },
         "visibility": { "$ref": "#/$defs/visibility" },
         "args":       { "type": "object" },
-        "depth":      { "type": "integer", "minimum": 0 }
+        "depth":      { "type": "integer", "minimum": 0 },
+        "file":      { "$ref": "#/$defs/sourceFile" },
+        "line":      { "$ref": "#/$defs/sourceLine" }
       }
     }
   },
@@ -75,7 +87,9 @@
         "method":     { "type": "string" },
         "visibility": { "$ref": "#/$defs/visibility" },
         "args":       { "type": "object" },
-        "depth":      { "type": "integer", "minimum": 0 }
+        "depth":      { "type": "integer", "minimum": 0 },
+        "file":      { "$ref": "#/$defs/sourceFile" },
+        "line":      { "$ref": "#/$defs/sourceLine" }
       },
       "required": [
         "ts", "trace_id", "span_id", "parent_id", "event",
@@ -103,7 +117,9 @@
         "result":      { "type": "object" },
         "error":       { "$ref": "#/$defs/errorObj" },
         "duration_ns": { "type": "integer", "minimum": 0 },
-        "depth":       { "type": "integer", "minimum": 0 }
+        "depth":       { "type": "integer", "minimum": 0 },
+        "file":       { "$ref": "#/$defs/sourceFile" },
+        "line":       { "$ref": "#/$defs/sourceLine" }
       },
       "required": [
         "ts", "trace_id", "span_id", "parent_id", "event",

@@ -61,6 +61,7 @@ the same reason; see the comment on the struct before touching it.
 | `FLOWTRACE_MAX_ARG_LENGTH` | Per-value limit, in characters of the **JSON** form, above which an argument or result is replaced by `<truncated:{first N chars}...>`. Applies to `args` and `result` independently. `0` disables. | `512` |
 | `FLOWTRACE_MAX_EVENTS` | Cap on `enter` events one process writes; a hot Go program can otherwise fill a disk. When hit, one stderr line reports the count and no further calls are *entered*; calls already open still get their `exit`, so `enter` without `exit` keeps meaning "this call never returned". `0` or negative disables. Read once, on the first event. | `100000` |
 | `FLOWTRACE_REDACT_KEYS` | Extra comma-separated substrings (case-insensitive) matched against argument names, result names, struct fields and map keys; a match is emitted as `"<redacted>"`. **Additive** to the built-in list `password, secret, token, authorization, api_key, url, dsn, connection_string, email`. | built-in list only |
+| `FLOWTRACE_ROOT` | Directory the events' `file` paths are relative to. Read by the driver at build time (see "Source location" below). | the module root |
 | `FLOWTRACE_TRACEPARENT` | W3C `traceparent` header value; when set, the process's root spans join that trace instead of minting a new `trace_id`. | unset |
 
 Redaction runs before truncation. Serialization uses reflection only and
@@ -104,6 +105,37 @@ Redaction and truncation apply to a result by that key exactly as to an
 argument by its name, so a result named `password` is `"<redacted>"`.
 A returned non-nil `error` — or a recovered panic — makes the `exit` carry
 an `error` object (`{type, msg, stack}`); there is no separate error event.
+
+## Source location: `file` and `line`
+
+Every `enter` event also says where its function is declared, so a static
+index can join the span to the symbol:
+
+```json
+{"event":"enter","module":"example.com/app/internal/store","method":"Get","file":"internal/store/store.go","line":12, ...}
+```
+
+- **`file`** is the original source file — never its rewritten copy in the
+  scratch dir — as a forward-slash path **relative to the project root**. The
+  root is the module root (the directory of `go.mod`, as `go list` reports
+  it). Set **`FLOWTRACE_ROOT`** when the build is instrumented to use another
+  directory instead, typically the repository root of a module that lives in
+  a subdirectory (`services/api/internal/store/store.go`); a relative value is
+  resolved against the target module directory, and a value that is not an
+  existing directory fails the run. A file outside the root is reported as an
+  absolute path.
+- **`line`** is the 1-indexed line of the `func` keyword, read off the
+  original file's AST. A doc comment or a `//go:` directive above the
+  declaration does not count.
+
+Both are compile-time literals: the transformer injects
+`flowtracert.EnterAt(file, line, ...)` in place of `Enter(...)`, so nothing is
+resolved at run time and moving the binary does not change them. They appear
+on `enter` only (an `exit` is paired by `span_id`), are never redacted or
+truncated, and are omitted together when unknown. One caveat on ordering: the
+Go emitter serializes a map, so the keys of a raw line come out
+alphabetically like every other key of a Go event — `file` and `line` are not
+the last two on the wire, only after normalization.
 
 ## Never import `flowtracert` from your own code
 

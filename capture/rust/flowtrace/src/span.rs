@@ -8,7 +8,7 @@
 //! across by hand, the way the Python layer does.
 
 use crate::config;
-use crate::event::{self, fragment, ErrorInfo, Identity};
+use crate::event::{self, fragment, location, ErrorInfo, Identity};
 use crate::ids::{new_span_id, new_trace_id, SpanId, TraceId};
 use crate::json::str_lit;
 use std::borrow::Cow;
@@ -27,13 +27,37 @@ pub struct Meta {
     class: &'static str,
     method: &'static str,
     visibility: &'static str,
+    /// Where the function is declared: the original source file, as a POSIX path
+    /// relative to the project root, and the 1-indexed line of its `fn` keyword.
+    /// Empty / 0 when unknown.
+    file: &'static str,
+    line: u32,
     /// The escaped middle of every line this function writes, built on first use.
     fragment: OnceLock<String>,
+    /// The escaped tail of its `enter` line (see [`location`]), built on first use.
+    location: OnceLock<String>,
 }
 
 impl Meta {
     pub const fn new(module: &'static str, class: &'static str, method: &'static str, visibility: &'static str) -> Self {
-        Meta { module, class, method, visibility, fragment: OnceLock::new() }
+        Meta { module, class, method, visibility, file: "", line: 0, fragment: OnceLock::new(), location: OnceLock::new() }
+    }
+
+    /// [`Meta::new`] plus the source location, which the rewriter passes as
+    /// literals read off the original file.
+    pub const fn located(
+        module: &'static str,
+        class: &'static str,
+        method: &'static str,
+        visibility: &'static str,
+        file: &'static str,
+        line: u32,
+    ) -> Self {
+        Meta { module, class, method, visibility, file, line, fragment: OnceLock::new(), location: OnceLock::new() }
+    }
+
+    fn location(&self) -> &str {
+        self.location.get_or_init(|| location(self.file, self.line))
     }
 
     fn fragment(&self) -> &str {
@@ -213,6 +237,7 @@ pub fn enter(meta: &'static Meta, args: &mut dyn FnMut(&mut ArgsBuf)) -> SpanGua
             fragment: meta.fragment(),
             args: &args_json,
             depth,
+            location: meta.location(),
             at,
         });
     });
@@ -262,6 +287,8 @@ fn write_exit(live: &Live, result: &str, error: Option<(&str, &str, &[String])>)
                 fragment: live.meta.fragment(),
                 args: &live.args,
                 depth: live.depth,
+                // An exit never carries the location.
+                location: "",
                 at,
             },
             result,

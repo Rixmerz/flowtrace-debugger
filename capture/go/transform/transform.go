@@ -49,7 +49,24 @@ type Result struct {
 // "<modulePath>/internal/flowtracert". pkgImportPath is this file's own
 // package import path, passed through verbatim as the `module` argument on
 // every injected Enter call.
+//
+// File injects no source location: the trace's `file`/`line` are omitted.
+// Callers that know where filename sits under the project root use
+// FileAt.
 func File(filename string, src []byte, modulePath, pkgImportPath string) (Result, error) {
+	return FileAt(filename, "", src, modulePath, pkgImportPath)
+}
+
+// FileAt is File plus the source location every "enter" event reports.
+//
+// sourceFile is what the trace's `file` field will say for every function in
+// this file: the ORIGINAL file (the one at filename, never its overlay copy)
+// as a POSIX path relative to the project root — see SourceFile. It is
+// spliced in as a string literal next to the declaration line of each
+// function, which is read off the unmutated AST (the `func` keyword's
+// position, so a doc comment or a //go: directive above it does not count).
+// An empty sourceFile injects neither, exactly as File does.
+func FileAt(filename, sourceFile string, src []byte, modulePath, pkgImportPath string) (Result, error) {
 	if strings.HasSuffix(filename, "_test.go") {
 		return Result{Source: src, Skipped: true, Reason: "test file"}, nil
 	}
@@ -74,7 +91,7 @@ func File(filename string, src []byte, modulePath, pkgImportPath string) (Result
 			// says skip it, not the whole file.
 			continue
 		}
-		edits = append(edits, instrumentFunc(fset, astFile, fd, pkgImportPath)...)
+		edits = append(edits, instrumentFunc(fset, astFile, fd, pkgImportPath, sourceFile)...)
 		instrumented++
 	}
 
@@ -104,7 +121,7 @@ func importsCgo(file *ast.File) bool {
 // instrumentFunc builds the edits for a single instrumented FuncDecl: the
 // result-naming edits in its signature (if any), and the single enter/defer
 // insertion right after its opening brace.
-func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, module string) []edit {
+func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, module, sourceFile string) []edit {
 	used := collectIdents(fd)
 
 	spanVar := uniqueName("_ft_s", used)
@@ -142,9 +159,19 @@ func instrumentFunc(fset *token.FileSet, file *ast.File, fd *ast.FuncDecl, modul
 		exitArgs = spanVar + ", " + resultArgsText(results)
 	}
 
+	// With a known source file the call is EnterAt, led by the file and the
+	// declaration line as literals. The line comes from the original AST, not
+	// from the spliced text (the two agree — no edit ever adds a newline — but
+	// only one of them is the source of truth).
+	enterFunc := "Enter"
+	if line := declLine(fset, fd); sourceFile != "" && line > 0 {
+		enterFunc = "EnterAt"
+		enterArgs = append([]string{strconv.Quote(sourceFile), strconv.Itoa(line)}, enterArgs...)
+	}
+
 	inject := fmt.Sprintf(
-		"%s := %s.Enter(%s); defer func() { if %s := recover(); %s != nil { %s.ExitPanic(%s, %s); panic(%s) }; %s.Exit(%s) }();",
-		spanVar, runtimeImportAlias, strings.Join(enterArgs, ", "),
+		"%s := %s.%s(%s); defer func() { if %s := recover(); %s != nil { %s.ExitPanic(%s, %s); panic(%s) }; %s.Exit(%s) }();",
+		spanVar, runtimeImportAlias, enterFunc, strings.Join(enterArgs, ", "),
 		panicVar, panicVar, runtimeImportAlias, spanVar, panicVar, panicVar,
 		runtimeImportAlias, exitArgs,
 	)

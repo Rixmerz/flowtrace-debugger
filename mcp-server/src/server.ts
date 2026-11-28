@@ -16,6 +16,7 @@ import {
   tracePrivateCalls,
   traceDiff,
 } from "./trace-tools";
+import { traceBehaviorDiff } from "./behavior-diff";
 import { renderRuntimes } from "./runtimes";
 
 const mcp = new McpServer({ name: "flowtrace-mcp", version: "2.3.0" });
@@ -385,7 +386,7 @@ mcp.tool(
 
 mcp.tool(
   "trace_diff",
-  "Compare two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas grouped by module+class+method, ranked by absolute delta",
+  "Compare the TIMING of two v2 sessions: methods only-in-A, only-in-B, and avg duration deltas grouped by module+class+method, ranked by absolute delta. It does not compare behaviour (arguments, results, errors, call structure) — use trace_behavior_diff for that.",
   {
     sessionId_a: z.string().describe("Baseline session id (A)"),
     sessionId_b: z.string().describe("Comparison session id (B)"),
@@ -395,6 +396,28 @@ mcp.tool(
     const a = getSession(sessionId_a);
     const b = getSession(sessionId_b);
     return ok(traceDiff(v2OnlyEvents(a), v2OnlyEvents(b), { min_abs_delta_ns }));
+  }
+);
+
+mcp.tool(
+  "trace_behavior_diff",
+  "Characterisation check: compare the BEHAVIOUR of two v2 sessions of the same flow (A = baseline, B = current). Aligns the two call trees and reports calls added / removed / reordered, changed args, changed results for the same args, errors that appeared, disappeared or changed type, and per-method call-count changes, with exact counts and a few samples each. Ignores ts, durations, ids, threads, file/line; treats <redacted> as equal; compares <truncated:…> values by their kept prefix (counted in truncated_values); normalises identity hashes and memory addresses. verdict is \"same\" or \"different\"; check `complete` before trusting \"same\".",
+  {
+    sessionId_a: z.string().describe("Baseline session id (A) — the trace recorded before the change"),
+    sessionId_b: z.string().describe("Current session id (B) — the trace recorded after the change"),
+    ignore_methods: z.array(z.string()).optional().describe("Globs (* and ?) on module.class.method. A matching call is dropped with everything it calls. For logging, metrics, cache warm-up."),
+    ignore_keys: z.array(z.string()).optional().describe("Volatile keys to drop from args/result: a bare name or glob (created_at, *_id) matches at any depth; a path anchored at args. or result. (result.user.id, args.items.*.ts) matches exactly there"),
+    ignore_order: z.boolean().optional().describe("Treat sibling call order as irrelevant. Use for concurrent flows (threads, goroutines, Promise.all), where order is scheduling. Default false"),
+    compare_error_msg: z.boolean().optional().describe("Also compare error messages, reported as error_msg_changed. Default true"),
+    normalize_addresses: z.boolean().optional().describe("Rewrite memory addresses inside strings (0x7f3a…, including one cut by truncation) to 0x<addr> before comparing, so the same program run twice does not differ by object addresses. Default true; false compares them verbatim"),
+    limit: z.number().int().nonnegative().optional().describe("Max samples per category (default 10). Counts in `summary` are always exact"),
+  },
+  async ({ sessionId_a, sessionId_b, ignore_methods, ignore_keys, ignore_order, compare_error_msg, normalize_addresses, limit }) => {
+    const a = getSession(sessionId_a);
+    const b = getSession(sessionId_b);
+    return ok(traceBehaviorDiff(v2OnlyEvents(a), v2OnlyEvents(b), {
+      ignore_methods, ignore_keys, ignore_order, compare_error_msg, normalize_addresses, limit,
+    }));
   }
 );
 

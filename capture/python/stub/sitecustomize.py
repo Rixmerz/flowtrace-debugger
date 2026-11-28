@@ -120,6 +120,14 @@ if os.environ.get("FLOWTRACE_ENABLE") == "1":
                     _src = _f.read()
                 _code = _loader.source_to_code(_src, _script_path)
 
+                # `python script.py` puts the script's directory at sys.path[0],
+                # but that happens after sitecustomize, and we run the script
+                # from here. Do it ourselves (unless -P / PYTHONSAFEPATH).
+                if not getattr(sys.flags, "safe_path", False):
+                    _script_dir = os.path.dirname(_script_path)
+                    if not sys.path or sys.path[0] != _script_dir:
+                        sys.path.insert(0, _script_dir)
+
                 # Build a __main__ namespace with helpers injected.
                 _globs = {
                     "__name__": "__main__",

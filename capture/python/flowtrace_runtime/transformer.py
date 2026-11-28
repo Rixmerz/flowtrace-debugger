@@ -82,8 +82,12 @@ def _assign(target_id: str, value: ast.expr, ref: ast.AST) -> ast.Assign:
 class FlowtraceTransformer(ast.NodeTransformer):
     """Rewrite function bodies to emit FlowTrace enter/exit events."""
 
-    def __init__(self, module_name: str) -> None:
+    def __init__(self, module_name: str, source_file: str | None = None) -> None:
         self._module_name = module_name
+        # The `file` of every enter event of this module, already relative to
+        # the project root (see loader.source_file_for). None = unknown, and
+        # then neither `file` nor `line` is passed to _ft_enter.
+        self._source_file = source_file
         self._class_stack: list[str] = []
 
     # ------------------------------------------------------------------
@@ -113,6 +117,10 @@ class FlowtraceTransformer(ast.NodeTransformer):
         self.generic_visit(node)
 
         ref = node  # Use original node for location copying.
+        # The `def` line as written on disk: ast gives a decorated function the
+        # line of its `def`, not of its first decorator (3.8+), and it is read
+        # here, from the parsed node, before anything below rewrites the body.
+        def_line = getattr(node, "lineno", None)
         func_name = node.name
         qualname = ".".join(self._class_stack + [func_name]) if self._class_stack else func_name
         visibility = _visibility(func_name)
@@ -137,6 +145,9 @@ class FlowtraceTransformer(ast.NodeTransformer):
             ],
             ref,
         )
+        if self._source_file and isinstance(def_line, int) and def_line >= 1:
+            enter_call.args.append(ast.Constant(value=self._source_file))
+            enter_call.args.append(ast.Constant(value=def_line))
         for arg in enter_call.args:
             ast.copy_location(arg, ref)
 
@@ -168,6 +179,7 @@ class FlowtraceTransformer(ast.NodeTransformer):
             original_body = original_body[1:] or [ast.copy_location(ast.Pass(), ref)]
 
         if is_generator:
+            original_body = _rewrite_yields(original_body, ref)
             wrapped = self._wrap_generator_body(ctx_assign, result_default, original_body, ref)
         else:
             wrapped = self._wrap_normal_body(ctx_assign, result_default, original_body, ref)
@@ -319,6 +331,80 @@ class FlowtraceTransformer(ast.NodeTransformer):
         ast.copy_location(try_node, ref)
 
         return [ctx_assign, result_default, exc_flag, try_node]
+
+
+def _rewrite_yields(stmts: list[ast.stmt], ref: ast.AST) -> list[ast.stmt]:
+    rewriter = _YieldRewriter(ref)
+    out: list[ast.stmt] = []
+    for s in stmts:
+        visited = rewriter.visit(s)
+        if isinstance(visited, list):
+            out.extend(visited)
+        else:
+            out.append(visited)
+    return out
+
+
+class _YieldRewriter(ast.NodeTransformer):
+    """Make a generator's span the current parent only while its frame runs.
+
+    ``yield v``         -> ``_ft_resume(_ft_ctx, (yield _ft_pause(_ft_ctx, v)))``
+    ``yield from it``   -> ``_ft_resume(_ft_ctx, (yield from _ft_pause(_ft_ctx, it)))``
+
+    ``v`` is evaluated *before* the pause, so a call in the yielded expression
+    still belongs to the generator. A statement that is a bare yield (or an
+    assignment of one to plain names) is additionally wrapped in
+    ``try: ... finally: _ft_resume(_ft_ctx)``: ``throw()`` / ``close()`` at the
+    yield raise there without returning through the expression, and the
+    generator's own ``except`` / ``finally`` clauses must run inside its span.
+    A yield nested deeper in an expression gets only the expression form, so a
+    ``throw()`` caught inside such an expression runs un-entered (documented
+    limitation; the exit path still pairs correctly).
+
+    Nested function / class bodies are separate frames and are left alone.
+    """
+
+    def __init__(self, ref: ast.AST) -> None:
+        self._ref = ref
+
+    def visit_FunctionDef(self, node: ast.AST) -> ast.AST:
+        return node
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+    visit_Lambda = visit_FunctionDef
+    visit_ClassDef = visit_FunctionDef
+
+    def _wrap(self, node: Union[ast.Yield, ast.YieldFrom]) -> ast.expr:
+        ref = node
+        ctx_name = lambda: _name("_ft_ctx", ref)  # noqa: E731
+        inner = node.value if node.value is not None else ast.copy_location(ast.Constant(value=None), ref)
+        pause = _call("_ft_pause", [ctx_name(), self.visit(inner)], ref)
+        node.value = pause
+        return _call("_ft_resume", [ctx_name(), node], ref)
+
+    def visit_Yield(self, node: ast.Yield) -> ast.expr:
+        return self._wrap(node)
+
+    def visit_YieldFrom(self, node: ast.YieldFrom) -> ast.expr:
+        return self._wrap(node)
+
+    def _statement(self, node: ast.stmt) -> ast.AST:
+        value = getattr(node, "value", None)
+        direct = isinstance(value, (ast.Yield, ast.YieldFrom)) and (
+            isinstance(node, ast.Expr)
+            or (isinstance(node, ast.Assign) and all(isinstance(t, ast.Name) for t in node.targets))
+        )
+        node = self.generic_visit(node)
+        if not direct:
+            return node
+        ref = node
+        resume = _expr_stmt(_call("_ft_resume", [_name("_ft_ctx", ref)], ref), ref)
+        wrapped = ast.Try(body=[node], handlers=[], orelse=[], finalbody=[resume])
+        ast.copy_location(wrapped, ref)
+        return wrapped
+
+    visit_Expr = _statement
+    visit_Assign = _statement
 
 
 class _ReturnRewriter(ast.NodeTransformer):

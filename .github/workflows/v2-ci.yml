@@ -101,7 +101,10 @@ jobs:
 
   python-tests:
     name: Python tests (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which has no Python 3.9 build, so
+    # setup-python failed before any test ran. 3.9 is still the declared floor
+    # of capture/python; drop the pin when the floor is raised.
+    runs-on: ubuntu-24.04
     needs: golden
     strategy:
       fail-fast: false

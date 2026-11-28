@@ -11,6 +11,7 @@
 
 import { createRequire } from 'node:module';
 import { basename, extname } from 'node:path';
+import { originalLineLookup, sourceFileFor } from './source-location.js';
 
 // Use createRequire so this ESM file can load the CJS Babel packages.
 const require = createRequire(import.meta.url);
@@ -174,7 +175,7 @@ function methodName(node) {
  *
  * Wraps the original body in:
  *
- *   const __ft_ctx = __ft_enter(module, class, method, visibility, [...params], arguments);
+ *   const __ft_ctx = __ft_enter(module, class, method, visibility, [...params], arguments, lang, file, line);
  *   let __ft_result;
  *   try {
  *     __ft_result = __ft_run(__ft_ctx, () => { <original body> });
@@ -198,9 +199,12 @@ function methodName(node) {
  * @param {import('@babel/types').Expression[]|null} arrowArgs - arrows have no
  *   `arguments`; the identifiers to capture instead (see bindArrowParams)
  * @param {string} lang - "node" or "ts", baked into every event of this file
+ * @param {{file: string, line: number}|null} loc - where the function is
+ *   declared in the original source; null when unknown, and then neither
+ *   `file` nor `line` is emitted
  * @returns {import('@babel/types').BlockStatement}
  */
-function buildInstrumentedBody(originalBody, mod, cls, method, visibility, paramNames, isAsync, arrowArgs, lang) {
+function buildInstrumentedBody(originalBody, mod, cls, method, visibility, paramNames, isAsync, arrowArgs, lang, loc) {
   const modLit    = t.stringLiteral(mod);
   const clsLit    = cls ? t.stringLiteral(cls) : t.nullLiteral();
   const methodLit = t.stringLiteral(method);
@@ -216,7 +220,11 @@ function buildInstrumentedBody(originalBody, mod, cls, method, visibility, param
   const ctxDecl = t.variableDeclaration('const', [
     t.variableDeclarator(
       t.identifier('__ft_ctx'),
-      t.callExpression(t.identifier('__ft_enter'), [modLit, clsLit, methodLit, visLit, paramsArr, argsExpr, langLit])
+      t.callExpression(t.identifier('__ft_enter'), [
+        modLit, clsLit, methodLit, visLit, paramsArr, argsExpr, langLit,
+        // Declaration site, on enter only: exit pairs by span_id and needs neither.
+        ...(loc ? [t.stringLiteral(loc.file), t.numericLiteral(loc.line)] : []),
+      ])
     ),
   ]);
 
@@ -295,6 +303,8 @@ export function langForFile(filename) {
  * @property {string} filename - Absolute path of the source file.
  * @property {'cjs'|'esm'} [moduleType] - Override module type detection.
  * @property {string} [runtimePath] - Path/specifier for the runtime helpers import.
+ * @property {string} [root] - Project root `file` is made relative to.
+ *   Defaults to FLOWTRACE_ROOT, else the cwd at capture start.
  */
 
 /**
@@ -312,6 +322,17 @@ export function transform(source, opts = {}) {
   const runtimePath = opts.runtimePath ?? '@flowtrace/capture-node/runtime/instrument';
 
   let jsSource = source;
+
+  // `file` for every enter event of this module, and how to get from a
+  // position in the code Babel parses back to a line of the file on disk.
+  // For JavaScript that is the identity: Babel parses the source as written.
+  // For TypeScript Babel only ever sees swc's output, whose lines do not match
+  // the .ts file (types, interfaces and blank lines are gone), so the line goes
+  // back through swc's source map. Babel's own positions are per parse, which
+  // sidesteps swc's span offsets entirely — those are byte offsets that keep
+  // growing across parse calls within one process.
+  const sourceFile = sourceFileFor(filename, opts.root);
+  let toOriginalLine = (line) => line;
 
   // Step 1: Strip TypeScript via swc if needed.
   if (isTs) {
@@ -332,9 +353,17 @@ export function transform(source, opts = {}) {
         // up with "exports is not defined in ES module scope". Omitting the
         // option leaves the original import/export syntax untouched.
         ...(opts.moduleType === 'esm' ? {} : { module: { type: 'commonjs' } }),
-        sourceMaps: false,
+        sourceMaps: true,
       });
       jsSource = stripped.code;
+      try {
+        toOriginalLine = originalLineLookup(stripped.map);
+      } catch {
+        // No usable map: the lines of the stripped code are not the lines of
+        // the .ts file, so the location is unknown rather than approximately
+        // right.
+        toOriginalLine = () => null;
+      }
     } catch (e) {
       // Fall through — let Babel try to parse it (may fail, that's ok).
       process.stderr.write(`[flowtrace] swc TS strip failed for ${filename}: ${e.message}\n`);
@@ -372,6 +401,20 @@ export function transform(source, opts = {}) {
   // Step 3: Traverse & instrument.
   let currentClass = null;
 
+  const sourceLineCount = source.split('\n').length;
+
+  /**
+   * Declaration site of a function node, read before the node is rewritten.
+   * null — and so no `file`/`line` on the event — when either half is unknown.
+   */
+  function locOf(node) {
+    const start = node.loc?.start;
+    if (sourceFile === null || !start) return null;
+    const line = toOriginalLine(start.line, start.column);
+    if (!Number.isInteger(line) || line < 1 || line > sourceLineCount) return null;
+    return { file: sourceFile, line };
+  }
+
   traverse(ast, {
     ClassDeclaration: {
       enter(path) { currentClass = path.node.id ? path.node.id.name : '<anonymous>'; },
@@ -395,9 +438,10 @@ export function transform(source, opts = {}) {
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
+      const loc = locOf(path.node);
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, currentClass, name, vis, params, isAsync, null, lang
+        path.node.body, mod, currentClass, name, vis, params, isAsync, null, lang, loc
       );
       path.skip();
     },
@@ -410,9 +454,10 @@ export function transform(source, opts = {}) {
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
+      const loc = locOf(path.node);
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, currentClass, name, 'private', params, isAsync, null, lang
+        path.node.body, mod, currentClass, name, 'private', params, isAsync, null, lang, loc
       );
       path.skip();
     },
@@ -430,9 +475,10 @@ export function transform(source, opts = {}) {
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
+      const loc = locOf(path.node);
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, null, name, 'public', params, isAsync, null, lang
+        path.node.body, mod, null, name, 'public', params, isAsync, null, lang, loc
       );
       path.skip();
     },
@@ -447,9 +493,10 @@ export function transform(source, opts = {}) {
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
+      const loc = locOf(path.node);
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, null, name, 'public', params, isAsync, null, lang
+        path.node.body, mod, null, name, 'public', params, isAsync, null, lang, loc
       );
       path.skip();
     },
@@ -467,9 +514,10 @@ export function transform(source, opts = {}) {
       const params = collectParamNames(path.node);
       const isAsync = path.node.async;
 
+      const loc = locOf(path.node);
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, null, name, 'public', params, isAsync, null, lang
+        path.node.body, mod, null, name, 'public', params, isAsync, null, lang, loc
       );
       path.skip();
     },
@@ -494,9 +542,10 @@ export function transform(source, opts = {}) {
         path.node.body = t.blockStatement([...prologue, ...path.node.body.body]);
       }
 
+      const loc = locOf(path.node);
       path.node._flowtraceWrapped = true;
       path.node.body = buildInstrumentedBody(
-        path.node.body, mod, null, name, 'public', params, isAsync, argExprs, lang
+        path.node.body, mod, null, name, 'public', params, isAsync, argExprs, lang, loc
       );
       path.skip();
     },

@@ -58,6 +58,9 @@ def _compile_and_exec(source: str, module_name: str = "test_mod") -> tuple[types
     mod.__dict__["_ft_enter"] = fake_enter
     mod.__dict__["_ft_exit"] = fake_exit
     mod.__dict__["_ft_exit_error"] = fake_exit_error
+    from flowtrace_runtime import runtime as _rt
+    mod.__dict__["_ft_pause"] = _rt._ft_pause
+    mod.__dict__["_ft_resume"] = _rt._ft_resume
     exec(code, mod.__dict__)  # noqa: S102
     return mod, emitted
 

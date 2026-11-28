@@ -230,6 +230,28 @@ function truncateIfNeeded(value) {
 }
 
 /**
+ * True while FlowTrace is running the program's own code on purpose to describe
+ * a value: JSON.stringify calls toJSON() and getters, String() calls toString()
+ * and Symbol.toPrimitive, an Error's message/name/stack may be accessors. When
+ * that code lives on an instrumented class it is itself a traced function, and
+ * without this flag it emitted an `enter` for a call the program never made,
+ * before the `enter` of the function being serialised and as a child of that
+ * function's caller. A static index then read it as a real caller -> callee
+ * edge.
+ *
+ * While set, __ft_enter returns NO_SPAN: nothing is emitted and no context is
+ * opened, so whatever the callback calls in turn is suppressed as well. The
+ * code still runs and its text still reaches the trace; it just is not a span.
+ *
+ * A plain module variable is enough where a ContextVar was needed in the Python
+ * layer: every callback here is synchronous, so nothing else on this isolate's
+ * thread can run between set and restore, and worker_threads load their own copy
+ * of the module. It is only set for objects and functions — primitives never
+ * call user code — so the hot path with primitive arguments pays nothing.
+ */
+let capturing = false;
+
+/**
  * Serialize one argument or result value: redact, make JSON-safe, truncate.
  * Never throws — a value the trace cannot represent becomes a string.
  * @param {string} key - The name the value is recorded under.
@@ -237,13 +259,20 @@ function truncateIfNeeded(value) {
  */
 function serializeValue(key, value) {
   if (isRedactedKey(key)) return REDACTED;
-  let safe;
+  const userCode = value !== null && (typeof value === 'object' || typeof value === 'function');
+  const was = capturing;
+  if (userCode) capturing = true;
   try {
-    safe = toJsonSafe(value);
-  } catch {
-    safe = String(value);
+    let safe;
+    try {
+      safe = toJsonSafe(value);
+    } catch {
+      safe = String(value);
+    }
+    return truncateIfNeeded(safe);
+  } finally {
+    capturing = was;
   }
-  return truncateIfNeeded(safe);
 }
 
 /**
@@ -278,14 +307,21 @@ function serializeResult(result) {
 }
 
 function errorInfo(err) {
-  if (err && typeof err === 'object') {
-    return {
-      type: err.name ?? 'Error',
-      msg: err.message ?? String(err),
-      stack: (err.stack ?? '').split('\n').slice(0, 20),
-    };
+  // name / message / stack can be accessors and String(err) calls toString().
+  const was = capturing;
+  capturing = true;
+  try {
+    if (err && typeof err === 'object') {
+      return {
+        type: err.name ?? 'Error',
+        msg: err.message ?? String(err),
+        stack: (err.stack ?? '').split('\n').slice(0, 20),
+      };
+    }
+    return { type: 'unknown', msg: String(err), stack: [] };
+  } finally {
+    capturing = was;
   }
-  return { type: 'unknown', msg: String(err), stack: [] };
 }
 
 /**
@@ -461,12 +497,17 @@ export function skippedDeepCount() {
  * @param {string[]} paramNames - Formal parameter names (for arg labeling).
  * @param {IArguments|Array} args - Actual arguments.
  * @param {string} [lang] - "node" (default) or "ts" for TypeScript sources.
+ * @param {string} [file] - Source file declaring the function, POSIX, relative
+ *   to the project root. A literal baked in by the transform; never redacted
+ *   or truncated. Optional: a caller that omits it gets an event without it.
+ * @param {number} [line] - 1-indexed declaration line in that file.
  * @returns {{ span_id: string, trace_id: string, parent_id: string|null, depth: number, start: bigint }}
  */
-export function __ft_enter(module_, cls, method, visibility, paramNames, args, lang) {
+export function __ft_enter(module_, cls, method, visibility, paramNames, args, lang, file, line) {
   // The whole body is guarded, not just the id calls: serializeArgs and emit
   // are deeper still, and any of them running out of stack must cost the trace
   // a call, never the program a crash. See `abandoned`.
+  if (capturing) return NO_SPAN;
   let depth = 0;
   try {
     const parent = getCurrent();
@@ -486,13 +527,19 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args, l
 
     const ctx = { span_id, trace_id, parent_id, depth, start: process.hrtime.bigint() };
 
-    emit({
+    const event = {
       ts: nowTs(),
       ...common(ctx, module_, cls, method, visibility, lang),
       event: 'enter',
       args: serializeArgs(paramNames, args),
       depth,
-    });
+    };
+    // Both or neither: a line with no file names nothing.
+    if (file !== undefined && line !== undefined) {
+      event.file = file;
+      event.line = line;
+    }
+    emit(event);
 
     return ctx;
   } catch (e) {

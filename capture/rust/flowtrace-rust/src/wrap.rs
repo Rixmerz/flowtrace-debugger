@@ -30,6 +30,9 @@ pub const ENV_SHADOW: &str = "FLOWTRACE_SHADOW_DIR";
 pub const ENV_PREFIX: &str = "FLOWTRACE_PACKAGE_PREFIX";
 /// `package=module_root;...`: how each workspace package is named in a Rust path.
 pub const ENV_ROOTS: &str = "FLOWTRACE_MODULE_ROOTS";
+/// The project root the trace's `file` paths are relative to, resolved by the
+/// driver: `FLOWTRACE_ROOT` if the user set it, else the cargo workspace root.
+pub const ENV_SOURCE_ROOT: &str = "FLOWTRACE_SOURCE_ROOT";
 
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok()
@@ -127,6 +130,8 @@ struct Planned {
     package: String,
     prefix: String,
     rlib: String,
+    /// See [`ENV_SOURCE_ROOT`]. `None` (a wrapper run without the driver) records no `file`.
+    source_root: Option<PathBuf>,
 }
 
 enum Plan {
@@ -170,7 +175,8 @@ fn plan(unit: &Unit) -> Plan {
         return Plan::Skip(None);
     }
     let shadow_manifest = PathBuf::from(shadow).join(format!("{package}-{}", stable_hash(&manifest_dir.to_string_lossy())));
-    Plan::Instrument(Planned { manifest_dir, shadow_manifest, package: module_root, prefix, rlib })
+    let source_root = env(ENV_SOURCE_ROOT).filter(|r| !r.is_empty()).map(PathBuf::from);
+    Plan::Instrument(Planned { manifest_dir, shadow_manifest, package: module_root, prefix, rlib, source_root })
 }
 
 fn instrumented(rustc: &str, rest: &[String], base: &[String], unit: &Unit, p: &Planned) -> ExitCode {
@@ -339,7 +345,9 @@ fn mirror(from: &Path, to: &Path, module: &[String], p: &Planned, total: &mut us
                 _ => file_module.push(stem.to_owned()),
             }
             let text = fs::read_to_string(&src).map_err(err)?;
-            let opts = Options { package: &p.package, file_module, prefix: &p.prefix };
+            // `src` is the original file: the shadow copy at `dst` is never named in a trace.
+            let file = p.source_root.as_deref().map(|root| source_file(root, &src));
+            let opts = Options { package: &p.package, file_module, prefix: &p.prefix, file: file.as_deref() };
             let out = match rewrite::instrument(&text, &opts) {
                 Ok(r) => {
                     *total += r.functions;
@@ -363,6 +371,30 @@ fn mirror(from: &Path, to: &Path, module: &[String], p: &Planned, total: &mut us
     Ok(())
 }
 
+/// `path`, an original source file, as the trace's `file` field carries it: a
+/// POSIX path relative to `root`, or an absolute one for a file outside `root`
+/// (a `../` chain could only be resolved by a reader who knows the root).
+///
+/// Compared as written first, then with symlinks resolved: cargo reports a
+/// workspace under a symlinked directory by one spelling and a root typed by the
+/// user may use the other, which must not turn every path absolute.
+pub fn source_file(root: &Path, path: &Path) -> String {
+    let posix = |p: &Path| p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+    if let Ok(rel) = path.strip_prefix(root) {
+        if !rel.as_os_str().is_empty() {
+            return posix(rel);
+        }
+    }
+    if let (Ok(real_root), Ok(real_path)) = (fs::canonicalize(root), fs::canonicalize(path)) {
+        if let Ok(rel) = real_path.strip_prefix(&real_root) {
+            if !rel.as_os_str().is_empty() {
+                return posix(rel);
+            }
+        }
+    }
+    posix(path)
+}
+
 /// How many functions the wrappers instrumented, summed over every package.
 pub fn count_instrumented(shadow: &Path) -> usize {
     fs::read_dir(shadow)
@@ -372,4 +404,35 @@ pub fn count_instrumented(shadow: &Path) -> usize {
         .filter_map(|e| fs::read_to_string(e.path().join(".functions")).ok())
         .filter_map(|s| s.trim().parse::<usize>().ok())
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_file;
+    use std::path::Path;
+
+    #[test]
+    fn a_file_under_the_root_is_relative_with_forward_slashes() {
+        assert_eq!(source_file(Path::new("/ws"), Path::new("/ws/crates/core/src/wal/log.rs")), "crates/core/src/wal/log.rs");
+        assert_eq!(source_file(Path::new("/ws/"), Path::new("/ws/src/main.rs")), "src/main.rs");
+    }
+
+    #[test]
+    fn a_file_outside_the_root_stays_absolute() {
+        assert_eq!(source_file(Path::new("/ws"), Path::new("/elsewhere/src/lib.rs")), "/elsewhere/src/lib.rs");
+        // A sibling whose name merely starts with the root's is outside it.
+        assert_eq!(source_file(Path::new("/ws"), Path::new("/ws-other/src/lib.rs")), "/ws-other/src/lib.rs");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_root_still_yields_a_relative_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(real.join("src")).unwrap();
+        std::fs::write(real.join("src/lib.rs"), "").unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(source_file(&link, &real.join("src/lib.rs")), "src/lib.rs");
+    }
 }

@@ -226,6 +226,31 @@ name = "real-pkg"
 });
 
 // ---------------------------------------------------------------------------
+// run must not edit .gitignore, and must reuse the parent's .flowtrace/
+// ---------------------------------------------------------------------------
+
+test('flowtrace run leaves .gitignore alone and does not create .flowtrace in a subdirectory', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-cli-test-'));
+  try {
+    fs.mkdirSync(path.join(tmpDir, '.git'));
+    fs.writeFileSync(path.join(tmpDir, '.gitignore'), 'node_modules/\n');
+    fs.mkdirSync(path.join(tmpDir, '.flowtrace'));
+    fs.writeFileSync(path.join(tmpDir, '.flowtrace', 'config.json'), JSON.stringify({ lang: 'python' }));
+    const sub = path.join(tmpDir, 'tests');
+    fs.mkdirSync(sub);
+    const result = spawnSync(process.execPath, [
+      BIN, 'run', '--lang', 'python', '--package-prefix', 'x', '--', 'python3', '-c', 'pass',
+    ], { cwd: sub, encoding: 'utf-8' });
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.strictEqual(fs.readFileSync(path.join(tmpDir, '.gitignore'), 'utf-8'), 'node_modules/\n');
+    assert.strictEqual(fs.existsSync(path.join(sub, '.flowtrace')), false, 'no .flowtrace in the subdirectory');
+    assert.ok(fs.existsSync(path.join(tmpDir, '.flowtrace', 'python-stub', 'sitecustomize.py')), 'stub lives with the project config');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // _countJsonlLines — must stream, never fs.readFileSync() the whole file
 // (readFileSync on a large trace crashes with ERR_STRING_TOO_LONG; see the
 // run.js zero-event-check fix). Async, so run after the sync tests above.

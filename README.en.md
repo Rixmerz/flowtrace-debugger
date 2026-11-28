@@ -191,7 +191,8 @@ The MCP server exposes tools so AI agents can analyze traces directly:
 | `trace_tree` | Call tree for a trace |
 | `trace_find_error` | Find the first exception in the log |
 | `trace_private_calls` | List internal methods not exposed in the API |
-| `trace_diff` | Compare two traces (before/after a change) |
+| `trace_diff` | Compare only *which* methods ran and their average durations (before/after) |
+| `trace_behavior_diff` | Compare the *behaviour* of two traces (args, results, errors, structure) — characterisation check |
 
 It also serves the `flowtrace://runtimes` resource: supported runtimes, minimum
 versions, how each is invoked, and what propagation each has. An agent reads
@@ -207,6 +208,23 @@ single-file bundle:
 
 The plugin also puts `flowtrace` on the PATH, so `flowtrace run -- ...` works
 with no global install.
+
+### Characterisation with traces
+
+```bash
+flowtrace run -- python myapp.py                       # record the baseline and commit it
+flowtrace diff base.jsonl .flowtrace/<new>.jsonl       # 0 same · 1 different · 2 error
+flowtrace diff base.jsonl new.jsonl --ignore-key created_at --ignore-method 'app.Logger.*' --json
+```
+
+`flowtrace run -o base.jsonl` empties the file when it starts (`--append` adds to
+an existing trace). Ignores can live in `characterisation.json` beside the
+baseline; each entry is a string or `{"name"|"key": ..., "reason": "..."}`, and
+`--json` returns the reasons in `ignored.reasons`.
+
+Ignores ts, durations, ids, threads and file/line; normalises `<redacted>` and
+identity hashes. See [docs/en/characterisation-with-traces.md](docs/en/characterisation-with-traces.md).
+
 
 ---
 
@@ -246,7 +264,7 @@ make test          # everything; this is the source of truth
 
 After touching…               | run
 ---                           | ---
-`mcp-server/src`              | `make bundle-mcp`
+`mcp-server/src`              | `make bundle-mcp` (and `make bundle-diff` for `behavior-diff.ts`)
 `flowtrace-dashboard/`        | `make bundle-dashboard`
 a capture layer               | `make gen-golden` — and **review the diff**
 `mcp-server/src/runtimes.ts`  | `make check-docs`

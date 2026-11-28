@@ -18,6 +18,7 @@
 //! | span name | `method` |
 //! | `module_path` (else target) | `module` |
 //! | span fields | `args`, by name (numbers, bools and strings natively, `Debug` otherwise) |
+//! | callsite `file` / `line` | the enter's `file` / `line` (see below) |
 //! | first `enter` | `enter` event |
 //! | span closing | `exit` event, `duration_ns` measured from the first enter |
 //! | `#[instrument(err)]` event (`ERROR` level, `error` field) | the exit's `error` |
@@ -27,12 +28,23 @@
 //! A span that is created but never entered writes nothing. `class` is always
 //! empty and `visibility` is `unknown`: `tracing` records neither.
 //!
+//! `file` and `line` are whatever the span's callsite recorded, which is where
+//! the `span!` or `#[instrument]` was *written*: for `#[instrument]` that is the
+//! function, though the line may be the attribute's rather than the `fn`
+//! keyword's. rustc records the path as cargo passed it, which for a workspace
+//! member is already relative to the workspace root and is kept as given. An
+//! absolute path (a dependency, or a build with `--remap-path-prefix`) is made
+//! relative to `FLOWTRACE_ROOT`, else to the working directory, when it lies
+//! under it, and is left absolute otherwise.
+//!
 //! `FLOWTRACE_PACKAGE_PREFIX` (or [`FlowtraceLayer::with_prefix`]) keeps only
 //! spans whose module path starts with it; the children of a dropped span hang
 //! off its nearest kept ancestor.
 
 use flowtrace::__rt::{self as rt, ErrorInfo, Identity, SpanId, TraceId};
 use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Instant;
 use tracing_core::field::{Field, Visit};
 use tracing_core::span::{Attributes, Id, Record};
@@ -60,6 +72,32 @@ impl FlowtraceLayer {
     }
 }
 
+/// The root an absolute callsite path is made relative to: `FLOWTRACE_ROOT`, else
+/// the working directory. Read once; `None` if neither can be known.
+fn runtime_root() -> Option<&'static Path> {
+    static ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        let cwd = std::env::current_dir().ok();
+        match std::env::var_os("FLOWTRACE_ROOT").filter(|r| !r.is_empty()).map(PathBuf::from) {
+            Some(root) if root.is_absolute() => Some(root),
+            Some(root) => cwd.map(|c| c.join(root)),
+            None => cwd,
+        }
+    })
+    .as_deref()
+}
+
+/// A callsite path as the trace's `file`: POSIX separators, relative to `root`
+/// when it is an absolute path under it, otherwise as recorded.
+fn source_file(file: &str, root: Option<&Path>) -> String {
+    let path = Path::new(file);
+    let rel = match root {
+        Some(root) if path.is_absolute() => path.strip_prefix(root).ok().filter(|r| !r.as_os_str().is_empty()),
+        _ => None,
+    };
+    rel.map_or_else(|| file.to_owned(), |r| r.to_string_lossy().into_owned()).replace('\\', "/")
+}
+
 struct Data {
     trace: TraceId,
     span: SpanId,
@@ -67,6 +105,8 @@ struct Data {
     depth: u32,
     module: String,
     method: String,
+    /// The rendered `,"file":..,"line":..` of the enter event; empty if the callsite has neither.
+    location: String,
     /// `(name, rendered JSON value)` in the order first seen.
     args: Vec<(String, String)>,
     started: Option<Instant>,
@@ -89,8 +129,9 @@ impl Data {
         out
     }
 
-    fn identity<'a>(&'a self, thread: &'a str, fragment: &'a str, args: &'a str) -> Identity<'a> {
-        Identity { trace: self.trace, span: self.span, parent: self.parent, thread, fragment, args, depth: self.depth, at: Instant::now() }
+    /// `location` is the enter's (`&self.location`); an exit passes `""`.
+    fn identity<'a>(&'a self, thread: &'a str, fragment: &'a str, args: &'a str, location: &'a str) -> Identity<'a> {
+        Identity { trace: self.trace, span: self.span, parent: self.parent, thread, fragment, args, depth: self.depth, location, at: Instant::now() }
     }
 
     fn fragment(&self) -> String {
@@ -214,6 +255,10 @@ where
             depth,
             module: module.to_owned(),
             method: meta.name().to_owned(),
+            location: match (meta.file(), meta.line()) {
+                (Some(file), Some(line)) => rt::location(&source_file(file, runtime_root()), line),
+                _ => String::new(),
+            },
             args: fields.values,
             started: None,
             result: None,
@@ -245,7 +290,7 @@ where
         }
         d.started = Some(Instant::now());
         let (thread, fragment, args) = (rt::str_lit(&rt::thread_name()), d.fragment(), d.args_json());
-        rt::write_enter(&d.identity(&thread, &fragment, &args));
+        rt::write_enter(&d.identity(&thread, &fragment, &args, &d.location));
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
@@ -286,6 +331,30 @@ where
         let Some(started) = d.started else { return };
         let (thread, fragment, args) = (rt::str_lit(&rt::thread_name()), d.fragment(), d.args_json());
         let error = d.error.as_ref().map(|(kind, msg, stack)| ErrorInfo { kind, msg, stack });
-        rt::write_exit(&d.identity(&thread, &fragment, &args), d.result.as_deref().unwrap_or(""), error, started.elapsed().as_nanos() as u64);
+        rt::write_exit(&d.identity(&thread, &fragment, &args, ""), d.result.as_deref().unwrap_or(""), error, started.elapsed().as_nanos() as u64);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_file;
+    use std::path::Path;
+
+    #[test]
+    fn a_relative_callsite_path_is_kept_as_recorded() {
+        assert_eq!(source_file("crates/api/src/lib.rs", Some(Path::new("/ws"))), "crates/api/src/lib.rs");
+        assert_eq!(source_file("src/main.rs", None), "src/main.rs");
+    }
+
+    #[test]
+    fn an_absolute_path_is_relative_to_the_root_only_when_under_it() {
+        assert_eq!(source_file("/ws/crates/api/src/lib.rs", Some(Path::new("/ws"))), "crates/api/src/lib.rs");
+        assert_eq!(source_file("/cargo/registry/dep/src/lib.rs", Some(Path::new("/ws"))), "/cargo/registry/dep/src/lib.rs");
+        assert_eq!(source_file("/ws/src/lib.rs", None), "/ws/src/lib.rs");
+    }
+
+    #[test]
+    fn separators_are_posix() {
+        assert_eq!(source_file("src\\win\\lib.rs", None), "src/win/lib.rs");
     }
 }

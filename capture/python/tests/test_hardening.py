@@ -168,6 +168,8 @@ def _instrument_and_exec(src):
         "_ft_enter": lambda *a: {"dead": True},
         "_ft_exit": lambda *a: None,
         "_ft_exit_error": lambda *a: None,
+        "_ft_pause": runtime._ft_pause,
+        "_ft_resume": runtime._ft_resume,
     }
     exec(compile(tree, "<m>", "exec"), ns)
     return ns

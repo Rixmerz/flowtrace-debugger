@@ -49,8 +49,9 @@ a module into someone's bundler graph.
 | Command | Purpose |
 |---------|---------|
 | `flowtrace init` | Detect the project type and write `.flowtrace/config.json` |
-| `flowtrace run -- <cmd>` | Run a command under instrumentation |
+| `flowtrace run -- <cmd>` | Run a command under instrumentation (`-o` starts from an empty file; `--append` keeps an existing one) |
 | `flowtrace analyze` | Open the trace in the dashboard |
+| `flowtrace diff <base> <current>` | Compare the behaviour of two traces of the same flow (exit 0 same, 1 different, 2 error). Ignore entries may be `{"name"\|"key": ..., "reason": ...}`; reasons appear in `--json` as `ignored.reasons` |
 
 `run` auto-detects the language and the package prefix, and honours what
 `init` wrote to `.flowtrace/config.json` (`capture.packagePrefix`,

@@ -1,5 +1,6 @@
 package io.flowtrace.advice;
 
+import io.flowtrace.emitter.CaptureGuard;
 import io.flowtrace.emitter.ErrorInfo;
 import io.flowtrace.emitter.FlowtraceEmitter;
 import io.flowtrace.emitter.TraceEvent;
@@ -43,6 +44,9 @@ import java.util.stream.Collectors;
  *       throwing calls emit an empty object.</li>
  *   <li>Modifiers are read from {@code @Advice.Origin Method} — the only
  *       reliable way to get them without reflection on the class loader.</li>
+ *   <li>{@code file} / {@code line} arrive as constants bound when the class
+ *       is woven ({@link SourceFile}, {@link SourceLine}), so the declaring
+ *       location costs one constant load per call.</li>
  * </ul>
  */
 public class FlowtraceAdvice {
@@ -60,6 +64,10 @@ public class FlowtraceAdvice {
             @Advice.Origin("#m") String methodName,
             @Advice.Origin Method  originMethod,
             @Advice.AllArguments  Object[] allArgs,
+            // Weave-time constants, not lookups: see io.flowtrace.extension
+            // .SourceLocations. "" / 0 mean the class file did not say.
+            @SourceFile String sourceFile,
+            @SourceLine int    sourceLine,
             @Advice.Local("flowtraceSpan")    Span   span,
             @Advice.Local("flowtraceScope")   Scope  scope,
             @Advice.Local("flowtraceStart")   long   startNanos,
@@ -69,6 +77,10 @@ public class FlowtraceAdvice {
             @Advice.Local("flowtraceSpanId")  String spanId,
             @Advice.Local("flowtraceArgs")    Map<String, Object> args
     ) {
+        // The tracer is rendering a value (a toString() on a user object): not a
+        // call of the program. Same answer at enter and exit of the same call,
+        // since both sit inside the same serialisation.
+        if (CaptureGuard.active()) return;
         try {
             depth = DepthTracker.enterAndGet();
 
@@ -120,6 +132,12 @@ public class FlowtraceAdvice {
             args = buildArgs(originMethod, allArgs);
             event.setArgs(args);
             event.setDepth(depth);
+            // enter only: pairing enter with exit never needs the location,
+            // and a line without a file to resolve it in means nothing.
+            if (sourceFile != null && !sourceFile.isEmpty()) {
+                event.setFile(sourceFile);
+                if (sourceLine > 0) event.setLine(sourceLine);
+            }
 
             FlowtraceEmitter.getInstance().emit(event);
         } catch (Throwable t) {
@@ -143,6 +161,7 @@ public class FlowtraceAdvice {
             @Advice.Local("flowtraceSpanId")  String spanId,
             @Advice.Local("flowtraceArgs")    Map<String, Object> args
     ) {
+        if (CaptureGuard.active()) return;
         try {
             long durationNs = System.nanoTime() - startNanos;
             int exitDepth   = DepthTracker.exitAndGet();

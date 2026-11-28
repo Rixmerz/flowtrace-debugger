@@ -34,6 +34,7 @@ Context propagation is `contextvars`. `asyncio` tasks inherit it natively;
 | `FLOWTRACE_MAX_ARG_LENGTH` | Per-value limit on the JSON form of each argument and of the result; `0` disables. Default 512. Over the limit the value becomes `<truncated:{first N chars}...>`. |
 | `FLOWTRACE_REDACT_KEYS` | Extra key substrings to redact, comma-separated. Additive to the defaults (`password, secret, token, authorization, api_key, url, dsn, connection_string, email`); a matching argument name or nested dict key is written as `<redacted>`. |
 | `FLOWTRACE_TRACEPARENT` | A W3C `traceparent` to adopt at startup, set by whatever spawned this process. |
+| `FLOWTRACE_ROOT` | Project root the `file` field is relative to. Default: the cwd when the capture layer loads. A relative value is resolved against that cwd. |
 
 ## What the events look like
 
@@ -49,6 +50,29 @@ Context propagation is `contextvars`. `asyncio` tasks inherit it natively;
   JSON.
 - Docstrings, `__name__`, `__qualname__` and `__file__` of instrumented code
   are preserved.
+
+## `file` and `line`
+
+Every `enter` event ends with the place the function is declared, so a static
+index can join the span to its symbol; `exit` events do not carry them.
+
+- `file` is the source file as a POSIX path relative to the project root —
+  `FLOWTRACE_ROOT` if set, else the cwd the process started in. A file outside
+  the root is reported by its absolute path. Run from the repository root, or
+  set `FLOWTRACE_ROOT` to it, if the consumer indexes paths from there.
+- `line` is the 1-indexed line of the `def` / `async def` as written on disk.
+  For a decorated function it is the `def` line, not the first decorator.
+  Nested functions report their own `def` line.
+- Both are literals baked in when the module is transformed (`node.lineno`
+  read from the parsed AST before the body is rewritten), not computed per
+  call. They are never redacted and never truncated.
+- The bytecode cache is keyed on the resulting `file`, so tracing the same
+  sources under another root does not serve a stale path.
+- Each process resolves its own root: a child started in another directory
+  reports paths relative to *its* cwd unless `FLOWTRACE_ROOT` is set (the
+  variable is inherited through the environment like any other).
+- A manual `_ft_enter(...)` call that omits the two arguments produces an
+  event without them.
 
 ## Cross-process tracing is partly manual
 
@@ -75,6 +99,41 @@ That import only resolves under `flowtrace run`; guard it with
 - A forked child gets its own lock and file handle (`os.register_at_fork`).
 - The program's exit status, `atexit` handlers and thread joins are preserved
   (see above).
+
+## Spans the program did not cause
+
+- **Serialisation is not a call.** Rendering `args`, `result` and `error` runs
+  the program's own `__repr__` / `__str__`. While that happens, instrumented
+  functions invoked by the capture layer emit no span and leave the span
+  context alone (a `ContextVar` guard in `runtime.py`, per thread and per
+  asyncio task; one `ContextVar.get` per instrumented call). The text still
+  appears in the trace. A `__repr__` your own code calls is traced as usual.
+- **Known caveat: `repr()` of a user object is user code.** The format
+  records a non-primitive argument or result as its `repr()`, so that
+  `__repr__` runs in the traced program, and whatever it does (read a lazy
+  property, advance an iterator, bump a counter) really happens, at the
+  instrumented call rather than where the program would have done it. Spans are
+  suppressed, side effects are not. Seen on Django 5.1: an instrumented
+  `cached_property.__get__(self, instance, cls)` serialises `instance`;
+  `BaseFormSet.__repr__` reads `management_form`, whose first evaluation calls
+  `BaseForm.full_clean()`, so `test_formset_validation_count` (which counts
+  those calls) saw 5 instead of 4 when traced. Not fixable without dropping
+  the `repr` from the format. If a trace changes your program, redact the
+  argument so it is never rendered: `FLOWTRACE_REDACT_KEYS=instance` made that
+  suite pass. Narrowing `--package-prefix` away from the generic helper also
+  works. Or set `FLOWTRACE_SAFE_REPR=1` (opt-in): a value whose class defines
+  `__repr__` in Python is never repr()'d and is written as
+  `<module.QualName>` (no address, so two runs compare equal); containers of
+  primitives and objects without a custom `__repr__` render as before.
+- **What the span of a generator means.** A generator function's span opens at
+  the first `next()` and closes when the body finishes, raises or the generator
+  is closed, so its duration covers creation to exhaustion. It is the *current
+  parent* only while its own frame is executing: at every `yield` the context
+  the consumer had is restored, and re-entered when the consumer resumes it.
+  So the body of `with some_contextmanager():` and code between `next()` calls
+  belong to the real caller. Same for async generators. Limitation: a
+  `yield from sub()` pauses the outer span while `sub` runs, so spans inside an
+  instrumented `sub` are attributed to whoever drives the outer generator.
 
 ## Tests
 

@@ -191,7 +191,8 @@ El servidor MCP expone herramientas para que agentes de IA analicen trazas direc
 | `trace_tree` | Arbol de llamadas de una traza |
 | `trace_find_error` | Localiza la primera excepcion en el log |
 | `trace_private_calls` | Lista metodos internos no expuestos en la API |
-| `trace_diff` | Compara dos trazas (antes/despues de un cambio) |
+| `trace_diff` | Compara solo *qué* métodos corrieron y su duración media (antes/después) |
+| `trace_behavior_diff` | Compara el *comportamiento* de dos trazas (args, resultados, errores, estructura) — test de caracterización |
 
 Además expone el recurso `flowtrace://runtimes`: runtimes soportados, versión
 mínima, cómo se invoca cada uno y qué propagación tiene. Un agente lo lee en
@@ -207,6 +208,22 @@ bundle de un solo archivo:
 
 El plugin también deja `flowtrace` en el PATH, así que `flowtrace run -- ...`
 funciona sin instalación global.
+
+### Caracterización con trazas
+
+```bash
+flowtrace run -- python miapp.py                       # graba la base y versiónala
+flowtrace diff base.jsonl .flowtrace/<nueva>.jsonl     # 0 igual · 1 distinto · 2 error
+flowtrace diff base.jsonl nueva.jsonl --ignore-key created_at --ignore-method 'app.Logger.*' --json
+```
+
+`flowtrace run -o base.jsonl` vacía el archivo al empezar (`--append` para añadir
+a una traza existente). Los ignores pueden ir en `characterisation.json` junto a la
+base; cada entrada es un string o `{"name"|"key": ..., "reason": "..."}`, y `--json`
+devuelve los motivos en `ignored.reasons`.
+
+Ignora ts, duraciones, ids, hilos y file/line; normaliza `<redacted>` y hashes de
+identidad. Ver [docs/es/caracterizacion-con-trazas.md](docs/es/caracterizacion-con-trazas.md).
 
 ---
 
@@ -246,7 +263,7 @@ make test          # todo; ésta es la fuente de verdad
 
 Después de tocar…            | corre
 ---                          | ---
-`mcp-server/src`             | `make bundle-mcp`
+`mcp-server/src`             | `make bundle-mcp` (y `make bundle-diff` si es `behavior-diff.ts`)
 `flowtrace-dashboard/`       | `make bundle-dashboard`
 una capa de captura          | `make gen-golden` — y **revisa el diff**
 `mcp-server/src/runtimes.ts` | `make check-docs`

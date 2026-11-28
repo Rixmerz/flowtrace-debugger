@@ -47,9 +47,10 @@ function exitStatusFor(code, signal) {
 }
 
 /** Waits for the child and exits with the status the shell would report. */
-function exitWithChild(child) {
+function exitWithChild(child, onClose) {
   return new Promise((resolve) => {
     child.on('close', (code, signal) => {
+      if (onClose) onClose();
       if (signal) {
         console.error(chalk.yellow('Aviso:'), `el proceso terminó por señal ${signal}.`);
       }
@@ -115,12 +116,13 @@ function buildJavaInjection({ otelAgent, flExt, prefix, outPath, strategy, userA
   const optsFlags = jvmFlags.map(quoteJvmFlag).join(' ');
 
   // Explicit strategy overrides
-  if (strategy === 'mvn') {
-    const existing = env.MAVEN_OPTS || '';
-    env.MAVEN_OPTS = (existing + ' ' + optsFlags).trim();
-    return { cmd: first, args: rest, env };
-  }
-  if (strategy === 'gradle') {
+  // Maven and Gradle fork the JVMs that run the tests (surefire/failsafe, Gradle
+  // test workers). MAVEN_OPTS / GRADLE_OPTS only reach the build tool's own JVM,
+  // so the agent never loaded where the code under test runs and the trace came
+  // out empty. JAVA_TOOL_OPTIONS is inherited by every child JVM and, unlike a
+  // surefire `argLine`, composes with whatever the user already configured
+  // (JaCoCo). Any existing value is kept and ours appended.
+  if (strategy === 'mvn' || strategy === 'gradle') {
     const existing = env.JAVA_TOOL_OPTIONS || '';
     env.JAVA_TOOL_OPTIONS = (existing + ' ' + optsFlags).trim();
     return { cmd: first, args: rest, env };
@@ -133,12 +135,7 @@ function buildJavaInjection({ otelAgent, flExt, prefix, outPath, strategy, userA
     // Splice flags immediately after "java", before any -jar / main class
     return { cmd: first, args: [...jvmFlags, ...rest], env };
   }
-  if (bin === 'mvn' || bin === 'mvnw') {
-    const existing = env.MAVEN_OPTS || '';
-    env.MAVEN_OPTS = (existing + ' ' + optsFlags).trim();
-    return { cmd: first, args: rest, env };
-  }
-  if (bin === 'gradle' || bin === 'gradlew') {
+  if (bin === 'mvn' || bin === 'mvnw' || bin === 'gradle' || bin === 'gradlew') {
     const existing = env.JAVA_TOOL_OPTIONS || '';
     env.JAVA_TOOL_OPTIONS = (existing + ' ' + optsFlags).trim();
     return { cmd: first, args: rest, env };
@@ -188,13 +185,30 @@ function captureEnv(config) {
   return env;
 }
 
+/**
+ * The directory whose `.flowtrace/` this run belongs to: the nearest ancestor
+ * of `cwd` (cwd included) holding `.flowtrace/config.json`, else `cwd`.
+ * A run started from a subdirectory (`cd tests && flowtrace run -- ...`) used
+ * to read no config and plant a second `.flowtrace/` there.
+ */
+function findFlowtraceRoot(cwd) {
+  let dir = cwd;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.flowtrace', 'config.json'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return cwd;
+    dir = parent;
+  }
+}
+
 // ---------- main command ----------
 
 async function runCommand(options = {}, restArgs = []) {
   const cwd = process.cwd();
 
   // Read config (optional in v2 — auto-init if missing)
-  const cfgPath = path.join(cwd, '.flowtrace', 'config.json');
+  const flowRoot = findFlowtraceRoot(cwd);
+  const cfgPath = path.join(flowRoot, '.flowtrace', 'config.json');
   let config = {};
   if (fs.existsSync(cfgPath)) {
     config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
@@ -274,13 +288,31 @@ async function runCommand(options = {}, restArgs = []) {
   }
 
   // Build output path with ISO-UTC-no-colons filename
-  const outDir = path.join(cwd, '.flowtrace');
+  const outDir = path.join(flowRoot, '.flowtrace');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+Z$/, 'Z');
-  const outPath = options.out || path.join(outDir, `${stamp}.jsonl`);
+  // Absolute, against the directory `flowtrace run` started in: a relative path
+  // handed on to the capture layer is resolved in the child's cwd, so a traced
+  // command that does `cd` wrote the trace somewhere else and it looked lost.
+  const outPath = path.resolve(cwd, options.out || config.output || path.join(outDir, `${stamp}.jsonl`));
 
-  // Auto-add .flowtrace/ to .gitignore
-  ensureGitignore(cwd);
+  // The capture layers APPEND to the output file (several processes of one run
+  // share it), so a second run into the same name doubled the trace and made a
+  // later `flowtrace diff` report a difference. Start each run from an empty
+  // file; --append keeps the old behaviour. Truncate here, once, before any
+  // child process starts.
+  if (!options.append) {
+    try {
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      if (fs.existsSync(outPath)) fs.writeFileSync(outPath, '');
+    } catch (err) {
+      console.error(chalk.red('Error:'), `No se pudo vaciar ${outPath}: ${err.message}`);
+      process.exit(2);
+    }
+  }
+
+  // .gitignore is `flowtrace init`'s job: a run rewrote a tracked file in the
+  // user's tree every time it was started from a repository root.
 
   // ---- Java path ----
   if (lang === 'java') {
@@ -289,7 +321,7 @@ async function runCommand(options = {}, restArgs = []) {
 
   // ---- Python path ----
   if (lang === 'python') {
-    return runPython({ options, restArgs, cwd, outPath, config });
+    return runPython({ options, restArgs, cwd, flowRoot, outPath, config });
   }
 
   // ---- Node / TypeScript path ----
@@ -379,7 +411,23 @@ async function runJava({ options, restArgs, cwd, outPath, config = {} }) {
   // 6. Forward SIGINT so child can flush JSONL
   process.on('SIGINT', () => child.kill('SIGINT'));
 
-  return exitWithChild(child);
+  return exitWithChild(child, () => warnIfJavaTraceEmpty(outPath));
+}
+
+/**
+ * A Java run that wrote nothing looks exactly like a run that worked. Say so.
+ * @returns {boolean} true when a warning was printed
+ */
+function warnIfJavaTraceEmpty(outPath) {
+  let size = 0;
+  try { size = fs.statSync(outPath).size; } catch { /* missing = empty */ }
+  if (size > 0) return false;
+  console.error(chalk.yellow('Aviso:'), `la traza está vacía o no existe: ${outPath}`);
+  console.error(chalk.gray('  Causas probables:'));
+  console.error(chalk.gray('  - el package prefix no coincide con ninguna clase ejecutada (revisa --package-prefix)'));
+  console.error(chalk.gray('  - el código corre en una JVM hija (surefire, test workers de Gradle) que no heredó el agente'));
+  console.error(chalk.gray('  - el comando no llegó a ejecutar código Java (p. ej. pruebas ya en caché)'));
+  return true;
 }
 
 // ---------- Python injection ----------
@@ -406,7 +454,7 @@ function buildPythonEnv({ prefix, outPath, stubDir, captureKnobs = {} }) {
   };
 }
 
-async function runPython({ options, restArgs, cwd, outPath, config = {} }) {
+async function runPython({ options, restArgs, cwd, flowRoot = cwd, outPath, config = {} }) {
   // 1. Resolve stub dir (vendored, or capture/python/stub/ in a checkout).
   const stubDir = assets.pythonStubDir();
   if (!fs.existsSync(stubDir)) {
@@ -416,7 +464,7 @@ async function runPython({ options, restArgs, cwd, outPath, config = {} }) {
   }
 
   // 2. Copy stub to .flowtrace/python-stub/ (project-local).
-  const localStub = path.join(cwd, '.flowtrace', 'python-stub');
+  const localStub = path.join(flowRoot, '.flowtrace', 'python-stub');
   if (!fs.existsSync(localStub)) fs.mkdirSync(localStub, { recursive: true });
   const srcSite = path.join(stubDir, 'sitecustomize.py');
   const dstSite = path.join(localStub, 'sitecustomize.py');
@@ -813,6 +861,7 @@ async function runRust({ options, restArgs, cwd, outPath, config = {} }) {
 
 // Export internals for testing
 runCommand._buildJavaInjection = buildJavaInjection;
+runCommand._warnIfJavaTraceEmpty = warnIfJavaTraceEmpty;
 runCommand._buildNodeEnv = buildNodeEnv;
 runCommand._ensureGitignore = ensureGitignore;
 runCommand._exitStatusFor = exitStatusFor;

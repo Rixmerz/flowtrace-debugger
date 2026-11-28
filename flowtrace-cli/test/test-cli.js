@@ -1,5 +1,5 @@
 /**
- * v2 CLI smoke test: --help shows exactly init, run, analyze.
+ * v2 CLI smoke test: --help shows init, run, analyze and diff.
  */
 
 'use strict';
@@ -23,10 +23,10 @@ function run(args, opts = {}) {
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 
-test('--help lists exactly init, run, analyze', () => {
+test('--help lists init, run, analyze, diff', () => {
   const out = run(['--help']);
   // commander lists each command on its own line
-  for (const cmd of ['init', 'run', 'analyze']) {
+  for (const cmd of ['init', 'run', 'analyze', 'diff']) {
     assert.ok(new RegExp(`\\b${cmd}\\b`).test(out), `--help mentions ${cmd}`);
   }
   for (const removed of ['install', 'update', 'status']) {

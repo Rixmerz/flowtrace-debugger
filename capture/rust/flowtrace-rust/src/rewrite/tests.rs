@@ -1,7 +1,7 @@
 use super::{instrument, Options};
 
 fn run(src: &str, prefix: &str) -> (String, usize) {
-    let r = instrument(src, &Options { package: "demo", file_module: vec!["wal".into()], prefix }).expect("parses");
+    let r = instrument(src, &Options { package: "demo", file_module: vec!["wal".into()], prefix, file: None }).expect("parses");
     (r.text, r.functions)
 }
 
@@ -104,17 +104,83 @@ fn a_shebang_file_is_left_alone() {
 
 #[test]
 fn unparseable_source_is_an_error_not_a_panic() {
-    assert!(instrument("fn (", &Options { package: "d", file_module: vec![], prefix: "" }).is_err());
+    assert!(instrument("fn (", &Options { package: "d", file_module: vec![], prefix: "", file: None }).is_err());
 }
 
 #[test]
 fn code_stays_in_its_column_and_inline_bodies_are_skipped() {
     let src = "fn ok() {\n    panic!(\"x\")\n}\nfn never() -> ! { panic!(\"boom\") }\nfn a() {} fn b() {\n    1;\n}\n";
-    let r = instrument(src, &Options { package: "d", file_module: vec![], prefix: "" }).expect("parses");
+    let r = instrument(src, &Options { package: "d", file_module: vec![], prefix: "", file: None }).expect("parses");
     assert_eq!((r.functions, r.skipped_inline), (2, 2), "`ok` and `b` are traced: {}", r.text);
     // Every original line is still a prefix of its output line, so no column moved.
     for (o, n) in src.lines().zip(r.text.lines()) {
         assert!(n.starts_with(o) || o == "}" , "{n:?} does not start with {o:?}");
     }
     assert!(r.text.lines().nth(1).unwrap().starts_with("    panic!(\"x\")"));
+}
+
+fn located(src: &str) -> String {
+    let opts = Options { package: "demo", file_module: vec!["wal".into()], prefix: "", file: Some("crates/demo/src/wal.rs") };
+    instrument(src, &opts).expect("parses").text
+}
+
+#[test]
+fn the_declaration_line_and_original_file_are_spliced_in_as_literals() {
+    let src = "\
+pub struct S;
+
+impl S {
+    /// A doc comment,
+    /// on two lines.
+    #[inline]
+    #[must_use]
+    pub fn method(&self, n: u8) -> u8 {
+        n
+    }
+}
+
+fn free() {
+}
+
+#[cfg(not(test))]
+pub(crate) fn spread<T>(
+    t: T,
+) -> T
+where
+    T: Clone,
+{
+    t
+}
+
+mod inner {
+    pub fn nested() {
+    }
+}
+";
+    let out = located(src);
+    // An impl method behind doc comments and attributes: the `fn` keyword's line.
+    assert!(out.contains(r#"Meta::located("demo::wal", "S", "method", "public", "crates/demo/src/wal.rs", 8)"#), "{out}");
+    // A free function.
+    assert!(out.contains(r#"Meta::located("demo::wal", "", "free", "private", "crates/demo/src/wal.rs", 13)"#), "{out}");
+    // A signature spread over several lines, behind an attribute.
+    assert!(out.contains(r#"Meta::located("demo::wal", "", "spread", "internal", "crates/demo/src/wal.rs", 17)"#), "{out}");
+    // An inline module keeps the file it is written in.
+    assert!(out.contains(r#"Meta::located("demo::wal::inner", "", "nested", "public", "crates/demo/src/wal.rs", 27)"#), "{out}");
+    assert!(!out.contains("Meta::new("), "every function got its location: {out}");
+    assert_eq!(out.lines().count(), src.lines().count(), "the lines reported are still the lines of the output");
+}
+
+#[test]
+fn trait_default_methods_and_trait_impls_report_their_own_lines() {
+    let src = "trait Shape {\n    fn area(&self) -> u32 {\n        1\n    }\n}\nstruct P;\nimpl Shape for P {\n    #[allow(dead_code)]\n    fn area(&self) -> u32 {\n        2\n    }\n}\n";
+    let out = located(src);
+    assert!(out.contains(r#"Meta::located("demo::wal", "Shape", "area", "public", "crates/demo/src/wal.rs", 2)"#), "{out}");
+    assert!(out.contains(r#"Meta::located("demo::wal", "P", "area", "public", "crates/demo/src/wal.rs", 9)"#), "{out}");
+}
+
+#[test]
+fn without_a_file_no_location_is_recorded() {
+    let (out, n) = run("fn f() {\n}\n", "");
+    assert_eq!(n, 1);
+    assert!(out.contains("Meta::new(") && !out.contains("located("), "{out}");
 }

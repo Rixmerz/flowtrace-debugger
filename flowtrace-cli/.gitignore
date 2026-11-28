@@ -12,7 +12,12 @@ vendor/java/*.jar
 # `vendor/*` (not `vendor/`) so git still descends into vendor/dashboard/ to
 # apply the negation below — a negated pattern cannot re-include a path whose
 # parent directory is itself excluded.
+#
+# vendor/trace-diff/ is the same kind of exception: the esbuild bundle of
+# mcp-server/src/behavior-diff.ts that `flowtrace diff` runs (see
+# scripts/bundle-diff.mjs), guarded by the same `make check-bundle`.
 vendor/*
 !vendor/dashboard/
+!vendor/trace-diff/
 
 *.tgz

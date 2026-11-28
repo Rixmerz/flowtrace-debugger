@@ -87,6 +87,35 @@ fn spans_become_enter_and_exit_with_args_ids_and_depth() {
     assert_eq!(ev[1]["result"], serde_json::json!({}));
 }
 
+// Its own spans: every test in this file shares one trace and tells its events
+// apart by span name, so reusing `lt_outer` here doubled the events another
+// test counts whenever the two ran in the same order on a slower machine.
+#[instrument]
+fn lt_loc_outer(n: i32) -> i32 {
+    lt_loc_inner(n) + 1
+}
+
+#[instrument]
+fn lt_loc_inner(n: i32) -> i32 {
+    n * 2
+}
+
+#[test]
+fn the_callsite_file_and_line_are_on_enter_only() {
+    traced(|| lt_loc_outer(1));
+    for name in ["lt_loc_outer", "lt_loc_inner"] {
+        let ev = events(name);
+        let (enter, exit) = (&ev[0], &ev[1]);
+        // cargo hands rustc a workspace member's path relative to the workspace root.
+        assert_eq!(enter["file"], "flowtrace-tracing/tests/layer.rs", "{enter}");
+        let line = enter["line"].as_u64().expect("a line") as usize;
+        // `#[instrument]` reports the function: its `fn` line or the attribute's, just above.
+        let decl = 1 + include_str!("layer.rs").lines().position(|l| l.starts_with(&format!("fn {name}("))).unwrap();
+        assert!(line == decl || line + 1 == decl, "{name}: line {line}, declared at {decl}");
+        assert!(exit.get("file").is_none() && exit.get("line").is_none(), "{exit}");
+    }
+}
+
 #[test]
 fn instrument_err_becomes_the_exit_error() {
     let _ = traced(lt_fails);
