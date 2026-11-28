@@ -28,7 +28,8 @@ Ejecuta el programa con una entrada fija y define un prefijo de paquete
 frameworks.
 
 Opciones: `--ignore-method <glob>` y `--ignore-key <clave>` (repetibles),
-`--ignore-order`, `--no-error-msg`, `--limit N` (ejemplos por categoría, 10 por
+`--ignore-order`, `--no-error-msg`, `--no-normalize-addresses` (compara las
+direcciones de memoria como `0x7f3a…` tal cual, en vez de `0x<addr>`), `--limit N` (ejemplos por categoría, 10 por
 defecto; los conteos son siempre exactos), `--json` (el mismo objeto que
 devuelve la herramienta MCP).
 

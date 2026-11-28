@@ -409,13 +409,14 @@ mcp.tool(
     ignore_keys: z.array(z.string()).optional().describe("Volatile keys to drop from args/result: a bare name or glob (created_at, *_id) matches at any depth; a path anchored at args. or result. (result.user.id, args.items.*.ts) matches exactly there"),
     ignore_order: z.boolean().optional().describe("Treat sibling call order as irrelevant. Use for concurrent flows (threads, goroutines, Promise.all), where order is scheduling. Default false"),
     compare_error_msg: z.boolean().optional().describe("Also compare error messages, reported as error_msg_changed. Default true"),
+    normalize_addresses: z.boolean().optional().describe("Rewrite memory addresses inside strings (0x7f3a…, including one cut by truncation) to 0x<addr> before comparing, so the same program run twice does not differ by object addresses. Default true; false compares them verbatim"),
     limit: z.number().int().nonnegative().optional().describe("Max samples per category (default 10). Counts in `summary` are always exact"),
   },
-  async ({ sessionId_a, sessionId_b, ignore_methods, ignore_keys, ignore_order, compare_error_msg, limit }) => {
+  async ({ sessionId_a, sessionId_b, ignore_methods, ignore_keys, ignore_order, compare_error_msg, normalize_addresses, limit }) => {
     const a = getSession(sessionId_a);
     const b = getSession(sessionId_b);
     return ok(traceBehaviorDiff(v2OnlyEvents(a), v2OnlyEvents(b), {
-      ignore_methods, ignore_keys, ignore_order, compare_error_msg, limit,
+      ignore_methods, ignore_keys, ignore_order, compare_error_msg, normalize_addresses, limit,
     }));
   }
 );
