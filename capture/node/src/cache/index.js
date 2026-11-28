@@ -37,7 +37,7 @@ try {
  */
 function transformFingerprint() {
   const hash = createHash('sha256');
-  for (const rel of ['../transform/swc.js', '../runtime/instrument.js']) {
+  for (const rel of ['../transform/swc.js', '../transform/source-location.js', '../runtime/instrument.js']) {
     try {
       hash.update(readFileSync(new URL(rel, import.meta.url)));
     } catch {
@@ -75,12 +75,16 @@ function ensureCacheDir() {
  *   - `runtimePath`: the resolved specifier is written into the injected import.
  *   - `filename`:  the `module` field of every event is derived from it, so two
  *     identical files at different paths must not share an entry.
+ *   - `root`: the `file` field of every enter event is the filename relative
+ *     to it, so the same file traced under another FLOWTRACE_ROOT (or from
+ *     another cwd) must not be served the old relative path.
  *
  * @param {string} source
  * @param {object} [opts]
  * @param {string} [opts.filename]
  * @param {string} [opts.moduleType]
  * @param {string} [opts.runtimePath]
+ * @param {string} [opts.root]
  * @returns {string}
  */
 export function cacheKey(source, opts = {}) {
@@ -98,6 +102,8 @@ export function cacheKey(source, opts = {}) {
     .update(opts.moduleType ?? '')
     .update('\x00')
     .update(opts.runtimePath ?? '')
+    .update('\x00')
+    .update(opts.root ?? '')
     .digest('hex');
 }
 

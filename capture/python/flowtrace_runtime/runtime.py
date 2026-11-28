@@ -186,16 +186,31 @@ def _ft_enter(
     qualname: str,
     locals_dict: dict[str, Any],
     visibility: str,
+    file: str | None = None,
+    line: int | None = None,
 ) -> dict:
-    """Called at the start of every instrumented function. Returns a ctx dict."""
+    """Called at the start of every instrumented function. Returns a ctx dict.
+
+    ``file`` / ``line`` are the declaration site, baked in as literals by the
+    transformer (POSIX path relative to the project root, 1-indexed ``def``
+    line). They are optional — a caller that omits them gets an event without
+    them — and they are written as given: never redacted, never truncated.
+    """
     try:
-        return _enter(module, qualname, locals_dict, visibility)
+        return _enter(module, qualname, locals_dict, visibility, file, line)
     except BaseException:  # noqa: BLE001 — must never reach the traced program
         _internal_failure("_ft_enter")
         return _DEAD_CTX
 
 
-def _enter(module: str, qualname: str, locals_dict: dict[str, Any], visibility: str) -> dict:
+def _enter(
+    module: str,
+    qualname: str,
+    locals_dict: dict[str, Any],
+    visibility: str,
+    file: str | None = None,
+    line: int | None = None,
+) -> dict:
     parent_id: str | None = current_span_id.get() or None
     trace_id = current_trace_id.get() or new_trace_id()
     span_id = new_span_id()
@@ -206,8 +221,7 @@ def _enter(module: str, qualname: str, locals_dict: dict[str, Any], visibility: 
         class_name, method_name = _extract_class_method(qualname)
         args = _serialize_args(locals_dict)
 
-        emitter = Emitter.instance()
-        emitter.emit({
+        event = {
             "ts": time.time(),
             "trace_id": trace_id,
             "span_id": span_id,
@@ -221,7 +235,12 @@ def _enter(module: str, qualname: str, locals_dict: dict[str, Any], visibility: 
             "visibility": visibility,
             "args": args,
             "depth": depth,
-        })
+        }
+        # Enter only, and both or neither: a line with no file names nothing.
+        if file is not None and line is not None:
+            event["file"] = file
+            event["line"] = line
+        Emitter.instance().emit(event)
     except BaseException:
         # The span never opened as far as the trace is concerned, so the
         # context must not stay entered — every later call in this thread

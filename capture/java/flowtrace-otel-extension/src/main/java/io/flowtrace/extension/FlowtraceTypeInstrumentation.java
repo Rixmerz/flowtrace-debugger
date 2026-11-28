@@ -1,5 +1,7 @@
 package io.flowtrace.extension;
 
+import io.flowtrace.advice.SourceFile;
+import io.flowtrace.advice.SourceLine;
 import io.opentelemetry.javaagent.extension.instrumentation.TypeInstrumentation;
 import io.opentelemetry.javaagent.extension.instrumentation.TypeTransformer;
 import net.bytebuddy.description.type.TypeDescription;
@@ -28,11 +30,24 @@ public class FlowtraceTypeInstrumentation implements TypeInstrumentation {
 
     @Override
     public void transform(TypeTransformer transformer) {
+        // Must stay ahead of the advice: it reads the class's source file and
+        // per-method first lines while the loader is in hand and publishes
+        // them for SourceLocationMapping, which ByteBuddy only gives a type
+        // description. Ordering and thread-affinity are argued in
+        // SourceLocations.
+        transformer.applyTransformer((builder, type, classLoader, module, protectionDomain) -> {
+            SourceLocations.publish(type.getName(),
+                    SourceLocations.read(classLoader, type.getInternalName()));
+            return builder;
+        });
         transformer.applyAdviceToMethod(
                 isMethod()
                         .and(not(isAbstract()))
                         .and(not(isSynthetic()))
                         .and(not(isTypeInitializer())),
+                mapping -> mapping
+                        .bind(SourceFile.class, SourceLocationMapping.FILE)
+                        .bind(SourceLine.class, SourceLocationMapping.LINE),
                 "io.flowtrace.advice.FlowtraceAdvice"
         );
     }

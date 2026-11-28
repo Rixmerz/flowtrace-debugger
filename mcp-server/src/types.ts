@@ -28,6 +28,11 @@ export interface BaseEvent {
   method: string;
   visibility?: Visibility;
   depth?: number;
+  /** Source file declaring the function, relative to the project root.
+   *  Optional, and on `enter` only: older traces and some runtimes omit it. */
+  file?: string;
+  /** A line inside the function's own span in `file` (never the call site). */
+  line?: number;
 }
 
 export interface EnterEvent extends BaseEvent {

@@ -82,8 +82,12 @@ def _assign(target_id: str, value: ast.expr, ref: ast.AST) -> ast.Assign:
 class FlowtraceTransformer(ast.NodeTransformer):
     """Rewrite function bodies to emit FlowTrace enter/exit events."""
 
-    def __init__(self, module_name: str) -> None:
+    def __init__(self, module_name: str, source_file: str | None = None) -> None:
         self._module_name = module_name
+        # The `file` of every enter event of this module, already relative to
+        # the project root (see loader.source_file_for). None = unknown, and
+        # then neither `file` nor `line` is passed to _ft_enter.
+        self._source_file = source_file
         self._class_stack: list[str] = []
 
     # ------------------------------------------------------------------
@@ -113,6 +117,10 @@ class FlowtraceTransformer(ast.NodeTransformer):
         self.generic_visit(node)
 
         ref = node  # Use original node for location copying.
+        # The `def` line as written on disk: ast gives a decorated function the
+        # line of its `def`, not of its first decorator (3.8+), and it is read
+        # here, from the parsed node, before anything below rewrites the body.
+        def_line = getattr(node, "lineno", None)
         func_name = node.name
         qualname = ".".join(self._class_stack + [func_name]) if self._class_stack else func_name
         visibility = _visibility(func_name)
@@ -137,6 +145,9 @@ class FlowtraceTransformer(ast.NodeTransformer):
             ],
             ref,
         )
+        if self._source_file and isinstance(def_line, int) and def_line >= 1:
+            enter_call.args.append(ast.Constant(value=self._source_file))
+            enter_call.args.append(ast.Constant(value=def_line))
         for arg in enter_call.args:
             ast.copy_location(arg, ref)
 

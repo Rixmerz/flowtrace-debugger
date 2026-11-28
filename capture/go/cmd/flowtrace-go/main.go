@@ -165,7 +165,13 @@ func run(argv []string) int {
 	selected := selectPackages(pkgs, prefixes)
 	reportSelection(os.Stderr, selected, pkgs, modulePath, prefixes)
 
-	report, err := instrumentPackages(selected, moduleDir, modulePath, workDir, overlay)
+	sourceRoot, err := resolveSourceRoot(os.Getenv("FLOWTRACE_ROOT"), cwd, moduleDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[flowtrace-go] %v\n", err)
+		return 1
+	}
+
+	report, err := instrumentPackages(selected, moduleDir, modulePath, sourceRoot, workDir, overlay)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[flowtrace-go] %v\n", err)
 		return 1
@@ -499,7 +505,11 @@ type instrumentReport struct {
 // Test files never appear in GoFiles at all, and the transformer's own
 // skip path (kept as a WARNING) is left for what remains: a file `go list`
 // accepted but go/parser cannot parse.
-func instrumentPackages(pkgs []goPackage, moduleDir, modulePath, workDir string, overlay map[string]string) (instrumentReport, error) {
+//
+// sourceRoot is the project root every event's `file` is reported relative
+// to (see resolveSourceRoot); the path handed to the transformer is always
+// the original file's, never its staged copy under workDir.
+func instrumentPackages(pkgs []goPackage, moduleDir, modulePath, sourceRoot, workDir string, overlay map[string]string) (instrumentReport, error) {
 	var report instrumentReport
 	for _, pkg := range pkgs {
 		if pkg.Module == nil || !pkg.Module.Main {
@@ -514,7 +524,7 @@ func instrumentPackages(pkgs []goPackage, moduleDir, modulePath, workDir string,
 				return report, fmt.Errorf("reading %s: %w", abs, err)
 			}
 
-			res, err := transform.File(abs, src, modulePath, pkg.ImportPath)
+			res, err := transform.FileAt(abs, transform.SourceFile(sourceRoot, abs), src, modulePath, pkg.ImportPath)
 			if err != nil {
 				return report, fmt.Errorf("instrumenting %s: %w", abs, err)
 			}
@@ -542,6 +552,37 @@ func instrumentPackages(pkgs []goPackage, moduleDir, modulePath, workDir string,
 		}
 	}
 	return report, nil
+}
+
+// resolveSourceRoot picks the directory the trace's `file` paths are
+// relative to: FLOWTRACE_ROOT when set, otherwise the module root (the
+// directory of go.mod, as `go list` reports it). The override exists for a
+// module that is not the top of its repository — a static index built at the
+// repository root records `services/api/handler.go`, not `handler.go`, and
+// the two only join if both sides agree on the root.
+//
+// A relative FLOWTRACE_ROOT is resolved against the target module directory
+// (cwd, the -dir flag), the same way a relative -overlay is: this process's
+// own working directory is capture/go, which means nothing to the user. A
+// root that does not exist is an error, not a silent fallback — every path
+// in the trace would come out absolute and nothing would join.
+func resolveSourceRoot(override, cwd, moduleDir string) (string, error) {
+	if override == "" {
+		return moduleDir, nil
+	}
+	root := override
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(cwd, root)
+	}
+	root = filepath.Clean(root)
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", fmt.Errorf("FLOWTRACE_ROOT=%s: %w", override, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("FLOWTRACE_ROOT=%s is not a directory", override)
+	}
+	return root, nil
 }
 
 // synthesizeRuntime copies every non-test .go file out of runtimeSrc

@@ -35,6 +35,23 @@ const maxSerializeDepth = 6
 // per Go's exported-identifier rule (Go has no third case). argPairs
 // alternates parameter name, value, name, value, ... in declaration order.
 func Enter(module, class, method, visibility string, argPairs ...any) *Span {
+	return EnterAt("", 0, module, class, method, visibility, argPairs...)
+}
+
+// EnterAt is Enter plus the source location of the function's declaration,
+// which is what the transformer injects whenever it knows where the file sits
+// under the project root.
+//
+// file is the ORIGINAL source file (never the overlay copy) as a POSIX path
+// relative to the project root, and line the 1-indexed line of the `func`
+// keyword. Both are compile-time literals spliced in by the transformer, so
+// nothing is resolved at run time, and they are written to the "enter" event
+// only: they exist so a static index can join a span to the symbol that
+// declares it, and pairing enter with exit never needs them. They are
+// metadata, not captured values — never redacted, never truncated. An empty
+// file or a non-positive line omits both keys, since one without the other
+// joins to nothing.
+func EnterAt(file string, line int, module, class, method, visibility string, argPairs ...any) *Span {
 	keys := redactKeys()
 	maxLen := maxArgLength()
 
@@ -55,7 +72,7 @@ func Enter(module, class, method, visibility string, argPairs ...any) *Span {
 	// goroutine id instead of its own.
 	s.goroutineID = goroutineID()
 
-	s.entered = emit(map[string]any{
+	event := map[string]any{
 		"ts":         nowSeconds(),
 		"trace_id":   s.traceID,
 		"span_id":    s.spanID,
@@ -69,7 +86,12 @@ func Enter(module, class, method, visibility string, argPairs ...any) *Span {
 		"visibility": visibility,
 		"args":       args,
 		"depth":      s.depth,
-	})
+	}
+	if file != "" && line > 0 {
+		event["file"] = file
+		event["line"] = line
+	}
+	s.entered = emit(event)
 	return s
 }
 

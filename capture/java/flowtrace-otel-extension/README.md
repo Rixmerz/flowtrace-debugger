@@ -88,6 +88,43 @@ Each value goes through the same three rules every FlowTrace runtime applies
 `ts` is epoch seconds with six fraction digits (microseconds), always with a
 `.` decimal point regardless of the JVM's locale.
 
+## `file` / `line`: where the method is declared
+
+Every `enter` event ends with the location of the method it entered, so a
+static indexer can join the span to the symbol that declares it:
+
+```json
+{"…":"…","depth":1,"file":"com/acme/billing/InvoiceService.java","line":42}
+```
+
+- **`file`** is the class's package as a directory plus the class file's
+  `SourceFile` attribute, with `/` separators. It is relative to the **source
+  root** (`src/main/java`, `src/test/java`, a Gradle source set…), not to the
+  project: the JVM never learns which root a class came from, so a consumer
+  has to match it as a path suffix. Nested, local, anonymous and lambda-holding
+  classes report the file of their outermost class, because that is what their
+  `SourceFile` says — `class` is still `Outer$Inner`.
+- **`line`** is the 1-indexed **first line of the method's body** as recorded
+  in the debug line table (the line of the first instruction). It is not the
+  line of the declaration — a signature spread over several lines, or
+  annotations above it, sit before it — and never the call site. It always
+  falls inside the method, so "the innermost symbol whose span contains this
+  line" resolves it; overloads get their own line.
+- They are **omitted, never guessed**. A class with no `SourceFile` attribute
+  (`javac -g:none`, some bytecode generators) emits neither; one with
+  `SourceFile` but no line table (`-g:source`) emits `file` only. `line`
+  never appears without `file`. A `SourceFile` that is itself a path rather
+  than a file name counts as absent, as does a class whose `.class` file the
+  classloader cannot hand back (a class generated at runtime).
+- `exit` events do not carry them; pair an exit with its enter by `span_id`.
+- Neither is redacted or truncated: they describe the program, not its data.
+
+Both are resolved **once per class, while it is being woven**, and compiled
+into each woven method as two constants, so they cost nothing per call. The
+reasoning, and why it reads the class file by hand rather than with ASM, is in
+`extension/SourceLocations`. Kotlin, Scala and Groovy classes work the same
+way and report whatever their compiler wrote (`com/acme/Foo.kt`).
+
 ## Bytecode target 11, JDK matrix 17 / 21 / 25
 
 The jar is compiled with `--release 11`. That number is the **floor of what
@@ -138,6 +175,8 @@ parent only where that context reaches it:
 |------|------|
 | `extension/FlowtraceInstrumentationModule` | SPI entry: registers the type instrumentations and the helper classes that must be injected next to the application. |
 | `extension/FlowtraceTypeInstrumentation` | Matches classes under the prefix and applies `FlowtraceAdvice` to their concrete methods. |
+| `extension/SourceLocations` | Reads `SourceFile` and each method's first line from the class file at weave time. |
+| `extension/SourceLocationMapping` | Binds them into the advice as per-method constants (`@SourceFile`, `@SourceLine`). |
 | `extension/ThreadContextInstrumentation` | Weaves `VirtualThread.start/run` for context propagation. |
 | `advice/FlowtraceAdvice` | The woven enter/exit advice: span per call, depth, args, result, error. |
 | `advice/TraceparentSeed` | Reads and validates the process-level `traceparent` carrier. |

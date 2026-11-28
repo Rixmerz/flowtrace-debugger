@@ -47,6 +47,8 @@ fn parse(args: &[String]) -> Result<Cli, String> {
 /// What `cargo metadata` says about the workspace.
 struct Workspace {
     target_directory: PathBuf,
+    /// The directory of the workspace's root `Cargo.toml`.
+    root: PathBuf,
     /// `(package, module root)` per workspace package, both with `-` as `_`. The
     /// root is what the code is called in a Rust path: the library target's name
     /// (`kerno_storage` for the package `kernodb-storage`), else the package's.
@@ -83,6 +85,7 @@ fn metadata(dir: &Path, toolchain: Option<&str>) -> Result<Workspace, String> {
         .collect();
     Ok(Workspace {
         target_directory: PathBuf::from(v["target_directory"].as_str().ok_or("cargo metadata has no target_directory")?),
+        root: PathBuf::from(v["workspace_root"].as_str().ok_or("cargo metadata has no workspace_root")?),
         packages,
     })
 }
@@ -108,6 +111,25 @@ fn detect_prefix(packages: &[String]) -> String {
     let common = common.trim_end_matches('_').to_owned();
     // A one- or two-letter overlap says nothing about the project.
     if common.len() >= 3 { common } else { String::new() }
+}
+
+/// The directory the trace's `file` paths are relative to: `FLOWTRACE_ROOT` when
+/// set, else the cargo workspace root. The override is for a workspace that is not
+/// the top of its repository: an index built at the repository root records
+/// `services/api/src/lib.rs`, and the two only join if both agree on the root.
+///
+/// A relative override is resolved against `--dir`, the directory cargo runs in.
+/// A root that is not a directory is an error rather than a silent fallback: every
+/// path in the trace would come out absolute and nothing would join.
+fn source_root(override_: Option<&str>, dir: &Path, workspace_root: &Path) -> Result<PathBuf, String> {
+    let Some(raw) = override_.filter(|r| !r.is_empty()) else { return Ok(workspace_root.to_path_buf()) };
+    let root = if Path::new(raw).is_absolute() { PathBuf::from(raw) } else { dir.join(raw) };
+    // Absolute and free of `..`, so the wrapper can compare it to cargo's absolute paths.
+    let root = std::fs::canonicalize(&root).map_err(|e| format!("FLOWTRACE_ROOT={raw}: {e}"))?;
+    if !root.is_dir() {
+        return Err(format!("FLOWTRACE_ROOT={raw} is not a directory"));
+    }
+    Ok(root)
 }
 
 fn short_hash(parts: &[&str]) -> String {
@@ -149,6 +171,7 @@ fn drive(args: &[String]) -> Result<ExitCode, String> {
     let prefix = cli.prefix.clone().unwrap_or_else(|| detect_prefix(&roots));
     // The wrapper learns each package's module root from here: it is only told the package.
     let module_roots = ws.packages.iter().map(|(p, r)| format!("{p}={r}")).collect::<Vec<_>>().join(";");
+    let root = source_root(std::env::var("FLOWTRACE_ROOT").ok().as_deref(), &cli.dir, &ws.root)?;
     let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or(ws.target_directory);
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe_stamp = std::fs::metadata(&exe)
@@ -156,10 +179,11 @@ fn drive(args: &[String]) -> Result<ExitCode, String> {
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_secs());
-    // One build directory per (prefix, wrapper build). Cargo's fingerprints do not
-    // know the wrapper or the prefix changed, so reusing a directory across
-    // either would serve a stale, differently-instrumented artifact.
-    let build = target.join(format!("flowtrace-{}", short_hash(&[&prefix, &exe_stamp.to_string()])));
+    // One build directory per (prefix, wrapper build, source root). Cargo's
+    // fingerprints do not know the wrapper, the prefix or the root changed, so
+    // reusing a directory across any of them would serve a stale,
+    // differently-instrumented artifact (the root is compiled in, as each `file`).
+    let build = target.join(format!("flowtrace-{}", short_hash(&[&prefix, &exe_stamp.to_string(), &root.to_string_lossy()])));
     std::fs::create_dir_all(&build).map_err(|e| format!("{}: {e}", build.display()))?;
 
     let rt_dir = build_runtime(&cli.capture_dir, &build, toolchain.as_deref())?;
@@ -181,7 +205,8 @@ fn drive(args: &[String]) -> Result<ExitCode, String> {
         .env(wrap::ENV_RT_DIR, &rt_dir)
         .env(wrap::ENV_SHADOW, &shadow)
         .env(wrap::ENV_PREFIX, &prefix)
-        .env(wrap::ENV_ROOTS, &module_roots);
+        .env(wrap::ENV_ROOTS, &module_roots)
+        .env(wrap::ENV_SOURCE_ROOT, &root);
     // Doc tests are compiled by rustdoc, which the rustc wrapper never sees.
     let rustdocflags = std::env::var("RUSTDOCFLAGS").unwrap_or_default();
     cmd.env("RUSTDOCFLAGS", format!("{rustdocflags} -L dependency={}", rt_dir.display()));
@@ -223,7 +248,23 @@ fn build_runtime(capture_dir: &Path, build: &Path, toolchain: Option<&str>) -> R
 
 #[cfg(test)]
 mod tests {
-    use super::detect_prefix;
+    use super::{detect_prefix, source_root};
+    use std::path::Path;
+
+    #[test]
+    fn the_source_root_is_the_workspace_unless_overridden() {
+        let ws = tempfile::tempdir().unwrap();
+        let member = ws.path().join("crates");
+        std::fs::create_dir_all(&member).unwrap();
+        let real = std::fs::canonicalize(ws.path()).unwrap();
+
+        assert_eq!(source_root(None, &member, ws.path()).unwrap(), ws.path());
+        assert_eq!(source_root(Some(""), &member, ws.path()).unwrap(), ws.path());
+        // Relative to --dir, not to this process's own directory.
+        assert_eq!(source_root(Some(".."), &member, Path::new("/unused")).unwrap(), real);
+        assert_eq!(source_root(Some(real.to_str().unwrap()), &member, Path::new("/unused")).unwrap(), real);
+        assert!(source_root(Some("no-such-dir"), &member, ws.path()).is_err());
+    }
 
     fn names(n: &[&str]) -> Vec<String> {
         n.iter().map(|s| (*s).to_owned()).collect()

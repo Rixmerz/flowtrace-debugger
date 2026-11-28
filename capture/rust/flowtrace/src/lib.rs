@@ -38,7 +38,7 @@ pub use span::{current_traceparent, remote_context, RemoteGuard};
 #[doc(hidden)]
 pub mod __rt {
     pub use crate::config::get as config;
-    pub use crate::event::{fragment, write_enter, write_exit, ErrorInfo, Identity};
+    pub use crate::event::{fragment, location, write_enter, write_exit, ErrorInfo, Identity};
     pub use crate::ids::{new_span_id, new_trace_id, SpanId, TraceId};
     pub use crate::json::{redact_debug, str_lit, truncate};
     pub use crate::sink::{admit, ensure_init, read_complete_lines};

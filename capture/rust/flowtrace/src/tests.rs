@@ -313,3 +313,43 @@ fn read_complete_lines_drops_a_tail_cut_by_an_overlapping_write() {
     let _ = std::fs::remove_file(&torn);
     assert_eq!(text.expect("the file exists"), format!("{whole}\n"));
 }
+
+#[test]
+fn the_source_location_is_on_enter_only_and_is_never_redacted_or_truncated() {
+    setup();
+    // A path past FLOWTRACE_MAX_ARG_LENGTH (64 here) made of redacted words: the
+    // location is metadata, so neither rule may touch it.
+    const FILE: &str = "crates/secret_token/src/password/a/very/long/directory/chain/that/passes/the/limit/api_key.rs";
+    static M: Meta = Meta::located("unit", "T", "loc_known", "public", FILE, 42);
+    let guard = enter(&M, &mut |_a| {});
+    guard.finish(&mut |o| (&&&&&&&&&&&__FtP(&7u8)).ft_result(o));
+
+    let ev = events("loc_known");
+    assert_eq!(ev.len(), 2);
+    assert_eq!(ev[0]["event"], "enter");
+    assert_eq!(ev[0]["file"], FILE);
+    assert_eq!(ev[0]["line"], 42);
+    assert_eq!(ev[1]["event"], "exit");
+    assert!(ev[1].get("file").is_none() && ev[1].get("line").is_none(), "{}", ev[1]);
+
+    // They are the last two keys of the enter line, after `depth`.
+    let raw = crate::sink::read_complete_lines(&setup()).unwrap();
+    let line = raw.lines().find(|l| l.contains("\"loc_known\"") && l.contains("\"enter\"")).unwrap();
+    assert!(line.ends_with(&format!(",\"depth\":0,\"file\":\"{FILE}\",\"line\":42}}")), "{line}");
+}
+
+#[test]
+fn an_unknown_source_location_omits_both_keys() {
+    setup();
+    static PLAIN: Meta = Meta::new("unit", "T", "loc_none_a", "public");
+    static NO_LINE: Meta = Meta::located("unit", "T", "loc_none_b", "public", "src/lib.rs", 0);
+    static NO_FILE: Meta = Meta::located("unit", "T", "loc_none_c", "public", "", 3);
+    for m in [&PLAIN, &NO_LINE, &NO_FILE] {
+        drop(enter(m, &mut |_a| {}));
+    }
+    let ev = events("loc_none_");
+    assert_eq!(ev.len(), 6);
+    for e in ev {
+        assert!(e.get("file").is_none() && e.get("line").is_none(), "{e}");
+    }
+}

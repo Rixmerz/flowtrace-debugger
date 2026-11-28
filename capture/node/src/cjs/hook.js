@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { extname } from 'node:path';
 import { cacheKey, cacheGet, cachePut } from '../cache/index.js';
 import { transform } from '../transform/swc.js';
+import { projectRoot } from '../transform/source-location.js';
 
 const _require = createRequire(import.meta.url);
 const Module   = _require('module');
@@ -70,10 +71,12 @@ export function install() {
 
     let transformed;
     try {
+      const root = projectRoot();
       const key = cacheKey(content, {
         filename,
         moduleType: 'cjs',
         runtimePath: RUNTIME_PATH,
+        root,
       });
       let code = cacheGet(key);
       if (!code) {
@@ -81,6 +84,7 @@ export function install() {
           filename,
           moduleType: 'cjs',
           runtimePath: RUNTIME_PATH,
+          root,
         });
         code = result.code;
         cachePut(key, code, result.map);

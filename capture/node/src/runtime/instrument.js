@@ -461,9 +461,13 @@ export function skippedDeepCount() {
  * @param {string[]} paramNames - Formal parameter names (for arg labeling).
  * @param {IArguments|Array} args - Actual arguments.
  * @param {string} [lang] - "node" (default) or "ts" for TypeScript sources.
+ * @param {string} [file] - Source file declaring the function, POSIX, relative
+ *   to the project root. A literal baked in by the transform; never redacted
+ *   or truncated. Optional: a caller that omits it gets an event without it.
+ * @param {number} [line] - 1-indexed declaration line in that file.
  * @returns {{ span_id: string, trace_id: string, parent_id: string|null, depth: number, start: bigint }}
  */
-export function __ft_enter(module_, cls, method, visibility, paramNames, args, lang) {
+export function __ft_enter(module_, cls, method, visibility, paramNames, args, lang, file, line) {
   // The whole body is guarded, not just the id calls: serializeArgs and emit
   // are deeper still, and any of them running out of stack must cost the trace
   // a call, never the program a crash. See `abandoned`.
@@ -486,13 +490,19 @@ export function __ft_enter(module_, cls, method, visibility, paramNames, args, l
 
     const ctx = { span_id, trace_id, parent_id, depth, start: process.hrtime.bigint() };
 
-    emit({
+    const event = {
       ts: nowTs(),
       ...common(ctx, module_, cls, method, visibility, lang),
       event: 'enter',
       args: serializeArgs(paramNames, args),
       depth,
-    });
+    };
+    // Both or neither: a line with no file names nothing.
+    if (file !== undefined && line !== undefined) {
+      event.file = file;
+      event.line = line;
+    }
+    emit(event);
 
     return ctx;
   } catch (e) {

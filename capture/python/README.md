@@ -34,6 +34,7 @@ Context propagation is `contextvars`. `asyncio` tasks inherit it natively;
 | `FLOWTRACE_MAX_ARG_LENGTH` | Per-value limit on the JSON form of each argument and of the result; `0` disables. Default 512. Over the limit the value becomes `<truncated:{first N chars}...>`. |
 | `FLOWTRACE_REDACT_KEYS` | Extra key substrings to redact, comma-separated. Additive to the defaults (`password, secret, token, authorization, api_key, url, dsn, connection_string, email`); a matching argument name or nested dict key is written as `<redacted>`. |
 | `FLOWTRACE_TRACEPARENT` | A W3C `traceparent` to adopt at startup, set by whatever spawned this process. |
+| `FLOWTRACE_ROOT` | Project root the `file` field is relative to. Default: the cwd when the capture layer loads. A relative value is resolved against that cwd. |
 
 ## What the events look like
 
@@ -49,6 +50,29 @@ Context propagation is `contextvars`. `asyncio` tasks inherit it natively;
   JSON.
 - Docstrings, `__name__`, `__qualname__` and `__file__` of instrumented code
   are preserved.
+
+## `file` and `line`
+
+Every `enter` event ends with the place the function is declared, so a static
+index can join the span to its symbol; `exit` events do not carry them.
+
+- `file` is the source file as a POSIX path relative to the project root —
+  `FLOWTRACE_ROOT` if set, else the cwd the process started in. A file outside
+  the root is reported by its absolute path. Run from the repository root, or
+  set `FLOWTRACE_ROOT` to it, if the consumer indexes paths from there.
+- `line` is the 1-indexed line of the `def` / `async def` as written on disk.
+  For a decorated function it is the `def` line, not the first decorator.
+  Nested functions report their own `def` line.
+- Both are literals baked in when the module is transformed (`node.lineno`
+  read from the parsed AST before the body is rewritten), not computed per
+  call. They are never redacted and never truncated.
+- The bytecode cache is keyed on the resulting `file`, so tracing the same
+  sources under another root does not serve a stale path.
+- Each process resolves its own root: a child started in another directory
+  reports paths relative to *its* cwd unless `FLOWTRACE_ROOT` is set (the
+  variable is inherited through the environment like any other).
+- A manual `_ft_enter(...)` call that omits the two arguments produces an
+  event without them.
 
 ## Cross-process tracing is partly manual
 

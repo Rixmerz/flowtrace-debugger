@@ -37,6 +37,7 @@ promises keep their parent span.
 | `FLOWTRACE_MAX_DEPTH` | Deepest span opened; `0` disables the limit. Default 256. Calls nested deeper run untraced and are counted on stderr at exit. This is a stack budget as much as a trace-size one — see *Stack depth* below. |
 | `FLOWTRACE_REDACT_KEYS` | Extra key substrings to redact, comma-separated. Additive to the shared defaults (`password, secret, token, authorization, api_key, url, dsn, connection_string, email`); a matching arg name or nested object key is written as `<redacted>`. |
 | `FLOWTRACE_TRACEPARENT` | A W3C `traceparent` to adopt at startup, set by whatever spawned this process. |
+| `FLOWTRACE_ROOT` | Project root the `file` field is relative to. Default: the cwd when the capture layer loads. A relative value is resolved against that cwd. |
 | `FLOWTRACE_PROPAGATE=0` | Turn off outbound propagation (fetch/http headers, child process and worker environments). |
 
 ## What the events look like
@@ -54,6 +55,35 @@ promises keep their parent span.
   under `argN` with the whole destructured value.
 - `result` is `{"value": X}`, or `{}` for `undefined`/`null` and for a call
   that threw (then `error` is set).
+
+## `file` and `line`
+
+Every `enter` event ends with the place the function is declared, so a static
+index can join the span to its symbol; `exit` events do not carry them.
+
+- `file` is the source file as a POSIX path relative to the project root —
+  `FLOWTRACE_ROOT` if set, else the cwd the process started in. A file outside
+  the root is reported by its absolute path. For TypeScript it is the `.ts`
+  file itself; there is no compiled output on disk to confuse it with.
+- `line` is the 1-indexed line where the function starts in the file as
+  written: the `function` / `async function` line, the method's own line in a
+  class or object literal, and for an arrow or function expression the line
+  the arrow/function itself starts on (which is not the `const` line when the
+  two are split across lines).
+- For JavaScript the line comes straight from the parser. For TypeScript the
+  instrumentation is applied to type-stripped code whose lines no longer match
+  the `.ts` file, so each position is taken back through the stripper's source
+  map. A function with no counterpart in the source — the `_export` helper
+  emitted on the CommonJS path, for one — gets **neither** field rather than a
+  guessed line.
+- Both are literals baked in at transform time and passed to `__ft_enter` as
+  its last two (optional) arguments; nothing is computed per call. They are
+  never redacted and never truncated.
+- The transform cache is keyed on the root, so tracing the same sources under
+  another root does not serve a stale path.
+- Each process resolves its own root: a child process started in another
+  directory reports paths relative to *its* cwd unless `FLOWTRACE_ROOT` is set
+  (the variable is inherited through the environment like any other).
 
 ## Stack depth
 

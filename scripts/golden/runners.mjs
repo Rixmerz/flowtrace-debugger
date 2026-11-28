@@ -33,6 +33,11 @@ const OTEL_AGENT = join(JAVA_MODULE, 'target', 'dependency', 'opentelemetry-java
 
 const TIMEOUT_MS = 90_000;
 
+// Every runner spreads process.env into the capture it starts, and `file` in
+// each fixture is relative to the fixture's own root. A FLOWTRACE_ROOT left in
+// the developer's shell would silently re-root every path and fail the diff.
+delete process.env.FLOWTRACE_ROOT;
+
 /** Locate the shaded extension jar without hardcoding a version. */
 function extensionJar() {
   const targetDir = join(JAVA_MODULE, 'target');

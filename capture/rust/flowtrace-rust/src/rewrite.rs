@@ -45,6 +45,10 @@ pub struct Options<'a> {
     pub file_module: Vec<String>,
     /// Only items whose module path starts with this are instrumented.
     pub prefix: &'a str,
+    /// What every `enter` event of this file reports as `file`: the ORIGINAL
+    /// source file (never its shadow copy) as a POSIX path relative to the
+    /// project root. `None` records no location at all.
+    pub file: Option<&'a str>,
 }
 
 pub struct Rewritten {
@@ -261,13 +265,22 @@ impl Rewriter<'_> {
             ReturnType::Type(_, ty) => Some(ty.to_token_stream().to_string()),
         };
 
-        let mut pre = format!(
-            "{{ static __FT_M: ::flowtrace::__rt::Meta = ::flowtrace::__rt::Meta::new({}, {}, {}, {}); ",
-            rust_str(&module),
-            rust_str(class),
-            rust_str(name),
-            rust_str(visibility(vis, in_trait)),
-        );
+        // The line of the `fn` keyword in the original source: attributes and doc
+        // comments above it do not count, and neither does anything spliced in
+        // (which never adds a line anyway). 0 means the span carried no location.
+        let line = sig.fn_token.span.start().line;
+        let ctor = match self.opts.file {
+            Some(file) if !file.is_empty() && line > 0 => format!(
+                "located({}, {}, {}, {}, {}, {line})",
+                rust_str(&module),
+                rust_str(class),
+                rust_str(name),
+                rust_str(visibility(vis, in_trait)),
+                rust_str(file),
+            ),
+            _ => format!("new({}, {}, {}, {})", rust_str(&module), rust_str(class), rust_str(name), rust_str(visibility(vis, in_trait))),
+        };
+        let mut pre = format!("{{ static __FT_M: ::flowtrace::__rt::Meta = ::flowtrace::__rt::Meta::{ctor}; ");
         pre.push_str("let __ft_g = ::flowtrace::__rt::enter(&__FT_M, &mut |__ft_a| { ");
         let mut named = Vec::new();
         for arg in &sig.inputs {

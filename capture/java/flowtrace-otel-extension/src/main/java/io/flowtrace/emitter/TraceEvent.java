@@ -13,9 +13,10 @@ import java.util.Map;
  *
  * <p>Two event types share this class:
  * <ul>
- *   <li>{@code enter} — result, durationNs, and error are null.</li>
+ *   <li>{@code enter} — result, durationNs, and error are null; file and
+ *       line are set when the class file carries them.</li>
  *   <li>{@code exit}  — result and durationNs are set; error is set only if
- *       the method threw.</li>
+ *       the method threw; file and line are null.</li>
  * </ul>
  */
 public class TraceEvent {
@@ -52,6 +53,19 @@ public class TraceEvent {
     private Map<String, Object> args;
 
     private int depth;
+
+    // --- enter-only fields ---
+
+    /**
+     * Declaring source file, source-root-relative POSIX path
+     * ({@code com/acme/Foo.java}); null when the class file has no
+     * {@code SourceFile}. Never redacted or truncated: it is not a value the
+     * program handled.
+     */
+    private String file;
+
+    /** First line of the method body, 1-indexed; null when unknown. */
+    private Integer line;
 
     // --- exit-only fields ---
 
@@ -107,6 +121,12 @@ public class TraceEvent {
 
     public int  getDepth()                             { return depth; }
     public void setDepth(int depth)                    { this.depth = depth; }
+
+    public String  getFile()                           { return file; }
+    public void    setFile(String file)                { this.file = file; }
+
+    public Integer getLine()                           { return line; }
+    public void    setLine(Integer line)               { this.line = line; }
 
     public Map<String, Object> getResult()                          { return result; }
     public void                setResult(Map<String, Object> result) { this.result = result; }

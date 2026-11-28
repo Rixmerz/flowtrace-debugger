@@ -100,6 +100,17 @@ public final class FlowtraceEmitter {
         appendMap(sb, "args", e.getArgs()); sb.append(',');
         sb.append('"').append("depth").append("\":").append(e.getDepth());
 
+        // enter-only: where the method is declared. `line` is only
+        // meaningful inside `file`, so it is never written alone.
+        if (e.getFile() != null && !e.getFile().isEmpty()) {
+            sb.append(',');
+            appendStr(sb, "file", e.getFile());
+            if (e.getLine() != null && e.getLine() > 0) {
+                sb.append(',');
+                sb.append('"').append("line").append("\":").append(e.getLine());
+            }
+        }
+
         // exit-only fields
         if (e.getDurationNs() != null) {
             sb.append(',');

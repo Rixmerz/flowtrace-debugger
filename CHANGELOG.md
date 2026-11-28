@@ -9,6 +9,21 @@ independently; each release names them.
 
 ## [Unreleased]
 
+### Added
+
+- **`file` and `line` on `enter` events**, in every file-writing capture layer
+  (Java, Python, Node/TypeScript, Go, Rust). Both are optional in
+  `schema/flowtrace-v2.json`, so a trace written before this change still
+  validates and every consumer keeps reading it. `file` is a POSIX path
+  relative to the project root (`FLOWTRACE_ROOT` overrides it); `line` is the
+  function's declaration line, or the first line of its body in Java, where
+  only bytecode is visible. They exist so a static index can join a span to
+  the symbol that declares it: `module` is a package, a crate or a file's
+  basename depending on the runtime, and none of those identifies a function
+  once two files share a name or a class has overloads.
+- `trace_find_error` returns `file` and `line` on each step of the failing
+  path when the trace carries them: the place to open, without a second lookup.
+
 ## [4.2.0] - 2026-11-23 — capture layers 2.2.0, Rust 0.1.0, browser 2.3.0, plugin 2.9.0
 
 Rust joins Java, Python, Node/TypeScript and Go as a capture layer.

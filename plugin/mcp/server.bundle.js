@@ -21368,7 +21368,14 @@ function traceFindError(events) {
     seen.add(cursor);
     const en = enterBySpan.get(cursor);
     if (!en) break;
-    path.unshift({ span_id: en.span_id, class: en.class, method: en.method, module: en.module });
+    path.unshift({
+      span_id: en.span_id,
+      class: en.class,
+      method: en.method,
+      module: en.module,
+      ...en.file !== void 0 ? { file: en.file } : {},
+      ...en.line !== void 0 ? { line: en.line } : {}
+    });
     cursor = en.parent_id;
   }
   return {

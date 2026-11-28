@@ -7,6 +7,9 @@
 import { fileURLToPath } from 'node:url';
 import { extname } from 'node:path';
 import { readFileSync } from 'node:fs';
+// Imported eagerly (it is tiny) so the project root is pinned to the cwd the
+// process started in, not the cwd at whatever moment the first file loads.
+import { projectRoot } from '../transform/source-location.js';
 
 /**
  * FlowTrace's own source root. Nothing under it is ever instrumented.
@@ -174,10 +177,11 @@ export async function load(url, context, nextLoad) {
     const cache = await getCache();
     const transformFn = await getTransform();
 
-    const key = cache.cacheKey(source, { filename, moduleType, runtimePath });
+    const root = projectRoot();
+    const key = cache.cacheKey(source, { filename, moduleType, runtimePath, root });
     let code = cache.cacheGet(key);
     if (!code) {
-      const out = transformFn(source, { filename, moduleType, runtimePath });
+      const out = transformFn(source, { filename, moduleType, runtimePath, root });
       code = out.code;
       cache.cachePut(key, code, out.map);
     }

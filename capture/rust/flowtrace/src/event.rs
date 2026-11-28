@@ -28,6 +28,9 @@ pub struct Identity<'a> {
     /// A rendered JSON object, e.g. `{"a":1}`.
     pub args: &'a str,
     pub depth: u32,
+    /// From [`location`]: `,"file":..,"line":..`, or empty when the source
+    /// location is unknown. Written on `enter` only.
+    pub location: &'a str,
     /// When the event happens. One clock read serves the `ts` and the duration.
     pub at: Instant,
 }
@@ -52,6 +55,24 @@ pub fn fragment(module: &str, class: &str, method: &str, visibility: &str) -> St
     push_str_lit(&mut out, method);
     out.push_str(",\"visibility\":");
     push_str_lit(&mut out, visibility);
+    out
+}
+
+/// `,"file":<file>,"line":<line>`, escaped: the tail of an `enter` event that
+/// says where the function is declared. `file` is a POSIX path relative to the
+/// project root and `line` the 1-indexed line of the `fn` keyword. Empty when
+/// either is unknown, so the two keys are always emitted together or not at all.
+/// This is metadata, not a captured value: it is never redacted or truncated.
+#[doc(hidden)]
+pub fn location(file: &str, line: u32) -> String {
+    if file.is_empty() || line == 0 {
+        return String::new();
+    }
+    let mut out = String::with_capacity(file.len() + 32);
+    out.push_str(",\"file\":");
+    push_str_lit(&mut out, file);
+    out.push_str(",\"line\":");
+    push_u64(&mut out, u64::from(line));
     out
 }
 
@@ -155,6 +176,7 @@ pub fn write_enter(id: &Identity<'_>) {
         head(&mut l, id, "enter");
         l.push_str(",\"depth\":");
         push_u64(&mut l, u64::from(id.depth));
+        l.push_str(id.location);
         l.push('}');
         sink::write_line(&l, false);
     });

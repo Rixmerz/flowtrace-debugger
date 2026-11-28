@@ -103,6 +103,24 @@ test('trace_find_error walks parents to root from a failing exit', () => {
   assert.deepEqual(r.path.map((p) => p.method), ['root', 'mid', 'leaf']);
 });
 
+test('trace_find_error carries file and line when the layer emitted them, and only then', () => {
+  const trace_id = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const e = (over) => ({ ts: 0, trace_id, thread: 'main', lang: 'python', method: 'm', ...over });
+  const events = [
+    // An older trace's span beside a located one: the mix a real upgrade produces.
+    e({ ts: 1, span_id: 's1', parent_id: null, event: 'enter', method: 'root' }),
+    e({ ts: 2, span_id: 's2', parent_id: 's1', event: 'enter', method: 'leaf',
+        file: 'src/billing/invoice.py', line: 42 }),
+    e({ ts: 3, span_id: 's2', parent_id: 's1', event: 'exit', method: 'leaf',
+        result: {}, error: { type: 'ValueError', msg: 'bad', stack: [] } }),
+  ];
+  const r = traceFindError(events);
+  assert.deepEqual(Object.keys(r.path[0]).includes('file'), false,
+    'a span with no location must not grow an undefined file key');
+  assert.equal(r.path[1].file, 'src/billing/invoice.py');
+  assert.equal(r.path[1].line, 42);
+});
+
 // Against the real captured output of all three languages, not a hand-written
 // approximation of it. The Python case is the one that matters most: its old
 // shape (`result: {error}`, no top-level `error`) was schema-VALID, so no

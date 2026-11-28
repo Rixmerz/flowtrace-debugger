@@ -33,7 +33,7 @@ def _transform_fingerprint() -> str:
     cache."""
     h = hashlib.sha256()
     here = Path(__file__).parent
-    for name in ("transformer.py", "runtime.py"):
+    for name in ("transformer.py", "runtime.py", "loader.py"):
         try:
             h.update((here / name).read_bytes())
         except OSError:
@@ -43,6 +43,62 @@ def _transform_fingerprint() -> str:
 
 
 _CAPTURE_FINGERPRINT = _transform_fingerprint()
+
+# cwd when the capture layer was loaded — the default project root. Read once:
+# a program that chdirs later must not change what `file` is relative to.
+try:
+    _START_CWD = os.getcwd()
+except OSError:  # the cwd was deleted under us
+    _START_CWD = ""
+
+
+def project_root() -> str:
+    """Directory the `file` field is relative to: FLOWTRACE_ROOT when set (a
+    relative value is resolved against the starting cwd), else the cwd at
+    capture start. Empty string when neither is knowable."""
+    env = os.environ.get("FLOWTRACE_ROOT")
+    if env:
+        return os.path.normpath(os.path.join(_START_CWD, env))
+    return _START_CWD
+
+
+# Pin the resolved root into the environment so a child process started from
+# another cwd reports paths against the same root as its parent. Without this
+# each process is relative to its own cwd, and one trace holds `app.py` twice
+# meaning two different files.
+if project_root():
+    os.environ["FLOWTRACE_ROOT"] = project_root()
+
+
+def _relative_inside(root: str, path: str) -> str | None:
+    try:
+        rel = os.path.relpath(path, root)
+    except ValueError:  # different drives on Windows
+        return None
+    if rel == os.curdir or rel == os.pardir or rel.startswith(os.pardir + os.sep) or os.path.isabs(rel):
+        return None
+    return rel
+
+
+def source_file_for(path: str, root: str | None = None) -> str | None:
+    """The `file` value for a source file: a POSIX path relative to the project
+    root, or the absolute POSIX path when the file is not under it. None when
+    there is no real path to report."""
+    if not path or path.startswith("<"):
+        return None
+    if root is None:
+        root = project_root()
+    absolute = os.path.abspath(path)
+    rel = _relative_inside(root, absolute) if root else None
+    if rel is None and root:
+        # One side may be spelled through a symlink (macOS /tmp -> /private/tmp):
+        # lexically outside, physically inside.
+        try:
+            rel = _relative_inside(os.path.realpath(root), os.path.realpath(absolute))
+        except OSError:
+            rel = None
+    chosen = rel if rel is not None else absolute
+    return chosen.replace(os.sep, "/") if os.sep != "/" else chosen
 
 
 def _cache_dir() -> Path:
@@ -59,8 +115,18 @@ def _cache_dir() -> Path:
     return cache_dir
 
 
-def _cache_path(source: bytes, path: str) -> Path:
-    key = source + _CAPTURE_FINGERPRINT.encode() + _PY_VERSION.encode() + path.encode()
+def _cache_path(source: bytes, path: str, source_file: str | None = None) -> Path:
+    # `source_file` is baked into the instrumented code as the `file` of every
+    # enter event, and it depends on the project root — so the same file traced
+    # under another FLOWTRACE_ROOT (or from another cwd) needs its own entry.
+    key = (
+        source
+        + _CAPTURE_FINGERPRINT.encode()
+        + _PY_VERSION.encode()
+        + path.encode()
+        + b"\0"
+        + (source_file or "").encode()
+    )
     digest = hashlib.sha256(key).hexdigest()
     return _cache_dir() / f"{digest}.pyc"
 
@@ -82,7 +148,8 @@ class FlowtraceSourceLoader(importlib.machinery.SourceFileLoader):
         else:
             source = data
 
-        cache_file = _cache_path(source, path)
+        source_file = source_file_for(path)
+        cache_file = _cache_path(source, path, source_file)
 
         # Cache hit.
         if cache_file.exists():
@@ -95,7 +162,7 @@ class FlowtraceSourceLoader(importlib.machinery.SourceFileLoader):
         module_name = Path(path).stem
 
         tree = ast.parse(source, filename=path)
-        transformer = FlowtraceTransformer(module_name=module_name)
+        transformer = FlowtraceTransformer(module_name=module_name, source_file=source_file)
         transformed = transformer.visit(tree)
         ast.fix_missing_locations(transformed)
 

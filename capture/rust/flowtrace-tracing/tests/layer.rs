@@ -88,6 +88,22 @@ fn spans_become_enter_and_exit_with_args_ids_and_depth() {
 }
 
 #[test]
+fn the_callsite_file_and_line_are_on_enter_only() {
+    traced(|| lt_outer(1, "y", "z"));
+    for name in ["lt_outer", "lt_inner"] {
+        let ev = events(name);
+        let (enter, exit) = (&ev[0], &ev[1]);
+        // cargo hands rustc a workspace member's path relative to the workspace root.
+        assert_eq!(enter["file"], "flowtrace-tracing/tests/layer.rs", "{enter}");
+        let line = enter["line"].as_u64().expect("a line") as usize;
+        // `#[instrument]` reports the function: its `fn` line or the attribute's, just above.
+        let decl = 1 + include_str!("layer.rs").lines().position(|l| l.starts_with(&format!("fn {name}("))).unwrap();
+        assert!(line == decl || line + 1 == decl, "{name}: line {line}, declared at {decl}");
+        assert!(exit.get("file").is_none() && exit.get("line").is_none(), "{exit}");
+    }
+}
+
+#[test]
 fn instrument_err_becomes_the_exit_error() {
     let _ = traced(lt_fails);
     let ev = events("lt_fails");

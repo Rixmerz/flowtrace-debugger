@@ -345,7 +345,7 @@ func TestInstrumentPackagesStagesOnlyChangedGoFilesWithPrivatePerms(t *testing.T
 		Module:     &goModule{Path: "example.com/dep", Main: false},
 	}}
 
-	report, err := instrumentPackages(pkgs, moduleDir, "example.com/app", workDir, overlay)
+	report, err := instrumentPackages(pkgs, moduleDir, "example.com/app", moduleDir, workDir, overlay)
 	if err != nil {
 		t.Fatalf("instrumentPackages: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestInstrumentPackagesStagesOnlyChangedGoFilesWithPrivatePerms(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(staged), "_ftrt.Enter(") || !strings.Contains(string(staged), `"example.com/app/internal/flowtracert"`) {
+	if !strings.Contains(string(staged), `_ftrt.EnterAt("svc/svc.go", 3, `) || !strings.Contains(string(staged), `"example.com/app/internal/flowtracert"`) {
 		t.Errorf("staged file is not instrumented:\n%s", staged)
 	}
 	// The user's tree is never written to.

@@ -223,3 +223,54 @@ func TestGoroutineContextParentSpanID(t *testing.T) {
 		t.Errorf("inner.trace_id = %v, want outer trace_id %v", innerEnter["trace_id"], outerEnter["trace_id"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// file / line (source location of the declaration)
+// ---------------------------------------------------------------------------
+
+func TestEnterAtEmitsFileAndLineOnEnterOnly(t *testing.T) {
+	off := snapshotOffset(t)
+	// A name on the redaction list and a value far past the truncation limit:
+	// neither rule applies to the location, which is metadata, not a value.
+	file := "internal/secret_token/" + strings.Repeat("deep/", 200) + "password.go"
+	s := EnterAt(file, 42, "m/p", "T", "locAt", "public", "n", 1)
+	Exit(s, "r0", 2)
+
+	events := readEventsSince(t, off)
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	enter, exit := events[0], events[1]
+	if enter["file"] != file {
+		t.Errorf("enter file = %v, want it verbatim", enter["file"])
+	}
+	if enter["line"] != float64(42) {
+		t.Errorf("enter line = %v, want 42", enter["line"])
+	}
+	for _, k := range []string{"file", "line"} {
+		if _, ok := exit[k]; ok {
+			t.Errorf("exit carries %q: %v", k, exit)
+		}
+	}
+}
+
+func TestEnterWithoutLocationOmitsBothKeys(t *testing.T) {
+	cases := map[string]func() *Span{
+		"plain Enter":  func() *Span { return Enter("m/p", "", "locNone", "private") },
+		"empty file":   func() *Span { return EnterAt("", 7, "m/p", "", "locNone", "private") },
+		"line unknown": func() *Span { return EnterAt("a.go", 0, "m/p", "", "locNone", "private") },
+	}
+	for name, open := range cases {
+		t.Run(name, func(t *testing.T) {
+			off := snapshotOffset(t)
+			Exit(open())
+			for _, ev := range readEventsSince(t, off) {
+				for _, k := range []string{"file", "line"} {
+					if _, ok := ev[k]; ok {
+						t.Errorf("%s event carries %q", ev["event"], k)
+					}
+				}
+			}
+		})
+	}
+}

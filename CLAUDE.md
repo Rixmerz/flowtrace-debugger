@@ -97,6 +97,19 @@ that emits. Two event variants, `enter` and `exit`, with
  "method":"<m>","visibility":"public|private|internal|unknown","args":{...},"depth":<n>}
 ```
 
+`enter` may also carry `file` and `line`: where the function is declared.
+Both are optional, and they are the one part of the contract meant for a
+consumer outside this repository — a static index (livespec `ingest_traces`)
+joins a span to its symbol through them, because `module` means a package in
+Java, a dotted module in Python, a crate in Rust and a file's basename in Node,
+and none of those is a path. `file` is POSIX and relative to the project root
+(`FLOWTRACE_ROOT`, else the cwd for Python and Node, the module root for Go,
+the workspace root for Rust; Java can only know the source root, so it emits
+package path + `SourceFile`). `line` is the declaration line where the layer
+rewrites source and the first body line in Java; never the call site. A layer
+that cannot know them omits them — it never guesses, and it never puts them on
+`exit`.
+
 `exit` additionally carries `result` (**required**, `{}` when there is no
 value), `duration_ns`, and an optional `error` of `{type, msg, stack}`.
 

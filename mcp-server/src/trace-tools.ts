@@ -150,7 +150,9 @@ export interface ErrorPath {
   trace_id: string;
   span_id: string;
   error: { type: string; msg: string; stack?: string[] };
-  path: Array<{ span_id: string; class?: string; method: string; module?: string }>;
+  /** `file` / `line` are present when the capture layer emitted them: the
+   *  place to open, with no second lookup to turn a method name into a path. */
+  path: Array<{ span_id: string; class?: string; method: string; module?: string; file?: string; line?: number }>;
 }
 
 /** First exit event carrying an `error`. Walks parents to root and returns the
@@ -176,7 +178,11 @@ export function traceFindError(events: TraceEvent[]): ErrorPath | null {
     seen.add(cursor);
     const en = enterBySpan.get(cursor);
     if (!en) break;
-    path.unshift({ span_id: en.span_id, class: en.class, method: en.method, module: en.module });
+    path.unshift({
+      span_id: en.span_id, class: en.class, method: en.method, module: en.module,
+      ...(en.file !== undefined ? { file: en.file } : {}),
+      ...(en.line !== undefined ? { line: en.line } : {}),
+    });
     cursor = en.parent_id;
   }
 
