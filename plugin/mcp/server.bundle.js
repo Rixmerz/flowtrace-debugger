@@ -21463,11 +21463,15 @@ var MAX_DIFF_ENTRIES = 6;
 var MAX_PATH = 12;
 var GREEDY_WINDOW = 32;
 var IDENTITY_HASH = /@[0-9a-f]{4,}\b/g;
-var ADDRESS = /\b0x[0-9a-fA-F]{8,16}\b/g;
-function normaliseString(s) {
+var ADDRESS = /\b0x[0-9a-fA-F]{8,16}\b|(?<=\bat )0x[0-9a-fA-F]+\b/g;
+var CUT_ADDRESS = /\b0x[0-9a-fA-F]*(?=\.\.\.>$)/;
+function normaliseString(s, addresses = true) {
   let out = s;
   if (out.indexOf("@") !== -1) out = out.replace(IDENTITY_HASH, "@<identity>");
-  if (out.indexOf("0x") !== -1) out = out.replace(ADDRESS, "0x<addr>");
+  if (addresses && out.indexOf("0x") !== -1) {
+    out = out.replace(ADDRESS, "0x<addr>");
+    if (isTruncatedMarker(out)) out = out.replace(CUT_ADDRESS, "0x<addr>");
+  }
   return out;
 }
 function isTruncatedMarker(s) {
@@ -21539,12 +21543,13 @@ function pathMatches(pattern, path, last) {
   return tail === "*" || tail === last;
 }
 var BehaviorTree = class {
-  constructor(keys, rules, maxSpans, compareErrorMsg, ignoreOrder) {
+  constructor(keys, rules, maxSpans, compareErrorMsg, ignoreOrder, addresses = true) {
     this.keys = keys;
     this.rules = rules;
     this.maxSpans = maxSpans;
     this.compareErrorMsg = compareErrorMsg;
     this.ignoreOrder = ignoreOrder;
+    this.addresses = addresses;
   }
   /** Every kept node, in enter order — children always after their parent. */
   nodes = [];
@@ -21626,7 +21631,7 @@ var BehaviorTree = class {
       if (err !== null && typeof err === "object") {
         const { type, msg } = err;
         node.errType = typeof type === "string" && type ? type : "<error>";
-        node.errMsg = typeof msg === "string" ? normaliseString(msg) : "";
+        node.errMsg = typeof msg === "string" ? normaliseString(msg, this.addresses) : "";
       }
     }
   }
@@ -21639,11 +21644,11 @@ var BehaviorTree = class {
   canonValue(v, path, depth) {
     if (typeof v === "string") {
       if (isTruncatedMarker(v)) this.trunc++;
-      return JSON.stringify(normaliseString(v));
+      return JSON.stringify(normaliseString(v, this.addresses));
     }
     if (v === null || v === void 0) return "null";
     if (typeof v !== "object") return JSON.stringify(v) ?? "null";
-    if (depth > 200) return JSON.stringify(normaliseString(JSON.stringify(v)));
+    if (depth > 200) return JSON.stringify(normaliseString(JSON.stringify(v), this.addresses));
     if (Array.isArray(v)) {
       let out2 = "[";
       for (let i = 0; i < v.length; i++) {
@@ -21730,6 +21735,7 @@ var BehaviorDiffer = class {
     this.opts = {
       ignore_order: options.ignore_order === true,
       compare_error_msg: options.compare_error_msg !== false,
+      normalize_addresses: options.normalize_addresses !== false,
       limit: typeof options.limit === "number" && options.limit >= 0 ? Math.floor(options.limit) : DEFAULTS.limit,
       max_spans: positive(options.max_spans, DEFAULTS.max_spans),
       max_list_cells: positive(options.max_list_cells, DEFAULTS.max_list_cells),
@@ -21742,7 +21748,7 @@ var BehaviorDiffer = class {
   }
   /** A fresh, empty tree. Feed it one trace with `add`, in file order. */
   tree() {
-    return new BehaviorTree(this.keys, this.rules, this.opts.max_spans, this.opts.compare_error_msg, this.opts.ignore_order);
+    return new BehaviorTree(this.keys, this.rules, this.opts.max_spans, this.opts.compare_error_msg, this.opts.ignore_order, this.opts.normalize_addresses);
   }
   /** Compare a baseline tree (A) against a current one (B). */
   diff(a, b) {
@@ -22673,9 +22679,10 @@ mcp.tool(
     ignore_keys: external_exports.array(external_exports.string()).optional().describe("Volatile keys to drop from args/result: a bare name or glob (created_at, *_id) matches at any depth; a path anchored at args. or result. (result.user.id, args.items.*.ts) matches exactly there"),
     ignore_order: external_exports.boolean().optional().describe("Treat sibling call order as irrelevant. Use for concurrent flows (threads, goroutines, Promise.all), where order is scheduling. Default false"),
     compare_error_msg: external_exports.boolean().optional().describe("Also compare error messages, reported as error_msg_changed. Default true"),
+    normalize_addresses: external_exports.boolean().optional().describe("Rewrite memory addresses inside strings (0x7f3a\u2026, including one cut by truncation) to 0x<addr> before comparing, so the same program run twice does not differ by object addresses. Default true; false compares them verbatim"),
     limit: external_exports.number().int().nonnegative().optional().describe("Max samples per category (default 10). Counts in `summary` are always exact")
   },
-  async ({ sessionId_a, sessionId_b, ignore_methods, ignore_keys, ignore_order, compare_error_msg, limit }) => {
+  async ({ sessionId_a, sessionId_b, ignore_methods, ignore_keys, ignore_order, compare_error_msg, normalize_addresses, limit }) => {
     const a = getSession(sessionId_a);
     const b = getSession(sessionId_b);
     return ok(traceBehaviorDiff(v2OnlyEvents(a), v2OnlyEvents(b), {
@@ -22683,6 +22690,7 @@ mcp.tool(
       ignore_keys,
       ignore_order,
       compare_error_msg,
+      normalize_addresses,
       limit
     }));
   }

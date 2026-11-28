@@ -91,6 +91,7 @@ program
   .option('--ignore-method <glob>', 'Ignora llamadas cuyo módulo.clase.método calce (y todo lo que llaman). Repetible', collect, [])
   .option('--ignore-key <clave>', 'Ignora una clave volátil en args/result: nombre, glob, o ruta (result.user.id). Repetible', collect, [])
   .option('--ignore-order', 'No considera el orden entre llamadas hermanas (flujos concurrentes)')
+  .option('--no-normalize-addresses', 'Compara las direcciones de memoria (0x7f...) tal cual, sin normalizarlas a 0x<addr>')
   .option('--no-error-msg', 'No compara los mensajes de error, solo su tipo')
   .option('--ignore-file <path>', 'JSON con los ignores por defecto (default: characterisation.json junto a la traza base). Cada entrada puede ser un string o {"name"|"key": ..., "reason": "..."}; el motivo sale en --json')
   .option('--limit <n>', 'Máximo de ejemplos por categoría (default: 10)')

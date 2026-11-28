@@ -27,7 +27,8 @@ Drive the program with a fixed input, and set a package prefix
 frameworks under it.
 
 Options: `--ignore-method <glob>` and `--ignore-key <key>` (both repeatable),
-`--ignore-order`, `--no-error-msg`, `--limit N` (samples per category, default
+`--ignore-order`, `--no-error-msg`, `--no-normalize-addresses` (compare
+memory addresses such as `0x7f3a…` verbatim instead of as `0x<addr>`), `--limit N` (samples per category, default
 10; counts are always exact), `--json` (the same object the MCP tool returns).
 
 ## What is compared

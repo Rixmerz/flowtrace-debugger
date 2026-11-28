@@ -42,11 +42,15 @@ var MAX_DIFF_ENTRIES = 6;
 var MAX_PATH = 12;
 var GREEDY_WINDOW = 32;
 var IDENTITY_HASH = /@[0-9a-f]{4,}\b/g;
-var ADDRESS = /\b0x[0-9a-fA-F]{8,16}\b/g;
-function normaliseString(s) {
+var ADDRESS = /\b0x[0-9a-fA-F]{8,16}\b|(?<=\bat )0x[0-9a-fA-F]+\b/g;
+var CUT_ADDRESS = /\b0x[0-9a-fA-F]*(?=\.\.\.>$)/;
+function normaliseString(s, addresses = true) {
   let out = s;
   if (out.indexOf("@") !== -1) out = out.replace(IDENTITY_HASH, "@<identity>");
-  if (out.indexOf("0x") !== -1) out = out.replace(ADDRESS, "0x<addr>");
+  if (addresses && out.indexOf("0x") !== -1) {
+    out = out.replace(ADDRESS, "0x<addr>");
+    if (isTruncatedMarker(out)) out = out.replace(CUT_ADDRESS, "0x<addr>");
+  }
   return out;
 }
 function isTruncatedMarker(s) {
@@ -118,12 +122,13 @@ function pathMatches(pattern, path, last) {
   return tail === "*" || tail === last;
 }
 var BehaviorTree = class {
-  constructor(keys, rules, maxSpans, compareErrorMsg, ignoreOrder) {
+  constructor(keys, rules, maxSpans, compareErrorMsg, ignoreOrder, addresses = true) {
     this.keys = keys;
     this.rules = rules;
     this.maxSpans = maxSpans;
     this.compareErrorMsg = compareErrorMsg;
     this.ignoreOrder = ignoreOrder;
+    this.addresses = addresses;
   }
   /** Every kept node, in enter order — children always after their parent. */
   nodes = [];
@@ -205,7 +210,7 @@ var BehaviorTree = class {
       if (err !== null && typeof err === "object") {
         const { type, msg } = err;
         node.errType = typeof type === "string" && type ? type : "<error>";
-        node.errMsg = typeof msg === "string" ? normaliseString(msg) : "";
+        node.errMsg = typeof msg === "string" ? normaliseString(msg, this.addresses) : "";
       }
     }
   }
@@ -218,11 +223,11 @@ var BehaviorTree = class {
   canonValue(v, path, depth) {
     if (typeof v === "string") {
       if (isTruncatedMarker(v)) this.trunc++;
-      return JSON.stringify(normaliseString(v));
+      return JSON.stringify(normaliseString(v, this.addresses));
     }
     if (v === null || v === void 0) return "null";
     if (typeof v !== "object") return JSON.stringify(v) ?? "null";
-    if (depth > 200) return JSON.stringify(normaliseString(JSON.stringify(v)));
+    if (depth > 200) return JSON.stringify(normaliseString(JSON.stringify(v), this.addresses));
     if (Array.isArray(v)) {
       let out2 = "[";
       for (let i = 0; i < v.length; i++) {
@@ -309,6 +314,7 @@ var BehaviorDiffer = class {
     this.opts = {
       ignore_order: options.ignore_order === true,
       compare_error_msg: options.compare_error_msg !== false,
+      normalize_addresses: options.normalize_addresses !== false,
       limit: typeof options.limit === "number" && options.limit >= 0 ? Math.floor(options.limit) : DEFAULTS.limit,
       max_spans: positive(options.max_spans, DEFAULTS.max_spans),
       max_list_cells: positive(options.max_list_cells, DEFAULTS.max_list_cells),
@@ -321,7 +327,7 @@ var BehaviorDiffer = class {
   }
   /** A fresh, empty tree. Feed it one trace with `add`, in file order. */
   tree() {
-    return new BehaviorTree(this.keys, this.rules, this.opts.max_spans, this.opts.compare_error_msg, this.opts.ignore_order);
+    return new BehaviorTree(this.keys, this.rules, this.opts.max_spans, this.opts.compare_error_msg, this.opts.ignore_order, this.opts.normalize_addresses);
   }
   /** Compare a baseline tree (A) against a current one (B). */
   diff(a, b) {

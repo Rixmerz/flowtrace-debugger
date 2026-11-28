@@ -168,6 +168,8 @@ function buildOptions(options, baselinePath, cwd) {
     ignore_keys: keys.map((e) => e.pattern),
     ignore_order: options.ignoreOrder === true ? true : fromFile.ignoreOrder === true,
     // commander's --no-error-msg sets errorMsg=false; absent means true.
+    // commander's --no-normalize-addresses sets normalizeAddresses=false.
+    normalize_addresses: options.normalizeAddresses !== false,
     compare_error_msg: options.errorMsg === false ? false : fromFile.compareErrorMsg !== false,
   };
   const limit = positiveInt(options.limit, '--limit', { allowZero: true });

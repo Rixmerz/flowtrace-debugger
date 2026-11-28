@@ -18,7 +18,7 @@ STUB_DIR = REPO_ROOT / "capture" / "python" / "stub"
 CAPTURE_PKG = REPO_ROOT / "capture" / "python"
 
 
-def run_pkg(tmp_path: Path, source: str, entry: str = "main()") -> list[dict]:
+def run_pkg(tmp_path: Path, source: str, entry: str = "main()", extra_env: dict | None = None) -> list[dict]:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -31,6 +31,7 @@ def run_pkg(tmp_path: Path, source: str, entry: str = "main()") -> list[dict]:
         "FLOWTRACE_ENABLE": "1",
         "FLOWTRACE_PACKAGE_PREFIX": "pkg",
         "FLOWTRACE_OUTPUT": str(out),
+        **(extra_env or {}),
     }
     r = subprocess.run([sys.executable, str(tmp_path / "run.py")], env=env,
                        capture_output=True, text=True, timeout=60, cwd=tmp_path)
@@ -330,3 +331,63 @@ def test_error_in_generator_after_yield_is_paired(tmp_path):
     err = [e for e in events if e["event"] == "exit" and e["method"] == "gen"]
     assert len(err) == 1 and err[0]["error"]["type"] == "RuntimeError"
     check_pairing(events)
+
+
+# ------------------------------------------- repr() of a user object runs
+
+# Django's BaseFormSet.__repr__ reads a lazily computed property whose first
+# evaluation validates a form. An instrumented ``cached_property.__get__``
+# receives the formset as ``instance``, so serialising that argument evaluated
+# the property early and made a test counting ``full_clean`` calls see one more
+# call than untraced. The ``repr`` call is the documented format for non-
+# primitive values, so this is a known caveat, not a defect; the escape hatch
+# is FLOWTRACE_REDACT_KEYS. These tests pin both halves of that statement.
+REPR_SIDE_EFFECT = """
+CALLS = []
+
+class Lazy:
+    def __repr__(self):
+        CALLS.append("repr")
+        return "Lazy()"
+
+def use(instance):
+    return 1
+
+def main():
+    use(Lazy())
+    assert CALLS == [], CALLS
+"""
+
+
+def test_repr_of_user_object_runs_and_is_known_caveat(tmp_path):
+    # Traced: repr ran once (the assertion in main() fails); no span for it.
+    try:
+        run_pkg(tmp_path, REPR_SIDE_EFFECT)
+    except AssertionError as exc:
+        assert "AssertionError" in str(exc)
+    else:
+        raise AssertionError("expected the program to observe the repr() call")
+
+
+def test_redact_keys_keeps_repr_from_running(tmp_path):
+    events = run_pkg(tmp_path, REPR_SIDE_EFFECT, extra_env={"FLOWTRACE_REDACT_KEYS": "instance"})
+    assert enters(events)["use"]["args"] == {"instance": "<redacted>"}
+
+
+def test_safe_repr_knob_does_not_call_user_repr(tmp_path):
+    source = REPR_SIDE_EFFECT + """
+class Plain:
+    pass
+
+def other(instance, items, p):
+    return 1
+
+def main2():
+    other(Lazy(), [1, "a"], Plain())
+    assert CALLS == [], CALLS
+"""
+    events = run_pkg(tmp_path, source, entry="main2()", extra_env={"FLOWTRACE_SAFE_REPR": "1"})
+    args = enters(events)["other"]["args"]
+    assert args["instance"] == "<pkg.m.Lazy>"
+    assert args["items"] == [1, "a"]
+    assert args["p"].startswith("<pkg.m.Plain object at 0x"), args["p"]  # no custom __repr__: unchanged

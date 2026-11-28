@@ -11,6 +11,28 @@ independently; each release names them.
 
 ### Fixed
 
+- **Tracing Python no longer breaks scripts that import their siblings.**
+  `flowtrace run -- python tests/runtests.py` failed with `No module named
+  ...` because the capture stub runs the script itself and the script's
+  directory was not on `sys.path[0]`. It is now, as with a plain `python`.
+- **`flowtrace run` no longer edits `.gitignore` or plants `.flowtrace/` in a
+  subdirectory.** Gitignoring is `flowtrace init`'s job. A run started below a
+  directory that holds `.flowtrace/config.json` uses that project's config,
+  output directory and Python stub.
+- **`flowtrace diff` / `trace_behavior_diff`: more address noise is normalised,
+  with an off switch.** An address cut in half by truncation (`at 0x7f727...>`)
+  and a low address after `at` (`at 0xbc0d210`) now compare as `0x<addr>`.
+  `--no-normalize-addresses` (MCP: `normalize_addresses: false`) compares them
+  verbatim. Decimal `id()` values (a `copy.deepcopy` `memo` dict's keys) are not
+  addresses to the diff; ignore them with `--ignore-key memo`.
+- **Python capture: documented that `repr()` of a user object runs user code.**
+  Serialising an argument can have the side effects of its `__repr__` (a
+  Django formset validates its management form), which changed a traced test's
+  result. Inherent to the `repr` format; see `capture/python/README.md` for the
+  `FLOWTRACE_REDACT_KEYS` workaround.
+- **Python capture: `FLOWTRACE_SAFE_REPR=1` (opt-in).** Values whose class
+  defines `__repr__` in Python are rendered as `<module.QualName>` without
+  calling it, so tracing cannot trigger its side effects. Default unchanged.
 - **`flowtrace run -- mvn test` (and Gradle) now traces the forked test JVM.**
   The agent was injected through `MAVEN_OPTS`, which only reaches Maven's own
   JVM; surefire forks another one and the trace came out empty with no

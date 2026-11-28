@@ -75,6 +75,16 @@ test('--json with equal traces: exit 0, verdict same', () => {
   assert.equal(JSON.parse(r.out).verdict, 'same');
 });
 
+test('addresses in strings are normalised by default; --no-normalize-addresses compares them verbatim', () => {
+  const t = (addr) => ({ args: { cb: `<Foo object at 0x${addr}>`, cut: `<truncated:{"cut":"<f at 0x${addr.slice(0, 5)}...>` } });
+  const a = trace('addr-a.jsonl', t('7f3a2c1d9e50'));
+  const b = trace('addr-b.jsonl', t('7f99aa001c10'));
+  assert.equal(run([a, b]).code, 0);
+  const raw = run([a, b, '--no-normalize-addresses']);
+  assert.equal(raw.code, 1, raw.out);
+  assert.match(raw.out, /args\.cb/);
+});
+
 test('--ignore-key makes a volatile argument irrelevant (repeatable)', () => {
   const a = trace('a.jsonl', { args: { n: 1, stamp: 'x' }, result: { ok: true, rid: 1 } });
   const b = trace('b.jsonl', { args: { n: 1, stamp: 'y' }, result: { ok: true, rid: 2 } });

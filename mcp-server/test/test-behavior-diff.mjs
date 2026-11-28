@@ -331,6 +331,22 @@ test('identity hashes and memory addresses are normalised; other text is not', (
   assert.equal(cls.summary.args_changed, 1, 'the class name around the hash still matters');
   const small = traceBehaviorDiff(render([c('f', { mask: '0xff' }, {})]), render([c('f', { mask: '0xfe' }, {})]));
   assert.equal(small.summary.args_changed, 1, 'a short hex constant is not an address');
+  const low = (a) => [c('f', { m: `<built-in method finditer of re.Pattern object at 0x${a}>` }, {})];
+  assert.equal(traceBehaviorDiff(render(low('bc0d210')), render(low('bd11a30'))).verdict, 'same', 'a low address after "at" is one');
+});
+
+test('an address cut in half by truncation is normalised; normalize_addresses:false compares it verbatim', () => {
+  // `<truncated:{first N chars}...>`: the cut can land inside `0x7f727e01c1d0`.
+  const run = (cut) => [c('f', { cb: `<truncated:{"cb":"<function g at 0x${cut}...>` }, {})];
+  const a = render(run('7f727')), b = render(run('7f3d8'));
+  assert.equal(traceBehaviorDiff(a, b).verdict, 'same');
+  const raw = traceBehaviorDiff(a, b, { normalize_addresses: false });
+  assert.equal(raw.summary.args_changed, 1);
+  const full = (addr) => [c('f', { cb: `<Foo object at 0x${addr}>` }, {})];
+  assert.equal(traceBehaviorDiff(render(full('7f3a2c1d9e50')), render(full('7f99aa001c10')), { normalize_addresses: false }).summary.args_changed, 1);
+  // Identity hashes are not affected by the flag.
+  const h = (x) => [c('f', { r: `Req@${x}` }, {})];
+  assert.equal(traceBehaviorDiff(render(h('1b6d3586')), render(h('4e25154f')), { normalize_addresses: false }).verdict, 'same');
 });
 
 test('an identity hash inside an error message is normalised too', () => {

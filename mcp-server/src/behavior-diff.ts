@@ -43,6 +43,10 @@ export interface BehaviorDiffOptions {
   ignore_order?: boolean;
   /** Compare error messages too, as their own category. Default true. */
   compare_error_msg?: boolean;
+  /** Rewrite memory addresses (`0x7f3a…`) inside strings to `0x<addr>` before
+   *  comparing, so two runs of the same program do not differ by where the
+   *  allocator put an object. Default true; false compares them verbatim. */
+  normalize_addresses?: boolean;
   /** Max samples returned per category. Default 10. Counts are always exact. */
   limit?: number;
   /** Max spans folded per trace. Past it the comparison is incomplete. */
@@ -162,12 +166,23 @@ const IDENTITY_HASH = /@[0-9a-f]{4,}\b/g;
 // Memory addresses in opaque renderings: Python's `<Foo object at 0x7f3a…>`,
 // Go's and Rust's printed pointers. Eight or more hex digits, so a small hex
 // constant (`0xff`, `0x1F4`) is still compared verbatim.
-const ADDRESS = /\b0x[0-9a-fA-F]{8,16}\b/g;
+// `... at 0x<hex>` of any length is one too: static objects sit low in the
+// image (`<built-in method finditer ... at 0xbc0d210>`, seven digits).
+const ADDRESS = /\b0x[0-9a-fA-F]{8,16}\b|(?<=\bat )0x[0-9a-fA-F]+\b/g;
+// An address the capture layer's truncation cut in half: `...at 0x7f727...>`.
+// The cut lands at the same offset in both runs but after a different number
+// of digits' worth of entropy, so the prefix differs and is shorter than
+// ADDRESS requires. Only at the very end of a truncation marker, where the
+// text is an arbitrary prefix anyway.
+const CUT_ADDRESS = /\b0x[0-9a-fA-F]*(?=\.\.\.>$)/;
 
-function normaliseString(s: string): string {
+function normaliseString(s: string, addresses = true): string {
   let out = s;
   if (out.indexOf("@") !== -1) out = out.replace(IDENTITY_HASH, "@<identity>");
-  if (out.indexOf("0x") !== -1) out = out.replace(ADDRESS, "0x<addr>");
+  if (addresses && out.indexOf("0x") !== -1) {
+    out = out.replace(ADDRESS, "0x<addr>");
+    if (isTruncatedMarker(out)) out = out.replace(CUT_ADDRESS, "0x<addr>");
+  }
   return out;
 }
 
@@ -305,6 +320,7 @@ export class BehaviorTree {
     private readonly maxSpans: number,
     private readonly compareErrorMsg: boolean,
     private readonly ignoreOrder: boolean,
+    private readonly addresses: boolean = true,
   ) {}
 
   get threadCount(): number { return this.threads.size; }
@@ -356,7 +372,7 @@ export class BehaviorTree {
         // `stack` is never compared: frames carry line numbers and absolute
         // paths, which a refactor and a different machine both change.
         node.errType = typeof type === "string" && type ? type : "<error>";
-        node.errMsg = typeof msg === "string" ? normaliseString(msg) : "";
+        node.errMsg = typeof msg === "string" ? normaliseString(msg, this.addresses) : "";
       }
     }
   }
@@ -371,12 +387,12 @@ export class BehaviorTree {
   private canonValue(v: unknown, path: string[] | null, depth: number): string {
     if (typeof v === "string") {
       if (isTruncatedMarker(v)) this.trunc++;
-      return JSON.stringify(normaliseString(v));
+      return JSON.stringify(normaliseString(v, this.addresses));
     }
     if (v === null || v === undefined) return "null";
     if (typeof v !== "object") return JSON.stringify(v) ?? "null";
     // Parsed JSON cannot be cyclic, but it can be absurdly deep.
-    if (depth > 200) return JSON.stringify(normaliseString(JSON.stringify(v)));
+    if (depth > 200) return JSON.stringify(normaliseString(JSON.stringify(v), this.addresses));
     if (Array.isArray(v)) {
       let out = "[";
       for (let i = 0; i < v.length; i++) {
@@ -462,6 +478,7 @@ export class BehaviorDiffer {
     this.opts = {
       ignore_order: options.ignore_order === true,
       compare_error_msg: options.compare_error_msg !== false,
+      normalize_addresses: options.normalize_addresses !== false,
       limit: typeof options.limit === "number" && options.limit >= 0 ? Math.floor(options.limit) : DEFAULTS.limit,
       max_spans: positive(options.max_spans, DEFAULTS.max_spans),
       max_list_cells: positive(options.max_list_cells, DEFAULTS.max_list_cells),
@@ -475,7 +492,7 @@ export class BehaviorDiffer {
 
   /** A fresh, empty tree. Feed it one trace with `add`, in file order. */
   tree(): BehaviorTree {
-    return new BehaviorTree(this.keys, this.rules, this.opts.max_spans, this.opts.compare_error_msg, this.opts.ignore_order);
+    return new BehaviorTree(this.keys, this.rules, this.opts.max_spans, this.opts.compare_error_msg, this.opts.ignore_order, this.opts.normalize_addresses);
   }
 
   /** Compare a baseline tree (A) against a current one (B). */
