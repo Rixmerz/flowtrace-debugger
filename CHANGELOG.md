@@ -11,6 +11,12 @@ independently; each release names them.
 
 ### Fixed
 
+- **`flowtrace run -o <file>` starts from an empty file.** The capture layers
+  append (several processes of one run share the file), so a second run into
+  the same name doubled the trace and a later `flowtrace diff` reported a
+  difference between two runs of the same program. `run` now truncates the
+  target once, before the child starts; `--append` restores the old behaviour.
+
 - **Python and Node/TypeScript capture no longer emit spans the program did not
   cause.** Serialising an argument, result or error runs the program's own
   `__repr__` / `__str__` (Python) or `toJSON` / getters / `toString` /
@@ -37,6 +43,13 @@ independently; each release names them.
   Node does not instrument generators, so it was never affected.
 
 ### Added
+
+- **`flowtrace diff` ignore entries can carry the reason they are ignored.**
+  In the ignores file, `ignoreMethods` / `ignoreKeys` entries are strings as
+  before or `{"name"|"key": ..., "reason": "..."}`; a top-level `reasons` map
+  covers entries kept as strings. Reasons are printed under the ignored counts
+  and returned by `--json` as `ignored.reasons.{methods,keys}`. Unknown keys
+  (top level or inside an entry) are still exit 2.
 
 - **Behavioural trace comparison** — a characterisation (golden-master) check.
   `trace_behavior_diff` (MCP) and `flowtrace diff <base> <current>` (CLI) align

@@ -279,6 +279,21 @@ async function runCommand(options = {}, restArgs = []) {
   const stamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+Z$/, 'Z');
   const outPath = options.out || path.join(outDir, `${stamp}.jsonl`);
 
+  // The capture layers APPEND to the output file (several processes of one run
+  // share it), so a second run into the same name doubled the trace and made a
+  // later `flowtrace diff` report a difference. Start each run from an empty
+  // file; --append keeps the old behaviour. Truncate here, once, before any
+  // child process starts.
+  if (!options.append) {
+    try {
+      fs.mkdirSync(path.dirname(path.resolve(cwd, outPath)), { recursive: true });
+      if (fs.existsSync(path.resolve(cwd, outPath))) fs.writeFileSync(path.resolve(cwd, outPath), '');
+    } catch (err) {
+      console.error(chalk.red('Error:'), `No se pudo vaciar ${outPath}: ${err.message}`);
+      process.exit(2);
+    }
+  }
+
   // Auto-add .flowtrace/ to .gitignore
   ensureGitignore(cwd);
 

@@ -64,10 +64,49 @@ function findIgnoreFile(baselinePath, cwd) {
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
-function stringList(value, where, key) {
+/**
+ * One ignore entry is a plain string, or an object that carries the reason it
+ * is ignored: `{ "name": "app.Logger.*", "reason": "logging is not behaviour" }`
+ * (`key` is the same field, for ignoreKeys). Anything else in the object is
+ * rejected like an unknown top-level key: a typo (`"reasno"`) must not turn
+ * into a silent entry with no reason.
+ */
+function ignoreList(value, where, key, reasons) {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
-    throw new UsageError(`${where}: "${key}" debe ser una lista de strings`);
+  if (!Array.isArray(value)) {
+    throw new UsageError(`${where}: "${key}" debe ser una lista de strings u objetos {"name"|"key": ..., "reason": ...}`);
+  }
+  return value.map((entry, i) => {
+    if (typeof entry === 'string') return { pattern: entry, reason: reasons[entry] };
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new UsageError(`${where}: "${key}"[${i}] debe ser un string o un objeto {"name"|"key": ..., "reason": ...}`);
+    }
+    const extra = Object.keys(entry).filter((k) => !ENTRY_KEYS.has(k));
+    if (extra.length) {
+      throw new UsageError(`${where}: "${key}"[${i}]: clave(s) desconocida(s): ${extra.join(', ')} (válidas: name, key, reason)`);
+    }
+    const pattern = entry.name !== undefined ? entry.name : entry.key;
+    if (typeof pattern !== 'string' || !pattern) {
+      throw new UsageError(`${where}: "${key}"[${i}] necesita "name" (o "key") como string no vacío`);
+    }
+    if (entry.name !== undefined && entry.key !== undefined) {
+      throw new UsageError(`${where}: "${key}"[${i}] lleva "name" y "key" a la vez; usa solo uno`);
+    }
+    if (entry.reason !== undefined && typeof entry.reason !== 'string') {
+      throw new UsageError(`${where}: "${key}"[${i}]: "reason" debe ser un string`);
+    }
+    return { pattern, reason: entry.reason !== undefined ? entry.reason : reasons[pattern] };
+  });
+}
+
+const ENTRY_KEYS = new Set(['name', 'key', 'reason']);
+
+/** Top-level `reasons`: { "<pattern>": "<why>" }, for entries kept as strings. */
+function readReasons(value, where) {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== 'object' || Array.isArray(value)
+      || Object.values(value).some((v) => typeof v !== 'string')) {
+    throw new UsageError(`${where}: "reasons" debe ser un objeto { "<patrón>": "<motivo>" }`);
   }
   return value;
 }
@@ -83,19 +122,20 @@ function readIgnoreFile(file) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new UsageError(`${file}: se esperaba un objeto JSON`);
   }
-  const known = new Set(['ignoreMethods', 'ignoreKeys', 'ignoreOrder', 'compareErrorMsg', '$comment']);
+  const known = new Set(['ignoreMethods', 'ignoreKeys', 'ignoreOrder', 'compareErrorMsg', 'reasons', '$comment']);
   const unknown = Object.keys(raw).filter((k) => !known.has(k));
   // A typo here would silently compare with fewer ignores than the author
   // meant — or, worse, with `ignoreOrder` unset.
   if (unknown.length) {
-    throw new UsageError(`${file}: clave(s) desconocida(s): ${unknown.join(', ')} (válidas: ignoreMethods, ignoreKeys, ignoreOrder, compareErrorMsg)`);
+    throw new UsageError(`${file}: clave(s) desconocida(s): ${unknown.join(', ')} (válidas: ignoreMethods, ignoreKeys, ignoreOrder, compareErrorMsg, reasons, $comment)`);
   }
   for (const k of ['ignoreOrder', 'compareErrorMsg']) {
     if (raw[k] !== undefined && typeof raw[k] !== 'boolean') throw new UsageError(`${file}: "${k}" debe ser true o false`);
   }
+  const reasons = readReasons(raw.reasons, file);
   return {
-    ignoreMethods: stringList(raw.ignoreMethods, file, 'ignoreMethods'),
-    ignoreKeys: stringList(raw.ignoreKeys, file, 'ignoreKeys'),
+    ignoreMethods: ignoreList(raw.ignoreMethods, file, 'ignoreMethods', reasons),
+    ignoreKeys: ignoreList(raw.ignoreKeys, file, 'ignoreKeys', reasons),
     ignoreOrder: raw.ignoreOrder,
     compareErrorMsg: raw.compareErrorMsg,
   };
@@ -120,9 +160,12 @@ function buildOptions(options, baselinePath, cwd) {
     throw new UsageError(`No existe el archivo de ignores: ${ignoreFile}`);
   }
   const fromFile = ignoreFile ? readIgnoreFile(ignoreFile) : { ignoreMethods: [], ignoreKeys: [] };
+  const flagEntries = (list) => (list || []).map((pattern) => ({ pattern }));
+  const methods = [...fromFile.ignoreMethods, ...flagEntries(options.ignoreMethod)];
+  const keys = [...fromFile.ignoreKeys, ...flagEntries(options.ignoreKey)];
   const diffOptions = {
-    ignore_methods: [...fromFile.ignoreMethods, ...(options.ignoreMethod || [])],
-    ignore_keys: [...fromFile.ignoreKeys, ...(options.ignoreKey || [])],
+    ignore_methods: methods.map((e) => e.pattern),
+    ignore_keys: keys.map((e) => e.pattern),
     ignore_order: options.ignoreOrder === true ? true : fromFile.ignoreOrder === true,
     // commander's --no-error-msg sets errorMsg=false; absent means true.
     compare_error_msg: options.errorMsg === false ? false : fromFile.compareErrorMsg !== false,
@@ -131,7 +174,7 @@ function buildOptions(options, baselinePath, cwd) {
   if (limit !== undefined) diffOptions.limit = limit;
   const maxSpans = positiveInt(options.maxSpans, '--max-spans');
   if (maxSpans !== undefined) diffOptions.max_spans = maxSpans;
-  return { diffOptions, ignoreFile };
+  return { diffOptions, ignoreFile, ignoreEntries: { methods, keys } };
 }
 
 /**
@@ -235,6 +278,9 @@ function render(result, { baseline, current, ignoreFile }) {
     out.push(chalk.gray(`  ignorado: ${ig.spans_a}/${ig.spans_b} spans, ${ig.keys_a}/${ig.keys_b} claves (base/actual)`));
   }
 
+  const why = ig.reasons ? [...ig.reasons.methods, ...ig.reasons.keys] : [];
+  for (const r of why) out.push(chalk.gray(`    ${r.pattern}: ${r.reason}`));
+
   for (const category of ORDER) {
     const count = result.summary[category];
     if (!count) continue;
@@ -286,7 +332,7 @@ async function diffCommand(baseline, current, options = {}, io = {}) {
       throw new UsageError('No se encontró el comparador de trazas (vendor/trace-diff). Reinstala @rixmerz/flowtrace.');
     }
     const { BehaviorDiffer } = require(differPath);
-    const { diffOptions, ignoreFile } = buildOptions(options, baseline, cwd);
+    const { diffOptions, ignoreFile, ignoreEntries } = buildOptions(options, baseline, cwd);
 
     const differ = new BehaviorDiffer(diffOptions);
     const a = differ.tree();
@@ -302,6 +348,13 @@ async function diffCommand(baseline, current, options = {}, io = {}) {
       // stderr, so --json stays parseable.
       stderr(`${chalk.yellow('Aviso:')} se descartaron ${malformed} línea(s) que no son eventos v2 (${loadedA.malformed} base, ${loadedB.malformed} actual).`);
     }
+
+    // The comparison counts what it ignored; the reasons belong to the ignore
+    // list, which only this layer reads. List the entries that carry a reason
+    // next to those counts so the output says why, not just how much.
+    const withReason = (list) => list.filter((e) => e.reason !== undefined).map((e) => ({ pattern: e.pattern, reason: e.reason }));
+    const reasons = { methods: withReason(ignoreEntries.methods), keys: withReason(ignoreEntries.keys) };
+    if (reasons.methods.length || reasons.keys.length) result.ignored = { ...result.ignored, reasons };
 
     if (options.json) stdout(JSON.stringify(result, null, 2));
     else stdout(render(result, { baseline, current, ignoreFile: ignoreFile ? path.relative(cwd, ignoreFile) || ignoreFile : null }));
@@ -321,5 +374,6 @@ async function diffCommand(baseline, current, options = {}, io = {}) {
 module.exports = diffCommand;
 module.exports._resolveDiffer = resolveDiffer;
 module.exports._findIgnoreFile = findIgnoreFile;
+module.exports._readIgnoreFile = readIgnoreFile;
 module.exports._buildOptions = buildOptions;
 module.exports.IGNORE_FILE = IGNORE_FILE;
