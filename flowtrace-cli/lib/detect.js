@@ -115,13 +115,59 @@ function detectPackagePrefix(cwd, lang) {
 }
 
 // ---- Java ----
+/** The project's own <groupId>: the first one outside <parent>/<dependencies>/etc. */
+function _pomOwnGroupId(src) {
+  const stripped = src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<parent>[\s\S]*?<\/parent>/g, '')
+    .replace(/<(dependencies|dependencyManagement|build|profiles|plugins|reporting)>[\s\S]*?<\/\1>/g, '');
+  const m = stripped.match(/<groupId>\s*([^<\s]+)\s*<\/groupId>/);
+  return m ? m[1].trim() : null;
+}
+
+/** Package (dotted) of every .java file under src/main/java, from its path. */
+function _javaSourcePackages(cwd) {
+  const root = path.join(cwd, 'src', 'main', 'java');
+  const pkgs = [];
+  const walk = (dir, parts) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isDirectory()) walk(path.join(dir, e.name), [...parts, e.name]);
+      else if (e.name.endsWith('.java') && parts.length) pkgs.push(parts);
+    }
+  };
+  walk(root, []);
+  return pkgs;
+}
+
+function _longestCommonPackage(pkgs) {
+  if (!pkgs.length) return null;
+  let common = pkgs[0];
+  for (const p of pkgs.slice(1)) {
+    let i = 0;
+    while (i < common.length && i < p.length && common[i] === p[i]) i++;
+    common = common.slice(0, i);
+  }
+  return common.length ? common.join('.') : null;
+}
+
 function _javaPrefix(cwd) {
-  // pom.xml groupId
   const pomPath = path.join(cwd, 'pom.xml');
   if (fs.existsSync(pomPath)) {
-    const src = fs.readFileSync(pomPath, 'utf-8');
-    const m = src.match(/<groupId>\s*([^<\s]+)\s*<\/groupId>/);
-    if (m) return m[1].trim();
+    // The groupId inside <parent> is the PARENT's (org.springframework.boot for
+    // a Spring Boot app) and matches none of the project's own classes. Use the
+    // project's own, and only when sources actually live under it; otherwise the
+    // longest common package of src/main/java is the honest answer.
+    const own = _pomOwnGroupId(fs.readFileSync(pomPath, 'utf-8'));
+    const pkgs = _javaSourcePackages(cwd);
+    if (own && (!pkgs.length || pkgs.some((p) => {
+      const j = p.join('.');
+      return j === own || j.startsWith(own + '.');
+    }))) return own;
+    const common = _longestCommonPackage(pkgs);
+    if (common) return common;
+    if (own) return own;
   }
   // build.gradle  group = "..."  or  group = '...'
   for (const gf of ['build.gradle', 'build.gradle.kts']) {

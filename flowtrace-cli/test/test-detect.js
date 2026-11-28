@@ -207,6 +207,34 @@ console.log('\n[detectPackagePrefix]');
   assert(detectPackagePrefix(d, 'rust') === null, 'rust: no Cargo.toml -> null');
 }
 
+// Java pom.xml: parent groupId must not win; sources decide
+{
+  const mk = (pom, files) => {
+    const d = mkTmp();
+    fs.writeFileSync(path.join(d, 'pom.xml'), pom);
+    for (const f of files) {
+      const fp = path.join(d, 'src/main/java', f);
+      fs.mkdirSync(path.dirname(fp), { recursive: true });
+      fs.writeFileSync(fp, '');
+    }
+    return d;
+  };
+  const parent = '<parent><groupId>org.springframework.boot</groupId><artifactId>p</artifactId></parent>';
+  const petFiles = ['org/springframework/samples/petclinic/PetClinicApp.java',
+    'org/springframework/samples/petclinic/owner/Owner.java',
+    'org/springframework/samples/petclinic/vet/Vet.java'];
+  let d = mk(`<project>${parent}<artifactId>pc</artifactId></project>`, petFiles);
+  assert(detectPackagePrefix(d, 'java') === 'org.springframework.samples.petclinic', 'java: no own groupId -> common package of sources, not parent groupId');
+  d = mk(`<project>${parent}<groupId>org.springframework.samples</groupId></project>`, petFiles);
+  assert(detectPackagePrefix(d, 'java') === 'org.springframework.samples', 'java: own groupId used when sources live under it');
+  d = mk(`<project>${parent}<groupId>com.unrelated</groupId></project>`, petFiles);
+  assert(detectPackagePrefix(d, 'java') === 'org.springframework.samples.petclinic', 'java: own groupId matching no source -> common package');
+  d = mk(`<project>${parent}<groupId>com.x</groupId><dependencies><dependency><groupId>junk</groupId></dependency></dependencies></project>`, []);
+  assert(detectPackagePrefix(d, 'java') === 'com.x', 'java: own groupId, no sources -> groupId (dependency groupIds ignored)');
+  d = mk(`<project>${parent}</project>`, []);
+  assert(detectPackagePrefix(d, 'java') === null, 'java: only parent groupId, no sources -> null');
+}
+
 // ---- Summary ----
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
