@@ -108,6 +108,20 @@ That import only resolves under `flowtrace run`; guard it with
   context alone (a `ContextVar` guard in `runtime.py`, per thread and per
   asyncio task; one `ContextVar.get` per instrumented call). The text still
   appears in the trace. A `__repr__` your own code calls is traced as usual.
+- **Known caveat: `repr()` of a user object is user code.** The format
+  records a non-primitive argument or result as its `repr()`, so that
+  `__repr__` runs in the traced program, and whatever it does (read a lazy
+  property, advance an iterator, bump a counter) really happens, at the
+  instrumented call rather than where the program would have done it. Spans are
+  suppressed, side effects are not. Seen on Django 5.1: an instrumented
+  `cached_property.__get__(self, instance, cls)` serialises `instance`;
+  `BaseFormSet.__repr__` reads `management_form`, whose first evaluation calls
+  `BaseForm.full_clean()`, so `test_formset_validation_count` (which counts
+  those calls) saw 5 instead of 4 when traced. Not fixable without dropping
+  the `repr` from the format. If a trace changes your program, redact the
+  argument so it is never rendered: `FLOWTRACE_REDACT_KEYS=instance` made that
+  suite pass. Narrowing `--package-prefix` away from the generic helper also
+  works.
 - **What the span of a generator means.** A generator function's span opens at
   the first `next()` and closes when the body finishes, raises or the generator
   is closed, so its duration covers creation to exhaustion. It is the *current
