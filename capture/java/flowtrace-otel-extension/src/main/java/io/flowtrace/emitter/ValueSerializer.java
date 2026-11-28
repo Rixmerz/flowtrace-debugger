@@ -88,6 +88,9 @@ public final class ValueSerializer {
     public static JsonFragment serializeValue(Object value) {
         if (value instanceof JsonFragment) return (JsonFragment) value;
         String json;
+        // toString() on user objects runs inside this call; keep the advice from
+        // tracing it (see CaptureGuard).
+        CaptureGuard.enter();
         try {
             StringBuilder sb = new StringBuilder(64);
             appendJson(sb, value, 0);
@@ -96,6 +99,8 @@ public final class ValueSerializer {
             // StackOverflowError included: a recursive toString() must cost
             // one argument, not the event and certainly not the traced call.
             return JsonFragment.ofString("<unserializable: " + safeClassName(value) + ">");
+        } finally {
+            CaptureGuard.leave();
         }
         return truncate(json);
     }

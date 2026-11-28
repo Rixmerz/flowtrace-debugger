@@ -159,12 +159,12 @@ class SourceLocationIntegrationTest {
         return events;
     }
 
-    private static File projectBase() {
+    static File projectBase() {
         return new File(System.getProperty("project.basedir", new File("").getAbsolutePath()));
     }
 
     /** Runs {@code mainClass} under the agent and returns the non-blank JSONL lines. */
-    private static List<String> runUnderAgent(Path tempDir, String classpath, String mainClass, String prefix)
+    static List<String> runUnderAgent(Path tempDir, String classpath, String mainClass, String prefix)
             throws Exception {
         File projectBase = projectBase();
         File agent = new File(projectBase, "target/dependency/opentelemetry-javaagent.jar");

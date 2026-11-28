@@ -45,6 +45,7 @@ public class FlowtraceInstrumentationModule extends InstrumentationModule {
                 "io.flowtrace.emitter.TraceEvent",
                 "io.flowtrace.emitter.JsonFragment",
                 "io.flowtrace.emitter.ValueSerializer",
+                "io.flowtrace.emitter.CaptureGuard",
                 "io.flowtrace.advice.DepthTracker",
                 // Advice is inlined into the target class, which lives in the
                 // application's classloader — so every type it touches must be
