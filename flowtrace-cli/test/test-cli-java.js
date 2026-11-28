@@ -56,23 +56,56 @@ test('java -jar: flags spliced into argv (auto strategy)', () => {
   assert.ok(!env.JAVA_TOOL_OPTIONS || !env.JAVA_TOOL_OPTIONS.includes('-javaagent'), 'no JAVA_TOOL_OPTIONS for direct java');
 });
 
-test('mvn command: flags go into MAVEN_OPTS (auto strategy)', () => {
+test('mvn command: flags go into JAVA_TOOL_OPTIONS so forked surefire JVMs get them', () => {
   const { cmd, args, env } = _buildJavaInjection({
     ...baseOpts({ userArgs: ['mvn', 'spring-boot:run'] }),
   });
   assert.equal(cmd, 'mvn');
   assert.deepEqual(args, ['spring-boot:run']);
-  assert.ok(env.MAVEN_OPTS.includes(`-javaagent:${FAKE_OTEL}`), 'MAVEN_OPTS has -javaagent');
-  assert.ok(env.MAVEN_OPTS.includes(`-Dotel.javaagent.extensions=${FAKE_EXT}`), 'MAVEN_OPTS has extensions');
-  assert.ok(env.MAVEN_OPTS.includes(`-Dflowtrace.package-prefix=${PREFIX}`), 'MAVEN_OPTS has prefix');
-  assert.ok(env.MAVEN_OPTS.includes(`-Dflowtrace.output=${OUTPATH}`), 'MAVEN_OPTS has output');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-javaagent:${FAKE_OTEL}`), 'JAVA_TOOL_OPTIONS has -javaagent');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-Dotel.javaagent.extensions=${FAKE_EXT}`), 'JAVA_TOOL_OPTIONS has extensions');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-Dflowtrace.package-prefix=${PREFIX}`), 'JAVA_TOOL_OPTIONS has prefix');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes(`-Dflowtrace.output=${OUTPATH}`), 'JAVA_TOOL_OPTIONS has output');
 });
 
-test('mvn strategy explicit: flags go into MAVEN_OPTS regardless of binary name', () => {
+test('mvn strategy explicit: flags go into JAVA_TOOL_OPTIONS regardless of binary name', () => {
   const { cmd, args, env } = _buildJavaInjection({
     ...baseOpts({ strategy: 'mvn', userArgs: ['./mvnw', 'spring-boot:run'] }),
   });
-  assert.ok(env.MAVEN_OPTS.includes('-javaagent:'), 'MAVEN_OPTS set for explicit mvn strategy');
+  assert.ok(env.JAVA_TOOL_OPTIONS.includes('-javaagent:'), 'JAVA_TOOL_OPTIONS set for explicit mvn strategy');
+});
+
+test('mvn: an existing JAVA_TOOL_OPTIONS is kept and MAVEN_OPTS is left alone', () => {
+  const saved = { j: process.env.JAVA_TOOL_OPTIONS, m: process.env.MAVEN_OPTS };
+  process.env.JAVA_TOOL_OPTIONS = '-Xmx512m';
+  delete process.env.MAVEN_OPTS;
+  try {
+    const { env } = _buildJavaInjection({ ...baseOpts({ userArgs: ['mvn', 'test'] }) });
+    assert.ok(env.JAVA_TOOL_OPTIONS.startsWith('-Xmx512m '), 'user value first');
+    assert.ok(env.JAVA_TOOL_OPTIONS.includes('-javaagent:'), 'ours appended');
+    assert.equal(env.MAVEN_OPTS, undefined, 'MAVEN_OPTS not used');
+  } finally {
+    for (const [k, v] of [['JAVA_TOOL_OPTIONS', saved.j], ['MAVEN_OPTS', saved.m]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
+test('warnIfJavaTraceEmpty warns on a missing or empty file, not on a populated one', () => {
+  const os = require('os'), fs = require('fs'), path = require('path');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-warn-'));
+  const f = path.join(d, 't.jsonl');
+  const orig = console.error; const lines = [];
+  console.error = (...a) => lines.push(a.join(' '));
+  try {
+    assert.equal(runCmd._warnIfJavaTraceEmpty(f), true, 'missing');
+    fs.writeFileSync(f, '');
+    assert.equal(runCmd._warnIfJavaTraceEmpty(f), true, 'empty');
+    assert.ok(lines.join('\n').includes('JVM hija'), 'names the forked-JVM cause');
+    assert.ok(lines.join('\n').includes('prefix'), 'names the prefix cause');
+    fs.writeFileSync(f, '{}\n');
+    assert.equal(runCmd._warnIfJavaTraceEmpty(f), false, 'populated');
+  } finally { console.error = orig; fs.rmSync(d, { recursive: true, force: true }); }
 });
 
 test('gradle command: flags go into JAVA_TOOL_OPTIONS (auto strategy)', () => {
@@ -113,7 +146,7 @@ test('--package-prefix overrides pom scan', () => {
       userArgs: ['java', '-jar', 'foo.jar'],
     }),
   });
-  const allTokens = [...args, ...(env.MAVEN_OPTS || '').split(' ')];
+  const allTokens = [...args, ...(env.JAVA_TOOL_OPTIONS || '').split(' ')];
   const hasOverride = allTokens.some(t => t.includes('org.override'));
   assert.ok(hasOverride, 'override prefix present');
 });

@@ -161,11 +161,13 @@ function _javaPrefix(cwd) {
     // longest common package of src/main/java is the honest answer.
     const own = _pomOwnGroupId(fs.readFileSync(pomPath, 'utf-8'));
     const pkgs = _javaSourcePackages(cwd);
-    if (own && (!pkgs.length || pkgs.some((p) => {
-      const j = p.join('.');
-      return j === own || j.startsWith(own + '.');
-    }))) return own;
     const common = _longestCommonPackage(pkgs);
+    const under = (pkg, root) => pkg === root || pkg.startsWith(root + '.');
+    // The common package is the tightest prefix that still matches every class,
+    // so it wins when it sits inside the groupId (PetClinic: groupId
+    // org.springframework.samples, code in ...samples.petclinic).
+    if (common && (!own || under(common, own))) return common;
+    if (own && (!pkgs.length || pkgs.some((p) => under(p.join('.'), own)))) return own;
     if (common) return common;
     if (own) return own;
   }
