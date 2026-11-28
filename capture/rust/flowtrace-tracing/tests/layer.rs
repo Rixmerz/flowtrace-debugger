@@ -87,10 +87,23 @@ fn spans_become_enter_and_exit_with_args_ids_and_depth() {
     assert_eq!(ev[1]["result"], serde_json::json!({}));
 }
 
+// Its own spans: every test in this file shares one trace and tells its events
+// apart by span name, so reusing `lt_outer` here doubled the events another
+// test counts whenever the two ran in the same order on a slower machine.
+#[instrument]
+fn lt_loc_outer(n: i32) -> i32 {
+    lt_loc_inner(n) + 1
+}
+
+#[instrument]
+fn lt_loc_inner(n: i32) -> i32 {
+    n * 2
+}
+
 #[test]
 fn the_callsite_file_and_line_are_on_enter_only() {
-    traced(|| lt_outer(1, "y", "z"));
-    for name in ["lt_outer", "lt_inner"] {
+    traced(|| lt_loc_outer(1));
+    for name in ["lt_loc_outer", "lt_loc_inner"] {
         let ev = events(name);
         let (enter, exit) = (&ev[0], &ev[1]);
         // cargo hands rustc a workspace member's path relative to the workspace root.
