@@ -58,7 +58,8 @@ Ejemplos:
   .option('--lang <lang>', 'Lenguaje de la app: java|python|node|ts|go|rust (auto-detectado si se omite)')
   .option('--package-prefix <pkg>', 'Prefijo a instrumentar (paquete en Java/Python/Go, ruta en Node/TS, nombre de crate en Rust)')
   .option('--inject <strategy>', 'Estrategia de inyección JVM: mvn|gradle|java (default: auto)')
-  .option('-o, --out <path>', 'Ruta de salida JSONL (default: .flowtrace/<ISO>.jsonl)')
+  .option('-o, --out <path>', 'Ruta de salida JSONL (default: .flowtrace/<ISO>.jsonl). Se vacía al empezar')
+  .option('--append', 'Con --out: añade a la traza existente en vez de vaciarla al empezar')
   .allowUnknownOption(true)
   .action(async (options, cmd) => {
     try {
@@ -91,7 +92,7 @@ program
   .option('--ignore-key <clave>', 'Ignora una clave volátil en args/result: nombre, glob, o ruta (result.user.id). Repetible', collect, [])
   .option('--ignore-order', 'No considera el orden entre llamadas hermanas (flujos concurrentes)')
   .option('--no-error-msg', 'No compara los mensajes de error, solo su tipo')
-  .option('--ignore-file <path>', 'JSON con los ignores por defecto (default: characterisation.json junto a la traza base)')
+  .option('--ignore-file <path>', 'JSON con los ignores por defecto (default: characterisation.json junto a la traza base). Cada entrada puede ser un string o {"name"|"key": ..., "reason": "..."}; el motivo sale en --json')
   .option('--limit <n>', 'Máximo de ejemplos por categoría (default: 10)')
   .option('--max-spans <n>', 'Máximo de spans a comparar por traza (default: 2000000)')
   .option('--json', 'Imprime el resultado como JSON (el mismo objeto que la tool MCP trace_behavior_diff)')

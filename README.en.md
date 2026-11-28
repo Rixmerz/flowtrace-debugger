@@ -217,6 +217,11 @@ flowtrace diff base.jsonl .flowtrace/<new>.jsonl       # 0 same Â· 1 different Â
 flowtrace diff base.jsonl new.jsonl --ignore-key created_at --ignore-method 'app.Logger.*' --json
 ```
 
+`flowtrace run -o base.jsonl` empties the file when it starts (`--append` adds to
+an existing trace). Ignores can live in `characterisation.json` beside the
+baseline; each entry is a string or `{"name"|"key": ..., "reason": "..."}`, and
+`--json` returns the reasons in `ignored.reasons`.
+
 Ignores ts, durations, ids, threads and file/line; normalises `<redacted>` and
 identity hashes. See [docs/en/characterisation-with-traces.md](docs/en/characterisation-with-traces.md).
 

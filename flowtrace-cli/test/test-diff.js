@@ -129,6 +129,50 @@ test('a malformed ignores file or unknown key is exit 2, not a silent weaker com
   assert.match(r.err, /desconocida/);
 });
 
+test('ignore entries may be objects that carry their reason; --json shows it next to the ignored item', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'reason-'));
+  const a = trace('base.jsonl', { result: { ok: true, rid: 1 } }, dir);
+  const b = trace('cur.jsonl', { result: { ok: true, rid: 2 }, extra: ['metrics'] });
+  fs.writeFileSync(path.join(dir, 'characterisation.json'), JSON.stringify({
+    ignoreKeys: [{ key: 'rid', reason: 'request id differs per run' }, 'unused'],
+    ignoreMethods: [{ name: '*.metrics', reason: 'metrics are not behaviour' }],
+    reasons: { unused: 'string entry, reason from the top-level map' },
+    $comment: 'free text',
+  }));
+  const r = run([a, b, '--json']);
+  assert.equal(r.code, 0, r.err + r.out);
+  const o = JSON.parse(r.out);
+  assert.deepEqual(o.ignored.reasons.keys, [
+    { pattern: 'rid', reason: 'request id differs per run' },
+    { pattern: 'unused', reason: 'string entry, reason from the top-level map' },
+  ]);
+  assert.deepEqual(o.ignored.reasons.methods, [{ pattern: '*.metrics', reason: 'metrics are not behaviour' }]);
+  assert.match(run([a, b]).out, /rid: request id differs per run/, 'the human output states why too');
+});
+
+test('plain-string ignores keep working and add no reasons key', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'plain-'));
+  const a = trace('base.jsonl', { result: { rid: 1 } }, dir);
+  const b = trace('cur.jsonl', { result: { rid: 2 } });
+  fs.writeFileSync(path.join(dir, 'characterisation.json'), JSON.stringify({ ignoreKeys: ['rid'] }));
+  const o = JSON.parse(run([a, b, '--json']).out);
+  assert.equal(o.ignored.reasons, undefined);
+});
+
+test('an ignore object with a key that is neither a name nor a reason is exit 2', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'badentry-'));
+  const a = trace('base.jsonl', {}, dir);
+  const b = trace('cur.jsonl');
+  for (const entry of [{ key: 'rid', reasno: 'typo' }, { reason: 'no name' }, { key: 'rid', reason: 3 }, 7]) {
+    fs.writeFileSync(path.join(dir, 'characterisation.json'), JSON.stringify({ ignoreKeys: [entry] }));
+    const r = run([a, b]);
+    assert.equal(r.code, 2, JSON.stringify(entry));
+    assert.match(r.err, /ignoreKeys/);
+  }
+  fs.writeFileSync(path.join(dir, 'characterisation.json'), JSON.stringify({ reasons: { x: 1 } }));
+  assert.equal(run([a, b]).code, 2, 'reasons must map to strings');
+});
+
 test('missing file, missing argument, unknown option and non-v2 input are exit 2', () => {
   const a = trace('a.jsonl');
   assert.equal(run([a, path.join(TMP, 'nope.jsonl')]).code, 2);
