@@ -100,6 +100,24 @@ That import only resolves under `flowtrace run`; guard it with
 - The program's exit status, `atexit` handlers and thread joins are preserved
   (see above).
 
+## Spans the program did not cause
+
+- **Serialisation is not a call.** Rendering `args`, `result` and `error` runs
+  the program's own `__repr__` / `__str__`. While that happens, instrumented
+  functions invoked by the capture layer emit no span and leave the span
+  context alone (a `ContextVar` guard in `runtime.py`, per thread and per
+  asyncio task; one `ContextVar.get` per instrumented call). The text still
+  appears in the trace. A `__repr__` your own code calls is traced as usual.
+- **What the span of a generator means.** A generator function's span opens at
+  the first `next()` and closes when the body finishes, raises or the generator
+  is closed, so its duration covers creation to exhaustion. It is the *current
+  parent* only while its own frame is executing: at every `yield` the context
+  the consumer had is restored, and re-entered when the consumer resumes it.
+  So the body of `with some_contextmanager():` and code between `next()` calls
+  belong to the real caller. Same for async generators. Limitation: a
+  `yield from sub()` pauses the outer span while `sub` runs, so spans inside an
+  instrumented `sub` are attributed to whoever drives the outer generator.
+
 ## Tests
 
 ```bash

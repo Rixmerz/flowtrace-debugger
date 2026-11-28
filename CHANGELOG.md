@@ -9,6 +9,33 @@ independently; each release names them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Python and Node/TypeScript capture no longer emit spans the program did not
+  cause.** Serialising an argument, result or error runs the program's own
+  `__repr__` / `__str__` (Python) or `toJSON` / getters / `toString` /
+  `Symbol.toPrimitive` (Node). When that class was instrumented, the call
+  became a span: an `enter` written *before* the `enter` of the function being
+  serialised, with that function's caller (Python: the function itself) as
+  parent. Measured on real code this was 27.8% of all spans on click and 16.8% on
+  flask, and it produced caller → callee pairs that do not exist. A re-entrancy
+  guard (`ContextVar` in Python, a synchronous flag in Node) now makes
+  instrumented functions invoked by the capture layer's own serialisation emit
+  nothing and leave the span context alone; the callback still runs and its text
+  still appears in `args` / `result` / `error.msg`. A `__repr__` or `toJSON`
+  that user code calls itself is still traced.
+- **Python: a generator's span no longer stays the current parent after it
+  yields.** With `@contextmanager def ctx(): yield`, the body of
+  `with ctx(): work()` was recorded as a child of `ctx` instead of its real
+  caller, and so was any call made between two `next()` calls. The transformer
+  now brackets every `yield` / `yield from` with `_ft_pause` / `_ft_resume`. The
+  span still opens at the first `next()` and closes when the generator
+  finishes, is closed or raises (duration = creation to exhaustion, enter/exit
+  pairing and schema unchanged), but it is the current parent only while the
+  generator's own frame executes. Known limit: the body of a `yield from`
+  sub-generator is attributed to whoever drives the outer generator, not to it.
+  Node does not instrument generators, so it was never affected.
+
 ### Added
 
 - **Behavioural trace comparison** — a characterisation (golden-master) check.

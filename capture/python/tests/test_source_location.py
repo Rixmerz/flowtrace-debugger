@@ -90,7 +90,8 @@ def _run_transformed(source: str, source_file: str | None):
     ast.fix_missing_locations(tree)
     mod = types.ModuleType("m")
     mod.__dict__.update(
-        _ft_enter=fake_enter, _ft_exit=lambda *a: None, _ft_exit_error=lambda *a: None
+        _ft_enter=fake_enter, _ft_exit=lambda *a: None, _ft_exit_error=lambda *a: None,
+        _ft_pause=runtime._ft_pause, _ft_resume=runtime._ft_resume,
     )
     exec(compile(tree, "<m>", "exec", dont_inherit=True), mod.__dict__)  # noqa: S102
     return mod, seen

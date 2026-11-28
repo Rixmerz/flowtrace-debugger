@@ -122,9 +122,19 @@ What this means in practice:
   every `.map(x => …)` would otherwise become a span and an Express app's
   trace would be unreadable. Top-level functions, class methods, object-literal
   methods and arrows assigned to a binding are instrumented.
-- Generators and async generators.
+- Generators and async generators. (Not instrumenting them also means no span
+  can stay current across a `yield`; `test-serializer-noise.mjs` pins this.)
 - Constructors.
 - Getters and setters.
+
+## Serialisation is not a call
+
+Rendering `args`, `result` and `error` runs the program's own `toJSON`,
+getters, `toString`, `Symbol.toPrimitive` and `util.inspect.custom`. While that
+happens `__ft_enter` returns "not traced" (a synchronous flag in
+`instrument.js`), so an instrumented class's `toJSON` does not appear as a call
+the program never made. The value still appears in the trace. A `toJSON` your
+own code calls is traced as usual.
 
 ## Tests
 
